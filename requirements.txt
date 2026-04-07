@@ -1,0 +1,10 @@
+streamlit
+python-dotenv
+langchain
+langchain-openai
+langgraph
+ddgs
+pytz
+streamlit_js_eval
+truststore
+psycopg2-binary
