@@ -20,6 +20,7 @@ from chat_db import (
     load_chat_messages,
     save_chat_message,
     save_thread_inputs,
+    load_thread_inputs,
 )
 from openai_service import create_agent_executor, get_ai_response
 
@@ -362,6 +363,14 @@ def get_thread_messages(thread_id: str, user_id: str = Query(...)):
         return {"ok": True, "thread_id": thread_id, "messages": messages}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"메시지 조회 실패: {e}")
+
+@app.get("/threads/{thread_id}/inputs")
+def get_thread_inputs_api(thread_id: str, user_id: str = Query(...)):
+    try:
+        inputs = load_thread_inputs(user_id.strip(), thread_id.strip())
+        return {"ok": True, "thread_id": thread_id, "inputs": inputs}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"입력값 조회 실패: {e}")
 
 @app.patch("/threads/{thread_id}")
 def rename_thread_api(thread_id: str, req: RenameRequest):

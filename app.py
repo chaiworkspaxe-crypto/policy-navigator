@@ -1,12 +1,19 @@
 import html
 import json
 import re
-import requests  # ✨ 백엔드 API 통신용 라이브러리 추가
+import requests
 from datetime import datetime, timedelta
 
 import streamlit as st
 from dotenv import load_dotenv
 from streamlit_js_eval import streamlit_js_eval
+
+# 🚨 [핵심 해결책] Windows 환경/파이썬 requests SSL 보안 인증 에러 방지
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except Exception:
+    pass
 
 from legal_dong_loader import load_legal_dong_data
 
@@ -17,28 +24,33 @@ st.set_page_config(page_title="💵 전국민 맞춤형 정책 내비게이터")
 # ==========================================
 # 🚀 Phase 1: 클라우드 API 통신 환경 설정
 # ==========================================
-API_BASE_URL = "https://policy-navigator-1.onrender.com"  # 👈 배포된 FastAPI 주소
+API_BASE_URL = "https://policy-navigator-1.onrender.com"
 
 def api_create_thread(user_id: str) -> str:
     try:
         res = requests.post(f"{API_BASE_URL}/threads", json={"user_id": user_id})
         if res.status_code == 200:
             return res.json().get("thread_id", "")
+        else:
+            st.error(f"대화 생성 서버 에러: {res.status_code} - {res.text}")
     except Exception as e:
-        print(f"API Error (create_thread): {e}")
+        st.error(f"API 연결 차단됨 (create_thread): {e}")
     return ""
 
 def api_rename_thread(user_id: str, thread_id: str, title: str):
     try:
         requests.patch(f"{API_BASE_URL}/threads/{thread_id}", json={"user_id": user_id, "title": title})
-    except: pass
+    except Exception as e: st.error(f"API 연결 차단됨: {e}")
 
 def api_list_threads(user_id: str) -> list:
     try:
         res = requests.get(f"{API_BASE_URL}/threads", params={"user_id": user_id})
         if res.status_code == 200:
             return res.json().get("threads", [])
-    except: pass
+        else:
+            st.error(f"목록 불러오기 서버 에러: {res.status_code} - {res.text}")
+    except Exception as e: 
+        st.error(f"API 연결 차단됨 (list_threads): {e}")
     return []
 
 def api_load_messages(user_id: str, thread_id: str) -> list:
@@ -46,19 +58,30 @@ def api_load_messages(user_id: str, thread_id: str) -> list:
         res = requests.get(f"{API_BASE_URL}/threads/{thread_id}/messages", params={"user_id": user_id})
         if res.status_code == 200:
             return res.json().get("messages", [])
-    except: pass
+    except Exception as e: st.error(f"API 연결 차단됨: {e}")
     return []
+
+def api_load_inputs(user_id: str, thread_id: str) -> dict:
+    try:
+        res = requests.get(f"{API_BASE_URL}/threads/{thread_id}/inputs", params={"user_id": user_id})
+        if res.status_code == 200:
+            return res.json().get("inputs", {})
+        else:
+            st.error(f"입력값 불러오기 서버 에러: {res.status_code} - {res.text}")
+    except Exception as e:
+        st.error(f"API 연결 차단됨 (load_inputs): {e}")
+    return {}
 
 def api_delete_thread(user_id: str, thread_id: str):
     try:
         requests.delete(f"{API_BASE_URL}/threads/{thread_id}", params={"user_id": user_id})
-    except: pass
+    except Exception as e: st.error(f"API 연결 차단됨: {e}")
 
 def api_save_inputs(user_id, thread_id, inputs: dict):
     try:
         payload = {"user_id": user_id, **inputs}
         requests.post(f"{API_BASE_URL}/threads/{thread_id}/inputs", json=payload)
-    except: pass
+    except Exception as e: st.error(f"API 연결 차단됨: {e}")
 
 def api_get_ai_response(user_id, thread_id, city, district, dong, birth_year, extra_info, query=None) -> str:
     payload = {
@@ -71,14 +94,17 @@ def api_get_ai_response(user_id, thread_id, city, district, dong, birth_year, ex
         "extra_info": extra_info,
         "query": query
     }
-    res = requests.post(f"{API_BASE_URL}/chat", json=payload)
-    if res.status_code == 200:
-        return res.json().get("answer", "응답을 파싱할 수 없습니다.")
-    else:
-        raise Exception(f"서버 통신 오류: {res.text}")
+    try:
+        res = requests.post(f"{API_BASE_URL}/chat", json=payload)
+        if res.status_code == 200:
+            return res.json().get("answer", "응답을 파싱할 수 없습니다.")
+        else:
+            raise Exception(f"서버 통신 오류: {res.status_code} - {res.text}")
+    except Exception as e:
+        raise Exception(f"클라우드 API 통신 실패: {e}")
 
 # ==========================================
-# 기존 상수 설정
+# 기존 상수 설정 (이 아래부터는 기존 코드 유지)
 # ==========================================
 CURRENT_YEAR = datetime.now().year
 BROWSER_USER_ID_KEY = "policy_navigator_browser_user_id_v1"
@@ -1045,15 +1071,21 @@ def load_thread_state_to_session(thread_id: str, sync_browser_storage: bool = Tr
         st.session_state["browser_user_id"],
         thread_id
     )
-    
-    # 🚀 DB 직접 로딩 제거, 세션/API 기반으로 최적화
-    apply_thread_inputs_to_session({}) # 백엔드에서 불러오는 대신 초기화 후 UI 반영
+
+    thread_inputs = api_load_inputs(
+        st.session_state["browser_user_id"],
+        thread_id
+    )
+    apply_thread_inputs_to_session(thread_inputs)
+    set_last_saved_input_state(
+        thread_id,
+        thread_inputs if isinstance(thread_inputs, dict) else get_current_input_state()
+    )
 
     if sync_browser_storage:
         sync_browser_tab_thread_id(thread_id)
 
     clear_clear_current_confirm()
-
 
 def clear_rename_state():
     st.session_state["rename_target_thread_id"] = None
