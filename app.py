@@ -7,7 +7,6 @@ import streamlit as st
 from dotenv import load_dotenv
 from streamlit_js_eval import streamlit_js_eval
 
-
 from legal_dong_loader import load_legal_dong_data
 
 load_dotenv()
@@ -27,12 +26,12 @@ from api_client import (
 )
 
 # ==========================================
-# API 클라이언트 설정 (이 아래부터는 기존 코드 유지)
+# API 클라이언트 설정
 # ==========================================
 API_BASE_URL = get_api_base_url()
 
 # ==========================================
-# 기존 상수 설정 (이 아래부터는 기존 코드 유지)
+# 기존 상수 설정
 # ==========================================
 CURRENT_YEAR = datetime.now().year
 BROWSER_USER_ID_KEY = "policy_navigator_browser_user_id_v1"
@@ -1015,6 +1014,7 @@ def load_thread_state_to_session(thread_id: str, sync_browser_storage: bool = Tr
 
     clear_clear_current_confirm()
 
+
 def clear_rename_state():
     st.session_state["rename_target_thread_id"] = None
     st.session_state["rename_draft_title"] = ""
@@ -1214,6 +1214,7 @@ def delete_thread_with_confirm(thread_id: str) -> bool:
 
     set_runtime_notice("선택한 대화를 삭제했어요.")
     return True
+
 
 # 🚀 프론트엔드 상태만 관리하고 저장은 백엔드로 던지는 API-First 구조
 def persist_current_inputs(show_error: bool = False, force: bool = False) -> bool:
@@ -1453,6 +1454,7 @@ def get_browser_context() -> dict:
 
 
 def init_app_session():
+    # ❌ [삭제됨] init_db(): 프론트엔드는 이제 DB에 직접 연결하지 않습니다.
     browser_context = get_browser_context()
     browser_user_id = browser_context.get("browser_user_id", "")
     browser_tab_id = browser_context.get("browser_tab_id", "")
@@ -1520,6 +1522,7 @@ def init_app_session():
 
     ensure_runtime_thread_state(show_error=False)
     ensure_valid_active_thread(show_error=False, show_notice=False)
+
 
 # 🚀 프론트엔드는 화면만! 저장은 백엔드가 알아서 수행함
 def append_message(role: str, content: str, message_type: str = "") -> bool:
