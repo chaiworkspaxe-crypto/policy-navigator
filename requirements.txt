@@ -8,3 +8,5 @@ pytz
 streamlit_js_eval
 truststore
 psycopg2-binary
+fastapi
+uvicorn[standard]

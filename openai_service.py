@@ -1,6 +1,11 @@
 import os
+from functools import lru_cache
 
-import streamlit as st
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except Exception:
+    pass
 
 from langchain_openai import ChatOpenAI
 from langchain.agents import create_agent
@@ -24,15 +29,9 @@ SYSTEM_PROMPT = """
 
 2. 넓게 검색하되 과도하게 무겁지 않게 탐색:
    - 프로필이 파악되면 web_search 도구를 여러 번 호출하여 사용자가 신청할 수 있는 '모든' 혜택을 샅샅이 찾아내세요. 유명하고 규모가 큰 것만 찾지 말고, 숨겨진 작은 혜택도 최대한 많이 발굴해야 합니다.
-   - [필수 탐색 분야]: 일자리, 취업/진로, 창업, 주거, 금융, 교육, 복지, 청년정책, 마음건강, 신체건강, 생활지원, 문화/예술, 대외활동, 공간, 사회참여, 커뮤니티 등 가능한 모든 분야를 키워드로 검색하세요.
-   - [계층]: 검색 시 중앙정부 / 광역지자체 / 기초지자체 / 공공기관 / 공공재단 정책이 모두 포함되도록 교차 검색하세요.
+   - [필수 탐색 분야]&#58; 일자리, 취업/진로, 창업, 주거, 금융, 교육, 복지, 청년정책, 마음건강, 신체건강, 생활지원, 문화/예술, 대외활동, 공간, 사회참여, 커뮤니티 등 가능한 모든 분야를 키워드로 검색하세요.
+   - [계층]&#58; 검색 시 중앙정부 / 광역지자체 / 기초지자체 / 공공기관 / 공공재단 정책이 모두 포함되도록 교차 검색하세요.
    - 대표 몇 개만 임의로 줄이지 말고, 충분히 검증된 항목은 가능한 한 빠짐없이 포함하세요.
-
-3. [하이브리드 핵심] 상위 공식 후보는 반드시 가볍게 재검증:
-   - `web_search` 결과를 그대로 믿지 말고, 최종 답변에 포함하려는 상위 공식/공공기관 후보는 `verify_official_page` 도구로 다시 확인하세요.
-   - 특히 공식 사이트 추정이 '예'인 링크, 신청/공고/모집으로 보이는 링크, 마감일이 가까워 보이는 링크를 우선 검증하세요.
-   - `verify_official_page`에서 신청/공고 관련 표현이 전혀 없고, 날짜/마감 관련 근거도 없으면 최종 후보에서 제외하거나 매우 보수적으로 다루세요.
-   
 
 4. 팩트 체크 및 마감 여부 철저 검증:
    - 존재하지 않는 정책을 지어내는 환각(Hallucination)은 절대 금지합니다.
@@ -57,35 +56,33 @@ SYSTEM_PROMPT = """
    - Streamlit 표 깨짐 방지를 위해 표 전후에는 빈 줄을 넣으세요.
 
 6. 후속 질문 처리
-       - 사용자가 추가 질문을 하면, 기존 대화에서 이미 파악한 거주지/출생연도/추가 정보를 기본 조건으로 유지하세요.
-       - 예: "월세 지원만 다시 정리해줘", "지금 바로 신청 가능한 것만 보여줘" 같은 요청은
-       기존 사용자 조건을 유지한 채 해당 범위만 더 좁혀서 다시 탐색하세요.
-       - 사용자가 거주지, 나이, 상태를 새로 바꾸어 말하면 그때만 조건을 갱신하세요.
+   - 사용자가 추가 질문을 하면, 기존 대화에서 이미 파악한 거주지/출생연도/추가 정보를 기본 조건으로 유지하세요.
+   - 예: "월세 지원만 다시 정리해줘", "지금 바로 신청 가능한 것만 보여줘" 같은 요청은
+     기존 사용자 조건을 유지한 채 해당 범위만 더 좁혀서 다시 탐색하세요.
+   - 사용자가 거주지, 나이, 상태를 새로 바꾸어 말하면 그때만 조건을 갱신하세요.
 """
 
 
-@st.cache_resource
+@lru_cache(maxsize=1)
 def create_agent_executor():
-    """
-    Agent를 생성하고 캐싱합니다.
-    """
-    llm = ChatOpenAI(model="gpt-5.4")
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "OPENAI_API_KEY 환경변수가 비어 있습니다. .env 파일 또는 Render 환경변수를 확인해 주세요."
+        )
+
+    model_name = os.getenv("OPENAI_MODEL", "gpt-5.4").strip() or "gpt-5.4"
+    llm = ChatOpenAI(model=model_name)
 
     agent = create_agent(
         model=llm,
         tools=[web_search, verify_official_page, get_current_time],
         system_prompt=SYSTEM_PROMPT,
     )
-
     return agent
 
 
-
 def get_ai_response(agent, messages: list) -> str:
-    """
-    전체 대화 메시지를 전달하여 응답을 생성합니다.
-    연결 오류, API 키 누락 등을 더 쉽게 추적할 수 있도록 상세 예외를 다시 발생시킵니다.
-    """
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(
