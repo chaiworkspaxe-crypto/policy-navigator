@@ -1,19 +1,12 @@
 import html
 import json
 import re
-import requests
 from datetime import datetime, timedelta
 
 import streamlit as st
 from dotenv import load_dotenv
 from streamlit_js_eval import streamlit_js_eval
 
-# 🚨 [핵심 해결책] Windows 환경/파이썬 requests SSL 보안 인증 에러 방지
-try:
-    import truststore
-    truststore.inject_into_ssl()
-except Exception:
-    pass
 
 from legal_dong_loader import load_legal_dong_data
 
@@ -21,87 +14,22 @@ load_dotenv()
 
 st.set_page_config(page_title="💵 전국민 맞춤형 정책 내비게이터")
 
+from api_client import (
+    api_create_thread,
+    api_delete_thread,
+    api_get_ai_response,
+    api_list_threads,
+    api_load_inputs,
+    api_load_messages,
+    api_rename_thread,
+    api_save_inputs,
+    get_api_base_url,
+)
+
 # ==========================================
-# 🚀 Phase 1: 클라우드 API 통신 환경 설정
+# API 클라이언트 설정 (이 아래부터는 기존 코드 유지)
 # ==========================================
-API_BASE_URL = "https://policy-navigator-1.onrender.com"
-
-def api_create_thread(user_id: str) -> str:
-    try:
-        res = requests.post(f"{API_BASE_URL}/threads", json={"user_id": user_id})
-        if res.status_code == 200:
-            return res.json().get("thread_id", "")
-        else:
-            st.error(f"대화 생성 서버 에러: {res.status_code} - {res.text}")
-    except Exception as e:
-        st.error(f"API 연결 차단됨 (create_thread): {e}")
-    return ""
-
-def api_rename_thread(user_id: str, thread_id: str, title: str):
-    try:
-        requests.patch(f"{API_BASE_URL}/threads/{thread_id}", json={"user_id": user_id, "title": title})
-    except Exception as e: st.error(f"API 연결 차단됨: {e}")
-
-def api_list_threads(user_id: str) -> list:
-    try:
-        res = requests.get(f"{API_BASE_URL}/threads", params={"user_id": user_id})
-        if res.status_code == 200:
-            return res.json().get("threads", [])
-        else:
-            st.error(f"목록 불러오기 서버 에러: {res.status_code} - {res.text}")
-    except Exception as e: 
-        st.error(f"API 연결 차단됨 (list_threads): {e}")
-    return []
-
-def api_load_messages(user_id: str, thread_id: str) -> list:
-    try:
-        res = requests.get(f"{API_BASE_URL}/threads/{thread_id}/messages", params={"user_id": user_id})
-        if res.status_code == 200:
-            return res.json().get("messages", [])
-    except Exception as e: st.error(f"API 연결 차단됨: {e}")
-    return []
-
-def api_load_inputs(user_id: str, thread_id: str) -> dict:
-    try:
-        res = requests.get(f"{API_BASE_URL}/threads/{thread_id}/inputs", params={"user_id": user_id})
-        if res.status_code == 200:
-            return res.json().get("inputs", {})
-        else:
-            st.error(f"입력값 불러오기 서버 에러: {res.status_code} - {res.text}")
-    except Exception as e:
-        st.error(f"API 연결 차단됨 (load_inputs): {e}")
-    return {}
-
-def api_delete_thread(user_id: str, thread_id: str):
-    try:
-        requests.delete(f"{API_BASE_URL}/threads/{thread_id}", params={"user_id": user_id})
-    except Exception as e: st.error(f"API 연결 차단됨: {e}")
-
-def api_save_inputs(user_id, thread_id, inputs: dict):
-    try:
-        payload = {"user_id": user_id, **inputs}
-        requests.post(f"{API_BASE_URL}/threads/{thread_id}/inputs", json=payload)
-    except Exception as e: st.error(f"API 연결 차단됨: {e}")
-
-def api_get_ai_response(user_id, thread_id, city, district, dong, birth_year, extra_info, query=None) -> str:
-    payload = {
-        "user_id": user_id,
-        "thread_id": thread_id,
-        "city": city,
-        "district": district,
-        "dong": dong,
-        "birth_year": birth_year,
-        "extra_info": extra_info,
-        "query": query
-    }
-    try:
-        res = requests.post(f"{API_BASE_URL}/chat", json=payload)
-        if res.status_code == 200:
-            return res.json().get("answer", "응답을 파싱할 수 없습니다.")
-        else:
-            raise Exception(f"서버 통신 오류: {res.status_code} - {res.text}")
-    except Exception as e:
-        raise Exception(f"클라우드 API 통신 실패: {e}")
+API_BASE_URL = get_api_base_url()
 
 # ==========================================
 # 기존 상수 설정 (이 아래부터는 기존 코드 유지)
