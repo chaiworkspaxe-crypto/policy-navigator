@@ -14,7 +14,7 @@ except Exception:
 load_dotenv()
 
 DEFAULT_API_BASE_URL = "https://policy-navigator-1.onrender.com"
-REQUEST_TIMEOUT_SECONDS = 30
+REQUEST_TIMEOUT_SECONDS = 60
 
 
 def get_api_base_url() -> str:

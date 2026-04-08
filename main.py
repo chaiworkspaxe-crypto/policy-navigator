@@ -22,6 +22,24 @@ from chat_db import (
     save_thread_inputs,
     load_thread_inputs,
 )
+
+from fastapi.middleware.cors import CORSMiddleware # 추가
+
+app = FastAPI()
+
+# 💡 [CORS 설정 추가] 이 부분을 꼭 넣어야 React와 대화할 수 있어!
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000", 
+        "http://127.0.0.1:3000",
+        # 나중에 배포할 Vercel 주소도 여기에 추가할 거야
+    ],
+    allow_credentials=True,
+    allow_methods=["*"], # 모든 방식(GET, POST 등) 허용
+    allow_headers=["*"], # 모든 헤더 허용
+)
+
 from openai_service import create_agent_executor, get_ai_response
 
 load_dotenv()
