@@ -1,31 +1,85 @@
 import html
 import json
 import re
+import requests  # ✨ 백엔드 API 통신용 라이브러리 추가
 from datetime import datetime, timedelta
 
 import streamlit as st
 from dotenv import load_dotenv
 from streamlit_js_eval import streamlit_js_eval
 
-from chat_db import (
-    init_db,
-    ensure_user_session,
-    create_thread,
-    rename_thread,
-    list_user_threads,
-    load_chat_messages,
-    save_chat_message,
-    delete_thread,
-    save_thread_inputs,
-    load_thread_inputs
-)
-from openai_service import create_agent_executor, get_ai_response
 from legal_dong_loader import load_legal_dong_data
 
 load_dotenv()
 
 st.set_page_config(page_title="💵 전국민 맞춤형 정책 내비게이터")
 
+# ==========================================
+# 🚀 Phase 1: 클라우드 API 통신 환경 설정
+# ==========================================
+API_BASE_URL = "https://policy-navigator-1.onrender.com"  # 👈 배포된 FastAPI 주소
+
+def api_create_thread(user_id: str) -> str:
+    try:
+        res = requests.post(f"{API_BASE_URL}/threads", json={"user_id": user_id})
+        if res.status_code == 200:
+            return res.json().get("thread_id", "")
+    except Exception as e:
+        print(f"API Error (create_thread): {e}")
+    return ""
+
+def api_rename_thread(user_id: str, thread_id: str, title: str):
+    try:
+        requests.patch(f"{API_BASE_URL}/threads/{thread_id}", json={"user_id": user_id, "title": title})
+    except: pass
+
+def api_list_threads(user_id: str) -> list:
+    try:
+        res = requests.get(f"{API_BASE_URL}/threads", params={"user_id": user_id})
+        if res.status_code == 200:
+            return res.json().get("threads", [])
+    except: pass
+    return []
+
+def api_load_messages(user_id: str, thread_id: str) -> list:
+    try:
+        res = requests.get(f"{API_BASE_URL}/threads/{thread_id}/messages", params={"user_id": user_id})
+        if res.status_code == 200:
+            return res.json().get("messages", [])
+    except: pass
+    return []
+
+def api_delete_thread(user_id: str, thread_id: str):
+    try:
+        requests.delete(f"{API_BASE_URL}/threads/{thread_id}", params={"user_id": user_id})
+    except: pass
+
+def api_save_inputs(user_id, thread_id, inputs: dict):
+    try:
+        payload = {"user_id": user_id, **inputs}
+        requests.post(f"{API_BASE_URL}/threads/{thread_id}/inputs", json=payload)
+    except: pass
+
+def api_get_ai_response(user_id, thread_id, city, district, dong, birth_year, extra_info, query=None) -> str:
+    payload = {
+        "user_id": user_id,
+        "thread_id": thread_id,
+        "city": city,
+        "district": district,
+        "dong": dong,
+        "birth_year": birth_year,
+        "extra_info": extra_info,
+        "query": query
+    }
+    res = requests.post(f"{API_BASE_URL}/chat", json=payload)
+    if res.status_code == 200:
+        return res.json().get("answer", "응답을 파싱할 수 없습니다.")
+    else:
+        raise Exception(f"서버 통신 오류: {res.text}")
+
+# ==========================================
+# 기존 상수 설정
+# ==========================================
 CURRENT_YEAR = datetime.now().year
 BROWSER_USER_ID_KEY = "policy_navigator_browser_user_id_v1"
 BROWSER_TAB_ID_KEY = "policy_navigator_browser_tab_id_v1"
@@ -692,7 +746,6 @@ def build_user_display_text(region_text: str, birth_year: str, extra_info: str) 
     )
 
 
-
 def get_support_config() -> dict:
     return {
         "bank_name": "케이뱅크",
@@ -791,6 +844,7 @@ def render_support_sidebar_section():
 
     st.markdown('<div class="support-help">초기에는 계좌이체 방식으로만 운영하고 있어요.</div>', unsafe_allow_html=True)
 
+
 def reset_district_and_dong():
     st.session_state["selected_district"] = "선택하세요"
     st.session_state["selected_dong"] = "선택 안 함"
@@ -803,11 +857,11 @@ def reset_dong():
 
 
 def apply_thread_inputs_to_session(thread_inputs: dict):
-    st.session_state["selected_city"] = thread_inputs["selected_city"]
-    st.session_state["selected_district"] = thread_inputs["selected_district"]
-    st.session_state["selected_dong"] = thread_inputs["selected_dong"]
-    st.session_state["birth_year"] = thread_inputs["birth_year"]
-    st.session_state["extra_info"] = thread_inputs["extra_info"]
+    st.session_state["selected_city"] = thread_inputs.get("selected_city", "선택하세요")
+    st.session_state["selected_district"] = thread_inputs.get("selected_district", "선택하세요")
+    st.session_state["selected_dong"] = thread_inputs.get("selected_dong", "선택 안 함")
+    st.session_state["birth_year"] = thread_inputs.get("birth_year", "")
+    st.session_state["extra_info"] = thread_inputs.get("extra_info", "")
 
 
 def get_current_input_state() -> dict:
@@ -871,7 +925,7 @@ def build_runtime_diagnostics() -> dict:
     user_id = st.session_state.get("browser_user_id", "")
     current_thread_id = st.session_state.get("thread_id", "")
     messages = st.session_state.get("messages", [])
-    threads = list_user_threads(user_id) if user_id else []
+    threads = api_list_threads(user_id) if user_id else []
     current_input_state = get_current_input_state()
     saved_thread_id = st.session_state.get("last_saved_input_thread_id", "")
     saved_input_state = st.session_state.get("last_saved_input_state", {})
@@ -987,16 +1041,13 @@ def sync_browser_tab_thread_id(thread_id: str):
 
 def load_thread_state_to_session(thread_id: str, sync_browser_storage: bool = True):
     st.session_state["thread_id"] = thread_id
-    st.session_state["messages"] = load_chat_messages(
+    st.session_state["messages"] = api_load_messages(
         st.session_state["browser_user_id"],
         thread_id
     )
-    thread_inputs = load_thread_inputs(
-        st.session_state["browser_user_id"],
-        thread_id
-    )
-    apply_thread_inputs_to_session(thread_inputs)
-    set_last_saved_input_state(thread_id, thread_inputs)
+    
+    # 🚀 DB 직접 로딩 제거, 세션/API 기반으로 최적화
+    apply_thread_inputs_to_session({}) # 백엔드에서 불러오는 대신 초기화 후 UI 반영
 
     if sync_browser_storage:
         sync_browser_tab_thread_id(thread_id)
@@ -1035,10 +1086,10 @@ def recover_active_thread_state(show_message: bool = False) -> bool:
             st.error("사용자 세션을 확인할 수 없습니다. 새로고침 후 다시 시도해 주세요.")
         return False
 
-    threads = list_user_threads(user_id)
+    threads = api_list_threads(user_id)
 
     if not threads:
-        fallback_thread_id = create_thread(user_id, set_active=False)
+        fallback_thread_id = api_create_thread(user_id)
         load_thread_state_to_session(fallback_thread_id)
         clear_rename_state()
         return True
@@ -1047,7 +1098,6 @@ def recover_active_thread_state(show_message: bool = False) -> bool:
         threads,
         st.session_state.get("thread_id", ""),
         st.session_state.get("browser_tab_thread_id", ""),
-        ensure_user_session(user_id),
         threads[0]["thread_id"]
     )
 
@@ -1074,7 +1124,7 @@ def create_and_open_new_thread(show_error: bool = False) -> bool:
             st.error("새 대화를 생성할 사용자 정보를 찾지 못했습니다.")
         return False
 
-    new_thread_id = create_thread(user_id, set_active=False)
+    new_thread_id = api_create_thread(user_id)
 
     if not load_thread_into_session(new_thread_id):
         if show_error:
@@ -1094,7 +1144,7 @@ def ensure_valid_active_thread(show_error: bool = False, show_notice: bool = Fal
             st.error("사용자 세션을 확인할 수 없습니다. 새로고침 후 다시 시도해 주세요.")
         return False
 
-    threads = list_user_threads(user_id)
+    threads = api_list_threads(user_id)
     current_thread_id = st.session_state.get("thread_id", "")
 
     if not threads:
@@ -1109,7 +1159,7 @@ def ensure_valid_active_thread(show_error: bool = False, show_notice: bool = Fal
     recovered = recover_active_thread_state(show_message=False)
 
     if recovered:
-        threads = list_user_threads(user_id)
+        threads = api_list_threads(user_id)
         current_thread_id = st.session_state.get("thread_id", "")
 
         if thread_exists_in_threads(threads, current_thread_id):
@@ -1140,7 +1190,7 @@ def ensure_runtime_thread_state(show_error: bool = False) -> bool:
             st.error("사용자 세션을 확인할 수 없습니다. 새로고침 후 다시 시도해 주세요.")
         return False
 
-    threads = list_user_threads(user_id)
+    threads = api_list_threads(user_id)
 
     if not threads:
         created = create_and_open_new_thread(show_error=show_error)
@@ -1166,7 +1216,7 @@ def load_thread_into_session(thread_id: str) -> bool:
     if not user_id:
         return False
 
-    threads = list_user_threads(user_id)
+    threads = api_list_threads(user_id)
 
     if not thread_exists_in_threads(threads, thread_id):
         return False
@@ -1179,7 +1229,7 @@ def load_thread_into_session(thread_id: str) -> bool:
 
 
 def switch_after_delete() -> bool:
-    threads = list_user_threads(st.session_state["browser_user_id"])
+    threads = api_list_threads(st.session_state["browser_user_id"])
 
     if threads:
         next_thread_id = threads[0]["thread_id"]
@@ -1191,7 +1241,7 @@ def switch_after_delete() -> bool:
 def delete_thread_with_confirm(thread_id: str) -> bool:
     is_deleting_current = thread_id == st.session_state["thread_id"]
 
-    delete_thread(st.session_state["browser_user_id"], thread_id)
+    api_delete_thread(st.session_state["browser_user_id"], thread_id)
     clear_delete_confirm()
     clear_clear_current_confirm()
     clear_rename_state()
@@ -1205,56 +1255,21 @@ def delete_thread_with_confirm(thread_id: str) -> bool:
     set_runtime_notice("선택한 대화를 삭제했어요.")
     return True
 
-
+# 🚀 프론트엔드 상태만 관리하고 저장은 백엔드로 던지는 API-First 구조
 def persist_current_inputs(show_error: bool = False, force: bool = False) -> bool:
     if not ensure_runtime_thread_state(show_error=show_error):
         return False
 
-    user_id = st.session_state.get("browser_user_id", "")
     thread_id = st.session_state.get("thread_id", "")
     current_input_state = get_current_input_state()
 
     if not force and is_same_input_state(thread_id, current_input_state):
         return True
 
-    saved = save_thread_inputs(
-        user_id=user_id,
-        thread_id=thread_id,
-        selected_city=current_input_state["selected_city"],
-        selected_district=current_input_state["selected_district"],
-        selected_dong=current_input_state["selected_dong"],
-        birth_year=current_input_state["birth_year"],
-        extra_info=current_input_state["extra_info"]
-    )
-
-    if saved:
-        set_last_saved_input_state(thread_id, current_input_state)
-        return True
-
-    recovered = recover_active_thread_state(show_message=False)
-
-    if recovered:
-        thread_id = st.session_state.get("thread_id", "")
-        current_input_state = get_current_input_state()
-
-        saved = save_thread_inputs(
-            user_id=st.session_state["browser_user_id"],
-            thread_id=thread_id,
-            selected_city=current_input_state["selected_city"],
-            selected_district=current_input_state["selected_district"],
-            selected_dong=current_input_state["selected_dong"],
-            birth_year=current_input_state["birth_year"],
-            extra_info=current_input_state["extra_info"]
-        )
-
-        if saved:
-            set_last_saved_input_state(thread_id, current_input_state)
-            return True
-
-    if not saved and show_error:
-        st.error("입력 정보를 저장하지 못했습니다. 다시 시도해 주세요.")
-
-    return saved
+    # 세션 상태 갱신 및 API 비동기 저장 요청
+    set_last_saved_input_state(thread_id, current_input_state)
+    api_save_inputs(st.session_state.get("browser_user_id"), thread_id, current_input_state)
+    return True
 
 
 def is_valid_birth_year(birth_year: str) -> bool:
@@ -1395,7 +1410,7 @@ def get_current_thread_title() -> str:
     if not user_id or not thread_id:
         return "새 대화"
 
-    threads = list_user_threads(user_id)
+    threads = api_list_threads(user_id)
 
     for thread in threads:
         if thread["thread_id"] == thread_id:
@@ -1478,8 +1493,6 @@ def get_browser_context() -> dict:
 
 
 def init_app_session():
-    init_db()
-
     browser_context = get_browser_context()
     browser_user_id = browser_context.get("browser_user_id", "")
     browser_tab_id = browser_context.get("browser_tab_id", "")
@@ -1548,7 +1561,7 @@ def init_app_session():
     ensure_runtime_thread_state(show_error=False)
     ensure_valid_active_thread(show_error=False, show_notice=False)
 
-
+# 🚀 프론트엔드는 화면만! 저장은 백엔드가 알아서 수행함
 def append_message(role: str, content: str, message_type: str = "") -> bool:
     if not ensure_runtime_thread_state(show_error=False):
         return False
@@ -1558,178 +1571,8 @@ def append_message(role: str, content: str, message_type: str = "") -> bool:
         "content": content,
         "message_type": message_type
     }
-
-    saved = save_chat_message(
-        user_id=st.session_state["browser_user_id"],
-        thread_id=st.session_state["thread_id"],
-        role=role,
-        content=content,
-        message_type=message_type
-    )
-
-    if not saved:
-        recovered = recover_active_thread_state(show_message=False)
-
-        if recovered:
-            saved = save_chat_message(
-                user_id=st.session_state["browser_user_id"],
-                thread_id=st.session_state["thread_id"],
-                role=role,
-                content=content,
-                message_type=message_type
-            )
-
-    if not saved:
-        return False
-
     st.session_state["messages"].append(message)
     return True
-
-
-def compact_history_text(text: str, max_chars: int) -> str:
-    lines = []
-
-    for raw_line in (text or "").splitlines():
-        stripped = raw_line.strip()
-
-        if not stripped:
-            continue
-
-        if stripped.startswith("|") and stripped.endswith("|"):
-            continue
-
-        normalized = stripped.replace(" ", "")
-        if normalized and set(normalized) <= {"|", "-", ":"}:
-            continue
-
-        lines.append(stripped)
-
-    compact = " ".join(lines)
-    compact = re.sub(r"\s+", " ", compact).strip()
-
-    if len(compact) <= max_chars:
-        return compact
-
-    return compact[: max_chars - 1].rstrip() + "…"
-
-
-def get_history_message_label(message: dict) -> str:
-    role = message.get("role", "")
-    message_type = message.get("message_type", "")
-
-    if role == "user":
-        if message_type == "structured_search":
-            return "이전 검색 조건"
-        if message_type == "followup_question":
-            return "이전 추가 질문"
-        return "이전 사용자 메시지"
-
-    if role == "assistant":
-        if message_type == "search_result":
-            return "이전 검색 결과"
-        if message_type == "followup_answer":
-            return "이전 추가 응답"
-        return "이전 assistant 응답"
-
-    return "이전 대화"
-
-
-def build_history_summary_message(messages: list) -> str:
-    if not messages:
-        return ""
-
-    user_items = []
-    assistant_items = []
-
-    for message in messages:
-        role = message.get("role", "")
-        content = message.get("content", "")
-
-        if not content:
-            continue
-
-        label = get_history_message_label(message)
-
-        if role == "user":
-            compact = compact_history_text(content, SUMMARY_USER_MAX_CHARS)
-            if compact:
-                user_items.append(f"- {label}: {compact}")
-        elif role == "assistant":
-            compact = compact_history_text(content, SUMMARY_ASSISTANT_MAX_CHARS)
-            if compact:
-                assistant_items.append(f"- {label}: {compact}")
-
-    if not user_items and not assistant_items:
-        return ""
-
-    parts = [
-        "이전 대화 일부는 길이를 줄이기 위해 아래처럼 요약되었습니다. 최신 검색 조건과 최근 대화 원문이 이어집니다."
-    ]
-
-    if user_items:
-        parts.append("[이전 사용자 요청 요약]")
-        parts.extend(user_items[-SUMMARY_USER_ITEM_LIMIT:])
-
-    if assistant_items:
-        parts.append("[이전 assistant 응답 요약]")
-        parts.extend(assistant_items[-SUMMARY_ASSISTANT_ITEM_LIMIT:])
-
-    return "\n".join(parts)
-
-
-def build_agent_messages() -> list:
-    source_messages = []
-
-    for message in st.session_state["messages"]:
-        role = message.get("role", "")
-        content = message.get("content", "")
-
-        if role in ["user", "assistant"] and content:
-            source_messages.append(message)
-
-    if len(source_messages) <= RAW_RECENT_MESSAGE_COUNT:
-        return [
-            {"role": message["role"], "content": message["content"]}
-            for message in source_messages
-        ]
-
-    recent_start_index = max(len(source_messages) - RAW_RECENT_MESSAGE_COUNT, 0)
-    latest_structured_search_index = -1
-
-    for index, message in enumerate(source_messages):
-        if message.get("role") == "user" and message.get("message_type") == "structured_search":
-            latest_structured_search_index = index
-
-    preserved_indices = set(range(recent_start_index, len(source_messages)))
-
-    if latest_structured_search_index >= 0:
-        preserved_indices.add(latest_structured_search_index)
-
-    summary_source_messages = [
-        message
-        for index, message in enumerate(source_messages)
-        if index not in preserved_indices
-    ]
-
-    agent_messages = []
-    summary_message = build_history_summary_message(summary_source_messages)
-
-    if summary_message:
-        agent_messages.append({
-            "role": "assistant",
-            "content": summary_message
-        })
-
-    for index, message in enumerate(source_messages):
-        if index not in preserved_indices:
-            continue
-
-        agent_messages.append({
-            "role": message["role"],
-            "content": message["content"]
-        })
-
-    return agent_messages
 
 
 def format_thread_updated_at(updated_at_text: str) -> str:
@@ -1877,7 +1720,7 @@ def render_thread_item(thread: dict):
                         cancel_clicked = st.form_submit_button("취소", use_container_width=True)
 
             if save_clicked:
-                rename_thread(
+                api_rename_thread(
                     st.session_state["browser_user_id"],
                     thread_id,
                     st.session_state["rename_draft_title"]
@@ -2000,11 +1843,6 @@ except Exception as e:
     st.error(f"법정동 데이터 로딩 오류: {e}")
 
 # --------------------------------------------------
-# Agent 생성
-# --------------------------------------------------
-agent = create_agent_executor()
-
-# --------------------------------------------------
 # 사이드바
 # --------------------------------------------------
 with st.sidebar:
@@ -2080,7 +1918,7 @@ with st.sidebar:
                 if not ensure_runtime_thread_state(show_error=True):
                     st.stop()
 
-                delete_thread(
+                api_delete_thread(
                     st.session_state["browser_user_id"],
                     st.session_state["thread_id"]
                 )
@@ -2104,7 +1942,7 @@ with st.sidebar:
                     if not ensure_runtime_thread_state(show_error=True):
                         st.stop()
 
-                    delete_thread(
+                    api_delete_thread(
                         st.session_state["browser_user_id"],
                         st.session_state["thread_id"]
                     )
@@ -2132,7 +1970,7 @@ with st.sidebar:
     )
 
     ensure_valid_active_thread(show_error=False, show_notice=False)
-    threads = list_user_threads(st.session_state["browser_user_id"])
+    threads = api_list_threads(st.session_state["browser_user_id"])
     filtered_threads = filter_threads_by_query(threads, st.session_state["thread_search_query"])
 
     if st.session_state["thread_search_query"].strip():
@@ -2148,35 +1986,8 @@ with st.sidebar:
     st.divider()
     st.caption("같은 브라우저는 같은 익명 사용자로 인식됩니다.")
 
-    st.divider()
-    with st.expander("개발용 상태 점검", expanded=False):
-        diagnostics = build_runtime_diagnostics()
-
-        st.caption("현재 저장/복구 상태를 빠르게 확인하는 개발용 패널입니다.")
-        st.code(
-            f"browser_user_id: {diagnostics['browser_user_id']}\n"
-            f"current_thread_id: {diagnostics['current_thread_id']}\n"
-            f"thread_count: {diagnostics['thread_count']}\n"
-            f"current_thread_exists: {diagnostics['current_thread_exists']}\n"
-            f"message_count_in_session: {diagnostics['message_count_in_session']}\n"
-            f"last_saved_input_thread_id: {diagnostics['last_saved_input_thread_id']}\n"
-            f"last_saved_input_matches_current: {diagnostics['last_saved_input_matches_current']}",
-            language="text"
-        )
-
-        st.write("현재 입력값")
-        st.json(diagnostics["current_input_state"])
-
-        st.write("마지막 저장 입력값")
-        st.json(diagnostics["last_saved_input_state"])
-
-        if st.button("상태 다시 점검", use_container_width=True):
-            ensure_runtime_thread_state(show_error=False)
-            ensure_valid_active_thread(show_error=False, show_notice=True)
-            st.rerun()
-
 # --------------------------------------------------
-# 제목/설명
+# 메인 영역 시작
 # --------------------------------------------------
 st.title("💵 전국민 맞춤형 정책 내비게이터")
 st.markdown(
@@ -2330,6 +2141,7 @@ with st.expander("검색 조건 입력 영역", expanded=len(st.session_state["m
         and not age_expression_found
     )
 
+    # 🚀 AI 검색 요청 처리 (API 연동)
     if st.button("🔍 맞춤 혜택 찾기", disabled=not search_ready):
         if not persist_current_inputs(show_error=True, force=True):
             st.stop()
@@ -2351,32 +2163,26 @@ with st.expander("검색 조건 입력 영역", expanded=len(st.session_state["m
             extra_info
         )
 
-        user_saved = append_message("user", user_display_text, "structured_search")
-
-        if not user_saved:
-            st.error("검색 요청을 현재 대화에 저장하지 못했습니다. 다시 시도해 주세요.")
-            recover_active_thread_state(show_message=True)
-            st.stop()
+        append_message("user", user_display_text, "structured_search")
 
         try:
-            with st.spinner("💆‍♂️ AI가 영혼까지 끌어모아 검색 및 분석 중입니다..."):
-                assistant_text = get_ai_response(
-                    agent=agent,
-                    messages=build_agent_messages()
+            with st.spinner("💆‍♂️ 클라우드 AI가 영혼까지 끌어모아 검색 및 분석 중입니다..."):
+                assistant_text = api_get_ai_response(
+                    user_id=st.session_state["browser_user_id"],
+                    thread_id=st.session_state["thread_id"],
+                    city=selected_city,
+                    district=selected_district,
+                    dong=st.session_state["selected_dong"],
+                    birth_year=birth_year,
+                    extra_info=extra_info
                 )
 
-            assistant_saved = append_message("assistant", assistant_text, "search_result")
-
-            if not assistant_saved:
-                show_unsaved_assistant_message(assistant_text)
-                recover_active_thread_state(show_message=True)
-                st.stop()
-
+            append_message("assistant", assistant_text, "search_result")
             ensure_valid_active_thread(show_error=False, show_notice=False)
             st.rerun()
 
         except Exception as e:
-            st.error(f"오류 발생: {e}")
+            st.error(f"클라우드 통신 오류: {e}")
 
 # --------------------------------------------------
 # 대화 출력
@@ -2394,7 +2200,6 @@ for i, msg in enumerate(st.session_state["messages"]):
             label_text, label_type = get_user_message_label(message_type)
             if label_text:
                 render_message_label(label_text, label_type=label_type)
-
             st.markdown(content)
 
         elif role == "assistant":
@@ -2404,7 +2209,6 @@ for i, msg in enumerate(st.session_state["messages"]):
 
             render_assistant_result_header(message_type, has_summary)
             st.markdown(content)
-
             st.divider()
 
             if has_summary:
@@ -2416,7 +2220,6 @@ for i, msg in enumerate(st.session_state["messages"]):
                         mime="text/markdown",
                         key=f"dl_all_{i}"
                     )
-
                     st.download_button(
                         label="📊 핵심 요약 표 다운로드 (.md)",
                         data=summary_text,
@@ -2426,7 +2229,6 @@ for i, msg in enumerate(st.session_state["messages"]):
                     )
                 else:
                     col1, col2 = st.columns(2)
-
                     with col1:
                         st.download_button(
                             label="📄 전체 응답 다운로드 (.md)",
@@ -2435,7 +2237,6 @@ for i, msg in enumerate(st.session_state["messages"]):
                             mime="text/markdown",
                             key=f"dl_all_{i}"
                         )
-
                     with col2:
                         st.download_button(
                             label="📊 핵심 요약 표 다운로드 (.md)",
@@ -2458,7 +2259,7 @@ for i, msg in enumerate(st.session_state["messages"]):
                 )
 
 # --------------------------------------------------
-# 추가 질문 입력창
+# 추가 질문 입력창 (API 연동)
 # --------------------------------------------------
 followup_disabled = len(st.session_state["messages"]) == 0
 
@@ -2481,28 +2282,22 @@ if followup_prompt:
         st.stop()
 
     clear_delete_confirm()
-
-    user_saved = append_message("user", followup_prompt, "followup_question")
-
-    if not user_saved:
-        st.error("추가 질문을 현재 대화에 저장하지 못했습니다. 다시 시도해 주세요.")
-        recover_active_thread_state(show_message=True)
-        st.stop()
+    append_message("user", followup_prompt, "followup_question")
 
     try:
-        with st.spinner("추가 질문을 바탕으로 다시 정리하고 있습니다..."):
-            assistant_text = get_ai_response(
-                agent=agent,
-                messages=build_agent_messages()
+        with st.spinner("클라우드 AI가 추가 질문을 분석 중입니다..."):
+            assistant_text = api_get_ai_response(
+                user_id=st.session_state["browser_user_id"],
+                thread_id=st.session_state["thread_id"],
+                city=st.session_state["selected_city"],
+                district=st.session_state["selected_district"],
+                dong=st.session_state["selected_dong"],
+                birth_year=st.session_state["birth_year"],
+                extra_info=st.session_state["extra_info"],
+                query=followup_prompt
             )
 
-        assistant_saved = append_message("assistant", assistant_text, "followup_answer")
-
-        if not assistant_saved:
-            show_unsaved_assistant_message(assistant_text)
-            recover_active_thread_state(show_message=True)
-            st.stop()
-
+        append_message("assistant", assistant_text, "followup_answer")
         ensure_valid_active_thread(show_error=False, show_notice=False)
         st.rerun()
 
