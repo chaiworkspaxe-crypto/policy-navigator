@@ -25,14 +25,8 @@ from api_client import (
     get_api_base_url,
 )
 
-# ==========================================
-# API 클라이언트 설정
-# ==========================================
 API_BASE_URL = get_api_base_url()
 
-# ==========================================
-# 기존 상수 설정
-# ==========================================
 CURRENT_YEAR = datetime.now().year
 BROWSER_USER_ID_KEY = "policy_navigator_browser_user_id_v1"
 BROWSER_TAB_ID_KEY = "policy_navigator_browser_tab_id_v1"
@@ -53,8 +47,10 @@ def run_js_eval(js_expressions: str, key_base: str, want_output: bool = False):
     )
 
 
+# 💡 [최적화] JS 호출을 매번 하지 않도록 캐싱 로직 강화
 def get_viewport_width() -> int:
-    cached_width = st.session_state.get("viewport_width", 1200)
+    if "viewport_width" in st.session_state:
+        return st.session_state["viewport_width"]
 
     result = run_js_eval(
         js_expressions="""
@@ -66,17 +62,15 @@ def get_viewport_width() -> int:
         want_output=True
     )
 
-    try:
-        width = int(float(result))
-        st.session_state["viewport_width"] = width
-        return width
-    except Exception:
-        pass
+    if result is not None:
+        try:
+            width = int(float(result))
+            st.session_state["viewport_width"] = width
+            return width
+        except Exception:
+            pass
 
-    try:
-        return int(float(cached_width))
-    except Exception:
-        return 1200
+    return 1200
 
 
 def is_mobile_layout() -> bool:
@@ -1216,7 +1210,6 @@ def delete_thread_with_confirm(thread_id: str) -> bool:
     return True
 
 
-# 🚀 프론트엔드 상태만 관리하고 저장은 백엔드로 던지는 API-First 구조
 def persist_current_inputs(show_error: bool = False, force: bool = False) -> bool:
     if not ensure_runtime_thread_state(show_error=show_error):
         return False
@@ -1227,7 +1220,6 @@ def persist_current_inputs(show_error: bool = False, force: bool = False) -> boo
     if not force and is_same_input_state(thread_id, current_input_state):
         return True
 
-    # 세션 상태 갱신 및 API 비동기 저장 요청
     set_last_saved_input_state(thread_id, current_input_state)
     api_save_inputs(st.session_state.get("browser_user_id"), thread_id, current_input_state)
     return True
@@ -1454,7 +1446,6 @@ def get_browser_context() -> dict:
 
 
 def init_app_session():
-    # ❌ [삭제됨] init_db(): 프론트엔드는 이제 DB에 직접 연결하지 않습니다.
     browser_context = get_browser_context()
     browser_user_id = browser_context.get("browser_user_id", "")
     browser_tab_id = browser_context.get("browser_tab_id", "")
@@ -1524,7 +1515,6 @@ def init_app_session():
     ensure_valid_active_thread(show_error=False, show_notice=False)
 
 
-# 🚀 프론트엔드는 화면만! 저장은 백엔드가 알아서 수행함
 def append_message(role: str, content: str, message_type: str = "") -> bool:
     if not ensure_runtime_thread_state(show_error=False):
         return False
@@ -1788,56 +1778,15 @@ def get_region_data():
     return load_legal_dong_data()
 
 
-# --------------------------------------------------
-# 앱 세션 초기화
-# --------------------------------------------------
-init_app_session()
-VIEWPORT_WIDTH = get_viewport_width()
-IS_MOBILE_LAYOUT = VIEWPORT_WIDTH <= MOBILE_LAYOUT_BREAKPOINT
-inject_custom_css()
+# 💡 [최적화] 사이드바 전체를 Fragment로 감싸기
+@st.fragment
+def render_sidebar():
+    with st.sidebar:
+        render_support_sidebar_section()
+        st.divider()
+        st.title("설정")
 
-# --------------------------------------------------
-# 법정동 데이터 로드
-# --------------------------------------------------
-try:
-    CITY_TO_DISTRICTS, DONG_MAP = get_region_data()
-except Exception as e:
-    CITY_TO_DISTRICTS, DONG_MAP = {}, {}
-    st.error(f"법정동 데이터 로딩 오류: {e}")
-
-# --------------------------------------------------
-# 사이드바
-# --------------------------------------------------
-with st.sidebar:
-    render_support_sidebar_section()
-    st.divider()
-    st.title("설정")
-
-    if IS_MOBILE_LAYOUT:
-        if st.button("새 대화", use_container_width=True):
-            if not persist_current_inputs(show_error=True):
-                st.stop()
-
-            if not create_and_open_new_thread(show_error=True):
-                st.stop()
-
-            clear_clear_current_confirm()
-            set_runtime_notice("새 대화를 시작했어요.")
-            ensure_valid_active_thread(show_error=False, show_notice=False)
-            st.rerun()
-
-        if st.button("대화 비우기", use_container_width=True):
-            if not ensure_runtime_thread_state(show_error=True):
-                st.stop()
-
-            clear_delete_confirm()
-            clear_rename_state()
-            open_clear_current_confirm()
-            st.rerun()
-    else:
-        top_col1, top_col2 = st.columns(2)
-
-        with top_col1:
+        if IS_MOBILE_LAYOUT:
             if st.button("새 대화", use_container_width=True):
                 if not persist_current_inputs(show_error=True):
                     st.stop()
@@ -1850,7 +1799,6 @@ with st.sidebar:
                 ensure_valid_active_thread(show_error=False, show_notice=False)
                 st.rerun()
 
-        with top_col2:
             if st.button("대화 비우기", use_container_width=True):
                 if not ensure_runtime_thread_state(show_error=True):
                     st.stop()
@@ -1859,48 +1807,49 @@ with st.sidebar:
                 clear_rename_state()
                 open_clear_current_confirm()
                 st.rerun()
-
-    if st.session_state.get("pending_clear_current_thread", False):
-        current_title = get_current_thread_title()
-
-        st.markdown(
-            f"""
-            <div class="delete-confirm-card">
-                <div class="delete-confirm-title">현재 대화를 비울까요?</div>
-                <div class="delete-confirm-desc">
-                    대상: {html.escape(current_title)}<br>
-                    현재 대화의 메시지와 입력값이 삭제되고, 새 대화가 바로 생성됩니다.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-        if IS_MOBILE_LAYOUT:
-            if st.button("비우기 확인", key="clear_current_confirm", use_container_width=True):
-                if not ensure_runtime_thread_state(show_error=True):
-                    st.stop()
-
-                api_delete_thread(
-                    st.session_state["browser_user_id"],
-                    st.session_state["thread_id"]
-                )
-
-                if not create_and_open_new_thread(show_error=True):
-                    st.stop()
-
-                clear_clear_current_confirm()
-                set_runtime_notice("현재 대화를 비우고 새 대화를 준비했어요.")
-                ensure_valid_active_thread(show_error=False, show_notice=False)
-                st.rerun()
-
-            if st.button("취소", key="clear_current_cancel", use_container_width=True):
-                clear_clear_current_confirm()
-                st.rerun()
         else:
-            clear_col1, clear_col2 = st.columns(2)
+            top_col1, top_col2 = st.columns(2)
 
-            with clear_col1:
+            with top_col1:
+                if st.button("새 대화", use_container_width=True):
+                    if not persist_current_inputs(show_error=True):
+                        st.stop()
+
+                    if not create_and_open_new_thread(show_error=True):
+                        st.stop()
+
+                    clear_clear_current_confirm()
+                    set_runtime_notice("새 대화를 시작했어요.")
+                    ensure_valid_active_thread(show_error=False, show_notice=False)
+                    st.rerun()
+
+            with top_col2:
+                if st.button("대화 비우기", use_container_width=True):
+                    if not ensure_runtime_thread_state(show_error=True):
+                        st.stop()
+
+                    clear_delete_confirm()
+                    clear_rename_state()
+                    open_clear_current_confirm()
+                    st.rerun()
+
+        if st.session_state.get("pending_clear_current_thread", False):
+            current_title = get_current_thread_title()
+
+            st.markdown(
+                f"""
+                <div class="delete-confirm-card">
+                    <div class="delete-confirm-title">현재 대화를 비울까요?</div>
+                    <div class="delete-confirm-desc">
+                        대상: {html.escape(current_title)}<br>
+                        현재 대화의 메시지와 입력값이 삭제되고, 새 대화가 바로 생성됩니다.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            if IS_MOBILE_LAYOUT:
                 if st.button("비우기 확인", key="clear_current_confirm", use_container_width=True):
                     if not ensure_runtime_thread_state(show_error=True):
                         st.stop()
@@ -1918,40 +1867,221 @@ with st.sidebar:
                     ensure_valid_active_thread(show_error=False, show_notice=False)
                     st.rerun()
 
-            with clear_col2:
                 if st.button("취소", key="clear_current_cancel", use_container_width=True):
                     clear_clear_current_confirm()
                     st.rerun()
+            else:
+                clear_col1, clear_col2 = st.columns(2)
 
-    st.divider()
-    st.subheader("대화 목록")
+                with clear_col1:
+                    if st.button("비우기 확인", key="clear_current_confirm", use_container_width=True):
+                        if not ensure_runtime_thread_state(show_error=True):
+                            st.stop()
 
-    st.text_input(
-        "대화 검색",
-        key="thread_search_query",
-        placeholder="제목, 지역, 출생연도로 검색"
-    )
+                        api_delete_thread(
+                            st.session_state["browser_user_id"],
+                            st.session_state["thread_id"]
+                        )
 
-    ensure_valid_active_thread(show_error=False, show_notice=False)
-    threads = api_list_threads(st.session_state["browser_user_id"])
-    filtered_threads = filter_threads_by_query(threads, st.session_state["thread_search_query"])
+                        if not create_and_open_new_thread(show_error=True):
+                            st.stop()
 
-    if st.session_state["thread_search_query"].strip():
-        st.caption(f"검색 결과 {len(filtered_threads)}개")
+                        clear_clear_current_confirm()
+                        set_runtime_notice("현재 대화를 비우고 새 대화를 준비했어요.")
+                        ensure_valid_active_thread(show_error=False, show_notice=False)
+                        st.rerun()
 
-    if not threads:
-        st.caption("저장된 대화가 없습니다.")
-    elif not filtered_threads:
-        st.caption("검색 조건에 맞는 대화가 없습니다.")
-    else:
-        render_thread_list(filtered_threads)
+                with clear_col2:
+                    if st.button("취소", key="clear_current_cancel", use_container_width=True):
+                        clear_clear_current_confirm()
+                        st.rerun()
 
-    st.divider()
-    st.caption("같은 브라우저는 같은 익명 사용자로 인식됩니다.")
+        st.divider()
+        st.subheader("대화 목록")
+
+        st.text_input(
+            "대화 검색",
+            key="thread_search_query",
+            placeholder="제목, 지역, 출생연도로 검색"
+        )
+
+        ensure_valid_active_thread(show_error=False, show_notice=False)
+        threads = api_list_threads(st.session_state["browser_user_id"])
+        filtered_threads = filter_threads_by_query(threads, st.session_state["thread_search_query"])
+
+        if st.session_state["thread_search_query"].strip():
+            st.caption(f"검색 결과 {len(filtered_threads)}개")
+
+        if not threads:
+            st.caption("저장된 대화가 없습니다.")
+        elif not filtered_threads:
+            st.caption("검색 조건에 맞는 대화가 없습니다.")
+        else:
+            render_thread_list(filtered_threads)
+
+        st.divider()
+        st.caption("같은 브라우저는 같은 익명 사용자로 인식됩니다.")
+
+
+# 💡 [최적화] 입력 폼 전체를 Fragment로 감싸기
+@st.fragment
+def render_input_form(CITY_TO_DISTRICTS, DONG_MAP):
+    with st.expander("검색 조건 입력 영역", expanded=len(st.session_state["messages"]) == 0):
+        st.subheader("📍 거주지 및 사용자 정보 입력")
+        if IS_MOBILE_LAYOUT:
+            st.caption("모바일에서는 입력칸을 세로로 배치해 더 편하게 입력할 수 있어요.")
+
+        city_options = ["선택하세요"] + sorted(list(CITY_TO_DISTRICTS.keys()))
+
+        if IS_MOBILE_LAYOUT:
+            st.selectbox(
+                "시/도",
+                city_options,
+                key="selected_city",
+                on_change=reset_district_and_dong
+            )
+        else:
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                st.selectbox(
+                    "시/도",
+                    city_options,
+                    key="selected_city",
+                    on_change=reset_district_and_dong
+                )
+
+        district_options = ["선택하세요"]
+        selected_city = st.session_state["selected_city"]
+
+        if selected_city != "선택하세요" and selected_city in CITY_TO_DISTRICTS:
+            district_options += CITY_TO_DISTRICTS[selected_city]
+
+        if st.session_state["selected_district"] not in district_options:
+            st.session_state["selected_district"] = "선택하세요"
+
+        if IS_MOBILE_LAYOUT:
+            st.selectbox(
+                "시/군/구",
+                district_options,
+                key="selected_district",
+                on_change=reset_dong
+            )
+        else:
+            with col2:
+                st.selectbox(
+                    "시/군/구",
+                    district_options,
+                    key="selected_district",
+                    on_change=reset_dong
+                )
+
+        dong_options = ["선택 안 함"]
+        selected_district = st.session_state["selected_district"]
+
+        if (
+            selected_city != "선택하세요"
+            and selected_district != "선택하세요"
+            and (selected_city, selected_district) in DONG_MAP
+        ):
+            dong_options += DONG_MAP[(selected_city, selected_district)]
+
+        if st.session_state["selected_dong"] not in dong_options:
+            st.session_state["selected_dong"] = "선택 안 함"
+
+        if IS_MOBILE_LAYOUT:
+            st.selectbox(
+                "법정동 (선택)",
+                dong_options,
+                key="selected_dong"
+            )
+        else:
+            with col3:
+                st.selectbox(
+                    "법정동 (선택)",
+                    dong_options,
+                    key="selected_dong"
+                )
+
+        st.text_input(
+            "출생연도 (4자리 숫자만 입력)",
+            placeholder="예: 1999",
+            max_chars=4,
+            key="birth_year"
+        )
+
+        st.text_area(
+            "추가 정보",
+            placeholder="예: 대학생, 1인가구, 취업 준비 중",
+            height=100,
+            key="extra_info"
+        )
+
+        persist_current_inputs()
+
+        birth_year = st.session_state["birth_year"].strip()
+        extra_info = st.session_state["extra_info"].strip()
+
+        birth_year_valid = is_valid_birth_year(birth_year)
+        age_expression_found = contains_age_expression(extra_info)
+
+        if birth_year and not birth_year_valid:
+            st.error(f"출생연도는 1900~{CURRENT_YEAR} 사이의 4자리 숫자로 입력해 주세요.")
+
+        if age_expression_found:
+            st.error("추가 정보에는 '28세', '28살' 같은 나이 표현을 쓰지 말고, 출생연도는 위 입력칸에만 적어 주세요.")
+
+        region_preview = "미선택"
+        if selected_city != "선택하세요" and selected_district != "선택하세요":
+            region_preview = build_region_text(
+                selected_city,
+                selected_district,
+                st.session_state["selected_dong"]
+            )
+
+        birth_year_preview = birth_year if birth_year else "미입력"
+
+        render_preview_card(region_preview, birth_year_preview, extra_info)
+
+        search_ready = (
+            selected_city != "선택하세요"
+            and selected_district != "선택하세요"
+            and birth_year_valid
+            and extra_info != ""
+            and not age_expression_found
+        )
+
+        if st.button("🔍 맞춤 혜택 찾기", disabled=not search_ready):
+            if not persist_current_inputs(show_error=True, force=True):
+                return
+
+            if not ensure_valid_active_thread(show_error=True, show_notice=False):
+                return
+
+            clear_delete_confirm()
+
+            # 메인 영역에 전체 새로고침(rerun)을 지시하는 신호 전달
+            st.session_state["trigger_search"] = True
+            st.rerun()
+
 
 # --------------------------------------------------
-# 메인 영역 시작
+# 앱 실행 시작
 # --------------------------------------------------
+init_app_session()
+VIEWPORT_WIDTH = get_viewport_width()
+IS_MOBILE_LAYOUT = VIEWPORT_WIDTH <= MOBILE_LAYOUT_BREAKPOINT
+inject_custom_css()
+
+try:
+    CITY_TO_DISTRICTS, DONG_MAP = get_region_data()
+except Exception as e:
+    CITY_TO_DISTRICTS, DONG_MAP = {}, {}
+    st.error(f"법정동 데이터 로딩 오류: {e}")
+
+# 사이드바 렌더링
+render_sidebar()
+
 st.title("💵 전국민 맞춤형 정책 내비게이터")
 st.markdown(
     "거주지는 아래에서 선택하고, **출생연도는 별도 입력**한 뒤, "
@@ -1979,173 +2109,45 @@ render_notice_card(
 
 render_examples_box()
 
-with st.expander("검색 조건 입력 영역", expanded=len(st.session_state["messages"]) == 0):
-    st.subheader("📍 거주지 및 사용자 정보 입력")
-    if IS_MOBILE_LAYOUT:
-        st.caption("모바일에서는 입력칸을 세로로 배치해 더 편하게 입력할 수 있어요.")
+# 입력 폼 렌더링
+render_input_form(CITY_TO_DISTRICTS, DONG_MAP)
 
-    city_options = ["선택하세요"] + sorted(list(CITY_TO_DISTRICTS.keys()))
-
-    if IS_MOBILE_LAYOUT:
-        st.selectbox(
-            "시/도",
-            city_options,
-            key="selected_city",
-            on_change=reset_district_and_dong
-        )
-    else:
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            st.selectbox(
-                "시/도",
-                city_options,
-                key="selected_city",
-                on_change=reset_district_and_dong
-            )
-
-    district_options = ["선택하세요"]
-    selected_city = st.session_state["selected_city"]
-
-    if selected_city != "선택하세요" and selected_city in CITY_TO_DISTRICTS:
-        district_options += CITY_TO_DISTRICTS[selected_city]
-
-    if st.session_state["selected_district"] not in district_options:
-        st.session_state["selected_district"] = "선택하세요"
-
-    if IS_MOBILE_LAYOUT:
-        st.selectbox(
-            "시/군/구",
-            district_options,
-            key="selected_district",
-            on_change=reset_dong
-        )
-    else:
-        with col2:
-            st.selectbox(
-                "시/군/구",
-                district_options,
-                key="selected_district",
-                on_change=reset_dong
-            )
-
-    dong_options = ["선택 안 함"]
-    selected_district = st.session_state["selected_district"]
-
-    if (
-        selected_city != "선택하세요"
-        and selected_district != "선택하세요"
-        and (selected_city, selected_district) in DONG_MAP
-    ):
-        dong_options += DONG_MAP[(selected_city, selected_district)]
-
-    if st.session_state["selected_dong"] not in dong_options:
-        st.session_state["selected_dong"] = "선택 안 함"
-
-    if IS_MOBILE_LAYOUT:
-        st.selectbox(
-            "법정동 (선택)",
-            dong_options,
-            key="selected_dong"
-        )
-    else:
-        with col3:
-            st.selectbox(
-                "법정동 (선택)",
-                dong_options,
-                key="selected_dong"
-            )
-
-    st.text_input(
-        "출생연도 (4자리 숫자만 입력)",
-        placeholder="예: 1999",
-        max_chars=4,
-        key="birth_year"
+# 🚀 AI 검색 로직 (Fragment 밖에서 실행되어야 메인 대화창 렌더링이 깔끔하게 이루어짐)
+if st.session_state.get("trigger_search", False):
+    st.session_state["trigger_search"] = False
+    
+    region_text = build_region_text(
+        st.session_state["selected_city"],
+        st.session_state["selected_district"],
+        st.session_state["selected_dong"]
     )
 
-    st.text_area(
-        "추가 정보",
-        placeholder="예: 대학생, 1인가구, 취업 준비 중",
-        height=100,
-        key="extra_info"
+    user_display_text = build_user_display_text(
+        region_text,
+        st.session_state["birth_year"],
+        st.session_state["extra_info"]
     )
 
-    persist_current_inputs()
+    append_message("user", user_display_text, "structured_search")
 
-    birth_year = st.session_state["birth_year"].strip()
-    extra_info = st.session_state["extra_info"].strip()
+    try:
+        with st.spinner("💆‍♂️ 클라우드 AI가 영혼까지 끌어모아 검색 및 분석 중입니다..."):
+            assistant_text = api_get_ai_response(
+                user_id=st.session_state["browser_user_id"],
+                thread_id=st.session_state["thread_id"],
+                city=st.session_state["selected_city"],
+                district=st.session_state["selected_district"],
+                dong=st.session_state["selected_dong"],
+                birth_year=st.session_state["birth_year"],
+                extra_info=st.session_state["extra_info"]
+            )
 
-    birth_year_valid = is_valid_birth_year(birth_year)
-    age_expression_found = contains_age_expression(extra_info)
+        append_message("assistant", assistant_text, "search_result")
+        ensure_valid_active_thread(show_error=False, show_notice=False)
+        st.rerun()
 
-    if birth_year and not birth_year_valid:
-        st.error(f"출생연도는 1900~{CURRENT_YEAR} 사이의 4자리 숫자로 입력해 주세요.")
-
-    if age_expression_found:
-        st.error("추가 정보에는 '28세', '28살' 같은 나이 표현을 쓰지 말고, 출생연도는 위 입력칸에만 적어 주세요.")
-
-    region_preview = "미선택"
-    if selected_city != "선택하세요" and selected_district != "선택하세요":
-        region_preview = build_region_text(
-            selected_city,
-            selected_district,
-            st.session_state["selected_dong"]
-        )
-
-    birth_year_preview = birth_year if birth_year else "미입력"
-
-    render_preview_card(region_preview, birth_year_preview, extra_info)
-
-    search_ready = (
-        selected_city != "선택하세요"
-        and selected_district != "선택하세요"
-        and birth_year_valid
-        and extra_info != ""
-        and not age_expression_found
-    )
-
-    # 🚀 AI 검색 요청 처리 (API 연동)
-    if st.button("🔍 맞춤 혜택 찾기", disabled=not search_ready):
-        if not persist_current_inputs(show_error=True, force=True):
-            st.stop()
-
-        if not ensure_valid_active_thread(show_error=True, show_notice=False):
-            st.stop()
-
-        clear_delete_confirm()
-
-        region_text = build_region_text(
-            selected_city,
-            selected_district,
-            st.session_state["selected_dong"]
-        )
-
-        user_display_text = build_user_display_text(
-            region_text,
-            birth_year,
-            extra_info
-        )
-
-        append_message("user", user_display_text, "structured_search")
-
-        try:
-            with st.spinner("💆‍♂️ 클라우드 AI가 영혼까지 끌어모아 검색 및 분석 중입니다..."):
-                assistant_text = api_get_ai_response(
-                    user_id=st.session_state["browser_user_id"],
-                    thread_id=st.session_state["thread_id"],
-                    city=selected_city,
-                    district=selected_district,
-                    dong=st.session_state["selected_dong"],
-                    birth_year=birth_year,
-                    extra_info=extra_info
-                )
-
-            append_message("assistant", assistant_text, "search_result")
-            ensure_valid_active_thread(show_error=False, show_notice=False)
-            st.rerun()
-
-        except Exception as e:
-            st.error(f"클라우드 통신 오류: {e}")
+    except Exception as e:
+        st.error(f"클라우드 통신 오류: {e}")
 
 # --------------------------------------------------
 # 대화 출력
