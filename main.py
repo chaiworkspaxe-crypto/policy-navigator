@@ -22,24 +22,6 @@ from chat_db import (
     save_thread_inputs,
     load_thread_inputs,
 )
-
-from fastapi.middleware.cors import CORSMiddleware # 추가
-
-app = FastAPI()
-
-# 💡 [CORS 설정 추가] 이 부분을 꼭 넣어야 React와 대화할 수 있어!
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000", 
-        "http://127.0.0.1:3000",
-        # 나중에 배포할 Vercel 주소도 여기에 추가할 거야
-    ],
-    allow_credentials=True,
-    allow_methods=["*"], # 모든 방식(GET, POST 등) 허용
-    allow_headers=["*"], # 모든 헤더 허용
-)
-
 from openai_service import create_agent_executor, get_ai_response
 
 load_dotenv()
@@ -215,6 +197,7 @@ async def lifespan(app: FastAPI):
     init_db()
     yield
 
+# 💡 [핵심] 여기서 딱 한 번만 앱을 만들고 설정을 몰아넣습니다.
 app = FastAPI(
     title="Policy Navigator API",
     description="전국민 맞춤형 정책 내비게이터 FastAPI 백엔드",
@@ -222,11 +205,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# 💡 [CORS 설정] React 주소(로컬, IP)를 모두 수동으로 허용
+allowed_origins = [
+    "http://localhost:3000", 
+    "http://127.0.0.1:3000",
+    "http://192.168.100.185:3000",  # 터미널에 떴던 IP도 추가!
+]
+
+# (선택사항) 환경변수에 설정된 도메인도 있으면 같이 추가
 allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "").strip()
 if allowed_origins_env:
-    allowed_origins = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
-else:
-    allowed_origins = ["*"]
+    allowed_origins.extend([origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()])
 
 app.add_middleware(
     CORSMiddleware,
@@ -277,7 +266,6 @@ def database_health_check():
 # ==========================================
 @app.post("/ask", response_model=PolicySearchResponse)
 def ask_policy(request: PolicySearchRequest):
-    # 기존 단일 질문용 API (유지)
     try:
         user_message, message_type = normalize_request(
             request.city, request.district, request.dong,
@@ -300,7 +288,6 @@ def ask_policy(request: PolicySearchRequest):
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
-    # 프론트엔드와 통신하는 메인 채팅 엔진
     try:
         user_id = (request.user_id or "").strip()
         thread_id = (request.thread_id or "").strip()
@@ -329,7 +316,7 @@ def chat(request: ChatRequest):
             content=user_message, message_type=message_type
         )
         if not saved_user:
-            raise HTTPException(status_code=500, detail="사용자 메시지 저장 실패")
+            raise HTTPException(status_code=500, detail="사용자 메시 저장 실패")
 
         agent_messages = build_agent_messages(previous_messages, user_message)
         agent = create_agent_executor()
@@ -353,7 +340,7 @@ def chat(request: ChatRequest):
 
 
 # ==========================================
-# 🗂️ 대화 관리(스레드) API (✨ 신규 추가)
+# 🗂️ 대화 관리(스레드) API
 # ==========================================
 @app.get("/threads")
 def get_threads(user_id: str = Query(..., description="조회할 사용자 ID")):
