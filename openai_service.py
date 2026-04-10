@@ -1,4 +1,5 @@
 import os
+import os
 import json
 from functools import lru_cache
 
@@ -9,11 +10,10 @@ except Exception:
     pass
 
 from langchain_openai import ChatOpenAI
-# 🌟 [수정] 복잡한 예외 처리 없이 가장 표준적인 경로로 단일화했어.
+# 🌟 [수정] 가장 안정적인 경로로 다시 잡았습니다.
 from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
-# ... (이후 tools 임포트 및 시스템 프롬프트 로직은 동일)
 # ... (이후 동일)
 
 SYSTEM_PROMPT = """
