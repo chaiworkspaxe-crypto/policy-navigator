@@ -11,28 +11,11 @@ import {
 } from "@/lib/api";
 import { CITY_TO_DISTRICTS, DONG_MAP } from "@/lib/regionData";
 import MarkdownMessage from "@/components/MarkdownMessage";
-import {
-  MessageSquare,
-  Plus,
-  Send,
-  Loader2,
-  MapPin,
-  Search,
-  AlertCircle,
-  Menu,
-  X,
-} from "lucide-react";
+import { MessageSquare, Plus, Send, Loader2, MapPin, Search, AlertCircle, Menu, X } from "lucide-react";
 
 const DEFAULT_CITY = "선택하세요";
 const DEFAULT_DONG = "선택 안 함";
-
-const EMPTY_INPUTS: ThreadInputs = {
-  selected_city: DEFAULT_CITY,
-  selected_district: DEFAULT_CITY,
-  selected_dong: DEFAULT_DONG,
-  birth_year: "",
-  extra_info: "",
-};
+const EMPTY_INPUTS: ThreadInputs = { selected_city: DEFAULT_CITY, selected_district: DEFAULT_CITY, selected_dong: DEFAULT_DONG, birth_year: "", extra_info: "" };
 
 export default function Home() {
   const [userId, setUserId] = useState("");
@@ -41,11 +24,9 @@ export default function Home() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  
-  // 🌟 AI의 실시간 행동 상태(검색 중 등)를 표시하기 위한 상태
   const [aiStatus, setAiStatus] = useState("");
-
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
   const [city, setCity] = useState(EMPTY_INPUTS.selected_city);
   const [district, setDistrict] = useState(EMPTY_INPUTS.selected_district);
   const [dong, setDong] = useState(EMPTY_INPUTS.selected_dong);
@@ -62,7 +43,6 @@ export default function Home() {
       storedId = `user_${uuidv4()}`;
       localStorage.setItem("pn_user_id", storedId);
     }
-
     setUserId(storedId);
     void loadThreads(storedId);
   }, []);
@@ -80,19 +60,11 @@ export default function Home() {
       setErrorMessage("");
       const threadList = await api.listThreads(uid);
       setThreads(threadList);
-
-      if (threadList.length === 0) {
-        await handleNewThread(uid);
-        return;
-      }
-
+      if (threadList.length === 0) { await handleNewThread(uid); return; }
       const shouldKeepCurrent = threadList.some((thread) => thread.thread_id === currentThreadId);
       const targetThreadId = shouldKeepCurrent ? currentThreadId : threadList[0].thread_id;
-
       if (targetThreadId) await selectThread(uid, targetThreadId);
-    } catch (error) {
-      setErrorMessage("서버와 연결할 수 없습니다.");
-    }
+    } catch { setErrorMessage("서버와 연결할 수 없습니다."); }
   };
 
   const selectThread = async (uid: string, tid: string) => {
@@ -102,17 +74,12 @@ export default function Home() {
       setMessages([]);
       setQuery("");
       setIsSidebarOpen(false);
-
       const [loadedMessages, loadedInputs] = await Promise.all([
-        api.loadMessages(uid, tid),
-        api.loadThreadInputs(uid, tid),
+        api.loadMessages(uid, tid), api.loadThreadInputs(uid, tid),
       ]);
-
       setMessages(loadedMessages);
       applyInputs(loadedInputs);
-    } catch (error) {
-      setErrorMessage(extractApiErrorMessage(error));
-    }
+    } catch (error) { setErrorMessage(extractApiErrorMessage(error)); }
   };
 
   const handleNewThread = async (uid = userId) => {
@@ -124,12 +91,8 @@ export default function Home() {
       setQuery("");
       applyInputs(EMPTY_INPUTS);
       setIsSidebarOpen(false);
-
-      const threadList = await api.listThreads(uid);
-      setThreads(threadList);
-    } catch (error) {
-      setErrorMessage("새 대화방을 만들 수 없습니다.");
-    }
+      setThreads(await api.listThreads(uid));
+    } catch { setErrorMessage("새 대화방을 만들 수 없습니다."); }
   };
 
   const validateStructuredSearch = () => {
@@ -140,23 +103,18 @@ export default function Home() {
     return "";
   };
 
-  // 🌟 스트리밍 방식으로 대폭 개선된 검색 핸들러
   const handleSearch = async (isFollowUp = false) => {
     setErrorMessage("");
     setAiStatus("");
 
-    if (!userId) {
-      return setErrorMessage("사용자 정보가 준비되지 않았습니다. 잠시 후 다시 시도해 주세요.");
-    }
+    if (!userId) return setErrorMessage("사용자 정보가 준비되지 않았습니다. 새로고침 해주세요.");
 
     let targetThreadId = currentThreadId;
     if (!targetThreadId) {
       try {
         targetThreadId = await api.createThread(userId);
         setCurrentThreadId(targetThreadId);
-      } catch (err) {
-        return setErrorMessage("대화방을 만들 수 없습니다. 새로고침 후 다시 시도해 주세요.");
-      }
+      } catch { return setErrorMessage("대화방을 만들 수 없습니다. 잠시 후 시도해 주세요."); }
     }
 
     if (isFollowUp) {
@@ -168,50 +126,39 @@ export default function Home() {
     }
 
     const followUpText = query.trim();
-    const optimisticUserMessage = isFollowUp
-      ? followUpText
-      : `📍 ${city} ${district} ${dong !== DEFAULT_DONG ? dong : ""} | 🎂 ${birthYear}년생 | 📝 ${extraInfo}`;
+    const optimisticUserMessage = isFollowUp ? followUpText : `📍 ${city} ${district} ${dong !== DEFAULT_DONG ? dong : ""} | 🎂 ${birthYear}년생 | 📝 ${extraInfo}`;
 
     setLoading(true);
-    // 사용자 메시지 화면에 추가
     setMessages((prev) => [...prev, { role: "user", content: optimisticUserMessage }]);
     if (isFollowUp) setQuery("");
-
-    // 🌟 실시간 타이핑이 이루어질 빈 AI 메시지 박스 미리 추가
     setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
 
     try {
-      // 1. 입력 조건은 빠르게 DB에 사전 저장
       await api.saveThreadInputs(userId, targetThreadId, {
-        selected_city: city,
-        selected_district: district,
-        selected_dong: dong,
-        birth_year: birthYear,
-        extra_info: extraInfo,
+        selected_city: city, selected_district: district, selected_dong: dong,
+        birth_year: birthYear, extra_info: extraInfo,
       });
 
-      // 2. Fetch를 이용해 스트리밍 API 직접 호출
+      // 🌟 Fetch API 사용 (Axios 타임아웃 회피)
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_id: userId,
-          thread_id: targetThreadId,
-          city: isFollowUp ? undefined : city,
-          district: isFollowUp ? undefined : district,
+          user_id: userId, thread_id: targetThreadId,
+          city: isFollowUp ? undefined : city, district: isFollowUp ? undefined : district,
           dong: isFollowUp ? undefined : dong === DEFAULT_DONG ? "" : dong,
-          birth_year: isFollowUp ? undefined : birthYear,
-          extra_info: isFollowUp ? undefined : extraInfo,
+          birth_year: isFollowUp ? undefined : birthYear, extra_info: isFollowUp ? undefined : extraInfo,
           query: isFollowUp ? followUpText : undefined,
         }),
       });
 
+      if (!response.ok) throw new Error("서버에서 응답을 거부했습니다.");
       if (!response.body) throw new Error("스트리밍을 지원하지 않습니다.");
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder("utf-8");
       let accumulatedContent = "";
-      let buffer = ""; // 데이터 조각이 끊겼을 때를 대비한 버퍼
+      let buffer = "";
 
       while (true) {
         const { done, value } = await reader.read();
@@ -219,15 +166,13 @@ export default function Home() {
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n\n");
-        buffer = lines.pop() || ""; // 마지막 불완전한 조각은 다음 루프로 넘김
+        buffer = lines.pop() || "";
 
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
           
           try {
             const data = JSON.parse(line.replace("data: ", ""));
-
-            // 글자가 들어올 때마다 화면 갱신
             if (data.type === "content") {
               accumulatedContent += data.delta;
               setMessages((prev) => {
@@ -235,30 +180,21 @@ export default function Home() {
                 next[next.length - 1] = { ...next[next.length - 1], content: accumulatedContent };
                 return next;
               });
-              setAiStatus(""); // 타이핑이 시작되면 상태 메시지 숨김
-            } 
-            // AI가 검색 도구를 사용할 때 상태 갱신
-            else if (data.type === "status") {
+              setAiStatus(""); 
+            } else if (data.type === "status") {
               setAiStatus(data.message);
-            } 
-            // 서버 에러 발생 시
-            else if (data.type === "error") {
+            } else if (data.type === "error") {
+              // 백엔드에서 보낸 45초 초과 에러 메시지 등을 처리
               setErrorMessage(data.message);
             }
-          } catch (e) {
-            // 조각난 JSON 무시
-          }
+          } catch (e) { /* 조각난 JSON 무시 */ }
         }
       }
-      
-      // 검색 완료 후 히스토리 새로고침
-      const threadList = await api.listThreads(userId);
-      setThreads(threadList);
-
+      setThreads(await api.listThreads(userId));
     } catch (error) {
-      console.error("[통신 에러 - 스트리밍]:", error);
-      setMessages((prev) => prev.slice(0, -1)); // 에러 시 빈 메시지 삭제
-      setErrorMessage("데이터를 받아오는 중 오류가 발생했습니다.");
+      console.error(error);
+      setMessages((prev) => prev.slice(0, -1));
+      setErrorMessage("서버 상태가 불안정하여 연결이 끊어졌습니다. 잠시 후 다시 시도해 주세요.");
     } finally {
       setLoading(false);
       setAiStatus("");
@@ -267,33 +203,16 @@ export default function Home() {
 
   return (
     <div className="flex h-[100dvh] bg-[#121212] text-gray-100 font-sans overflow-hidden">
-      
-      {isSidebarOpen && (
-        <div 
-          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm md:hidden transition-opacity"
-          onClick={() => setIsSidebarOpen(false)}
-        />
-      )}
+      {isSidebarOpen && <div className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm md:hidden transition-opacity" onClick={() => setIsSidebarOpen(false)} />}
 
-      <aside 
-        className={`fixed inset-y-0 left-0 z-50 w-72 flex flex-col bg-[#1e1e1e] border-r border-[#333] transform transition-transform duration-300 ease-in-out md:relative md:translate-x-0 ${
-          isSidebarOpen ? "translate-x-0" : "-translate-x-full"
-        }`}
-      >
+      <aside className={`fixed inset-y-0 left-0 z-50 w-72 flex flex-col bg-[#1e1e1e] border-r border-[#333] transform transition-transform duration-300 ease-in-out md:relative md:translate-x-0 ${isSidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
         <div className="flex items-center justify-between border-b border-[#333] p-4">
-          <h1 className="flex items-center gap-2 text-lg font-bold text-green-400">
-            <Search size={20} /> 정책 내비게이터
-          </h1>
-          <button onClick={() => setIsSidebarOpen(false)} className="md:hidden text-gray-400 hover:text-white">
-            <X size={24} />
-          </button>
+          <h1 className="flex items-center gap-2 text-lg font-bold text-green-400"><Search size={20} /> 정책 내비게이터</h1>
+          <button onClick={() => setIsSidebarOpen(false)} className="md:hidden text-gray-400 hover:text-white"><X size={24} /></button>
         </div>
 
         <div className="p-4">
-          <button
-            onClick={() => void handleNewThread()}
-            className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#444] bg-[#2d2d2d] py-2.5 font-semibold transition hover:bg-[#3d3d3d] active:scale-95"
-          >
+          <button onClick={() => void handleNewThread()} className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#444] bg-[#2d2d2d] py-2.5 font-semibold transition hover:bg-[#3d3d3d] active:scale-95">
             <Plus size={18} /> 새 대화 시작
           </button>
         </div>
@@ -301,16 +220,7 @@ export default function Home() {
         <div className="flex-1 overflow-y-auto px-3 pb-3">
           <p className="mb-2 px-1 text-xs font-bold text-gray-500">대화 목록</p>
           {threads.map((thread) => (
-            <button
-              key={thread.thread_id}
-              type="button"
-              onClick={() => void selectThread(userId, thread.thread_id)}
-              className={`mb-1 flex w-full items-center justify-between rounded-xl p-3 text-left transition ${
-                currentThreadId === thread.thread_id
-                  ? "border border-green-500/30 bg-green-500/10 text-green-400"
-                  : "text-gray-300 hover:bg-[#2a2a2a]"
-              }`}
-            >
+            <button key={thread.thread_id} type="button" onClick={() => void selectThread(userId, thread.thread_id)} className={`mb-1 flex w-full items-center justify-between rounded-xl p-3 text-left transition ${currentThreadId === thread.thread_id ? "border border-green-500/30 bg-green-500/10 text-green-400" : "text-gray-300 hover:bg-[#2a2a2a]"}`}>
               <div className="flex min-w-0 items-center gap-2 truncate">
                 <MessageSquare size={16} className="shrink-0" />
                 <span className="truncate text-sm">{thread.title || "새 대화"}</span>
@@ -321,81 +231,32 @@ export default function Home() {
       </aside>
 
       <main className="relative flex h-full flex-1 flex-col w-full">
-        
         <div className="flex items-center justify-between bg-[#1a1a1a] p-4 border-b border-[#333] md:hidden shrink-0">
-          <div className="font-bold text-gray-100 flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-            맞춤 혜택 찾기
-          </div>
-          <button onClick={() => setIsSidebarOpen(true)} className="text-gray-300 hover:text-white">
-            <Menu size={24} />
-          </button>
+          <div className="font-bold text-gray-100 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>맞춤 혜택 찾기</div>
+          <button onClick={() => setIsSidebarOpen(true)} className="text-gray-300 hover:text-white"><Menu size={24} /></button>
         </div>
 
         <div className="shrink-0 border-b border-[#333] bg-[#1a1a1a] p-4">
           <div className="mx-auto max-w-4xl space-y-3">
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-              <select
-                className="w-full rounded-lg border border-[#444] bg-[#2a2a2a] p-3 text-sm sm:p-2.5 outline-none transition focus:border-green-500"
-                value={city}
-                onChange={(e) => { setCity(e.target.value); setDistrict(DEFAULT_CITY); setDong(DEFAULT_DONG); }}
-              >
-                <option>{DEFAULT_CITY}</option>
-                {Object.keys(CITY_TO_DISTRICTS).map((cityName) => (
-                  <option key={cityName}>{cityName}</option>
-                ))}
+              <select className="w-full rounded-lg border border-[#444] bg-[#2a2a2a] p-3 text-sm sm:p-2.5 outline-none transition focus:border-green-500" value={city} onChange={(e) => { setCity(e.target.value); setDistrict(DEFAULT_CITY); setDong(DEFAULT_DONG); }}>
+                <option>{DEFAULT_CITY}</option>{Object.keys(CITY_TO_DISTRICTS).map((c) => <option key={c}>{c}</option>)}
               </select>
-
-              <select
-                className="w-full rounded-lg border border-[#444] bg-[#2a2a2a] p-3 text-sm sm:p-2.5 outline-none transition focus:border-green-500"
-                value={district}
-                onChange={(e) => { setDistrict(e.target.value); setDong(DEFAULT_DONG); }}
-                disabled={city === DEFAULT_CITY}
-              >
-                <option>{DEFAULT_CITY}</option>
-                {availableDistricts.map((districtName) => (
-                  <option key={districtName}>{districtName}</option>
-                ))}
+              <select className="w-full rounded-lg border border-[#444] bg-[#2a2a2a] p-3 text-sm sm:p-2.5 outline-none transition focus:border-green-500" value={district} onChange={(e) => { setDistrict(e.target.value); setDong(DEFAULT_DONG); }} disabled={city === DEFAULT_CITY}>
+                <option>{DEFAULT_CITY}</option>{availableDistricts.map((d) => <option key={d}>{d}</option>)}
               </select>
-
-              <select
-                className="w-full rounded-lg border border-[#444] bg-[#2a2a2a] p-3 text-sm sm:p-2.5 outline-none transition focus:border-green-500"
-                value={dong}
-                onChange={(e) => setDong(e.target.value)}
-                disabled={district === DEFAULT_CITY}
-              >
-                <option>{DEFAULT_DONG}</option>
-                {availableDongs.map((dongName) => (
-                  <option key={dongName}>{dongName}</option>
-                ))}
+              <select className="w-full rounded-lg border border-[#444] bg-[#2a2a2a] p-3 text-sm sm:p-2.5 outline-none transition focus:border-green-500" value={dong} onChange={(e) => setDong(e.target.value)} disabled={district === DEFAULT_CITY}>
+                <option>{DEFAULT_DONG}</option>{availableDongs.map((d) => <option key={d}>{d}</option>)}
               </select>
             </div>
 
             <div className="flex flex-col gap-2 sm:flex-row">
-              <input
-                type="tel"
-                placeholder="출생연도 (예: 1999)"
-                maxLength={4}
-                className="w-full rounded-lg border border-[#444] bg-[#2a2a2a] p-3 text-sm sm:p-2.5 outline-none transition focus:border-green-500 sm:w-1/3"
-                value={birthYear}
-                onChange={(e) => setBirthYear(e.target.value.replace(/[^0-9]/g, ""))}
-              />
-              <input
-                type="text"
-                placeholder="추가 정보 (예: 대학생, 1인가구)"
-                className="w-full rounded-lg border border-[#444] bg-[#2a2a2a] p-3 text-sm sm:p-2.5 outline-none transition focus:border-green-500 sm:w-2/3"
-                value={extraInfo}
-                onChange={(e) => setExtraInfo(e.target.value)}
-              />
+              <input type="tel" placeholder="출생연도 (예: 1999)" maxLength={4} className="w-full rounded-lg border border-[#444] bg-[#2a2a2a] p-3 text-sm sm:p-2.5 outline-none transition focus:border-green-500 sm:w-1/3" value={birthYear} onChange={(e) => setBirthYear(e.target.value.replace(/[^0-9]/g, ""))} />
+              <input type="text" placeholder="추가 정보 (예: 대학생, 1인가구)" className="w-full rounded-lg border border-[#444] bg-[#2a2a2a] p-3 text-sm sm:p-2.5 outline-none transition focus:border-green-500 sm:w-2/3" value={extraInfo} onChange={(e) => setExtraInfo(e.target.value)} />
             </div>
 
-            <button
-              onClick={() => void handleSearch(false)}
-              disabled={loading}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-green-600 py-3.5 sm:py-3 font-bold text-white transition hover:bg-green-500 disabled:opacity-50 active:scale-[0.98]"
-            >
-              {loading ? <Loader2 className="animate-spin" /> : <Search size={20} />}
-              맞춤 혜택 찾기
+            <button onClick={() => void handleSearch(false)} disabled={loading} className="flex w-full items-center justify-center gap-2 rounded-xl bg-green-600 py-3.5 sm:py-3 font-bold text-white transition hover:bg-green-500 disabled:opacity-50 active:scale-[0.98]">
+              {loading ? <Loader2 className="animate-spin" /> : <Search size={20} />} 맞춤 혜택 찾기
             </button>
 
             {errorMessage && (
@@ -416,35 +277,20 @@ export default function Home() {
           ) : (
             <div className="space-y-6 pb-4">
               {messages.map((message, index) => (
-                <div
-                  key={`${message.role}-${index}`}
-                  className={`flex gap-3 sm:gap-4 ${message.role === "user" ? "justify-end" : "justify-start"}`}
-                >
+                <div key={`${message.role}-${index}`} className={`flex gap-3 sm:gap-4 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
                   {message.role === "assistant" && (
                     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-600 mt-1">
                       <span className="text-[10px] sm:text-xs font-bold text-white">AI</span>
                     </div>
                   )}
-
-                  <div
-                    className={`max-w-[90%] sm:max-w-[85%] rounded-2xl p-4 shadow-sm overflow-hidden ${
-                      message.role === "user"
-                        ? "whitespace-pre-wrap border border-[#444] bg-[#2d2d2d] text-gray-200 text-sm sm:text-base"
-                        : "bg-transparent text-gray-300"
-                    }`}
-                  >
-                    {message.role === "assistant" ? (
-                      <MarkdownMessage content={message.content} />
-                    ) : (
-                      <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>
-                    )}
+                  <div className={`max-w-[90%] sm:max-w-[85%] rounded-2xl p-4 shadow-sm overflow-hidden ${message.role === "user" ? "whitespace-pre-wrap border border-[#444] bg-[#2d2d2d] text-gray-200 text-sm sm:text-base" : "bg-transparent text-gray-300"}`}>
+                    {message.role === "assistant" ? <MarkdownMessage content={message.content} /> : <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>}
                   </div>
                 </div>
               ))}
             </div>
           )}
 
-          {/* 🌟 로딩 중이면서 글자가 아직 안 나왔을 때만 상태 스피너 표시 */}
           {loading && messages[messages.length - 1]?.content === "" && (
             <div className="mt-4 flex justify-start gap-3 sm:gap-4">
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-600">
@@ -459,22 +305,8 @@ export default function Home() {
 
         <div className="shrink-0 border-t border-[#333] bg-[#121212] p-3 sm:p-4 pb-safe">
           <div className="relative mx-auto max-w-4xl">
-            <input
-              type="text"
-              placeholder="추가 질문을 입력하세요 (예: 청년 혜택만 다시)"
-              className="w-full rounded-full border border-[#444] bg-[#1e1e1e] py-3.5 pl-5 pr-12 text-sm text-white outline-none transition focus:border-green-500"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void handleSearch(true);
-              }}
-              disabled={messages.length === 0 || loading}
-            />
-            <button
-              onClick={() => void handleSearch(true)}
-              disabled={!query.trim() || loading}
-              className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full bg-green-600 p-2 text-white transition hover:bg-green-500 disabled:opacity-50"
-            >
+            <input type="text" placeholder="추가 질문을 입력하세요 (예: 청년 혜택만 다시)" className="w-full rounded-full border border-[#444] bg-[#1e1e1e] py-3.5 pl-5 pr-12 text-sm text-white outline-none transition focus:border-green-500" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void handleSearch(true); }} disabled={messages.length === 0 || loading} />
+            <button onClick={() => void handleSearch(true)} disabled={!query.trim() || loading} className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full bg-green-600 p-2 text-white transition hover:bg-green-500 disabled:opacity-50">
               <Send size={16} />
             </button>
           </div>

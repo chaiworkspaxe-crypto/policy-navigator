@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import asyncio # 🌟 무한 대기 방지를 위한 핵심 라이브러리 추가
 from datetime import datetime
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -11,20 +12,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-# 👉 새로 추가된 DB 기능들 (rename_thread, delete_thread 등)을 임포트합니다.
+# 👉 DB 및 AI 서비스 임포트
 from chat_db import (
-    init_db,
-    db_session,
-    create_thread,
-    rename_thread,
-    delete_thread,
-    list_user_threads,
-    load_chat_messages,
-    save_chat_message,
-    save_thread_inputs,
-    load_thread_inputs,
+    init_db, db_session, create_thread, rename_thread, delete_thread,
+    list_user_threads, load_chat_messages, save_chat_message,
+    save_thread_inputs, load_thread_inputs,
 )
-# 🌟 스트리밍용 함수 import
 from openai_service import create_agent_executor, get_ai_response, get_ai_response_stream
 
 load_dotenv()
@@ -33,15 +26,15 @@ CURRENT_YEAR = datetime.now().year
 MAX_CONTEXT_MESSAGES = 6
 
 # ==========================================
-# 📦 Pydantic 모델 정의 (데이터 검증)
+# 📦 Pydantic 모델 정의
 # ==========================================
 class PolicySearchRequest(BaseModel):
     city: Optional[str] = Field(default=None, description="시/도")
     district: Optional[str] = Field(default=None, description="시/군/구")
     dong: Optional[str] = Field(default=None, description="읍/면/동")
     birth_year: Optional[str] = Field(default=None, description="4자리 출생연도")
-    extra_info: Optional[str] = Field(default=None, description="직업, 가구, 주거 상태 등 추가 정보")
-    query: Optional[str] = Field(default=None, description="자유 질문. 구조화 검색 없이 단일 질문만 보낼 때 사용")
+    extra_info: Optional[str] = Field(default=None, description="추가 정보")
+    query: Optional[str] = Field(default=None, description="자유 질문")
 
 class PolicySearchResponse(BaseModel):
     ok: bool
@@ -50,21 +43,14 @@ class PolicySearchResponse(BaseModel):
     answer: str
 
 class ChatRequest(BaseModel):
-    user_id: str = Field(description="사용자 구분용 ID")
-    thread_id: Optional[str] = Field(default=None, description="기존 thread_id. 없으면 새 대화 생성")
-    city: Optional[str] = Field(default=None, description="시/도")
-    district: Optional[str] = Field(default=None, description="시/군/구")
-    dong: Optional[str] = Field(default=None, description="읍/면/동")
-    birth_year: Optional[str] = Field(default=None, description="4자리 출생연도")
-    extra_info: Optional[str] = Field(default=None, description="직업, 가구, 주거 상태 등 추가 정보")
-    query: Optional[str] = Field(default=None, description="추가 질문 또는 자유 질문")
-
-class ChatResponse(BaseModel):
-    ok: bool
-    thread_id: str
-    message_type: str
-    user_message: str
-    answer: str
+    user_id: str
+    thread_id: Optional[str] = None
+    city: Optional[str] = None
+    district: Optional[str] = None
+    dong: Optional[str] = None
+    birth_year: Optional[str] = None
+    extra_info: Optional[str] = None
+    query: Optional[str] = None
 
 class CreateThreadRequest(BaseModel):
     user_id: str
@@ -86,15 +72,12 @@ class SaveInputsRequest(BaseModel):
 # ==========================================
 def is_valid_birth_year(text: str) -> bool:
     text = (text or "").strip()
-    if not re.fullmatch(r"\d{4}", text):
-        return False
-    year = int(text)
-    return 1900 <= year <= CURRENT_YEAR
+    if not re.fullmatch(r"\d{4}", text): return False
+    return 1900 <= int(text) <= CURRENT_YEAR
 
 def build_region_text(city: str, district: str, dong: str) -> str:
     region_text = f"{city} {district}"
-    if dong and dong != "선택 안 함":
-        region_text += f" {dong}"
+    if dong and dong != "선택 안 함": region_text += f" {dong}"
     return region_text
 
 def build_structured_user_message(region_text: str, birth_year: str, extra_info: str) -> str:
@@ -106,124 +89,69 @@ def build_structured_user_message(region_text: str, birth_year: str, extra_info:
     )
 
 def normalize_request(city, district, dong, birth_year, extra_info, query) -> tuple[str, str]:
-    city = (city or "").strip()
-    district = (district or "").strip()
-    dong = (dong or "").strip() or "선택 안 함"
-    birth_year = (birth_year or "").strip()
-    extra_info = (extra_info or "").strip()
-    query = (query or "").strip()
+    city, district, dong = (city or "").strip(), (district or "").strip(), (dong or "").strip() or "선택 안 함"
+    birth_year, extra_info, query = (birth_year or "").strip(), (extra_info or "").strip(), (query or "").strip()
 
-    if query:
-        return query, "followup_question"
+    if query: return query, "followup_question"
 
     missing = []
-    if not city or city == "선택하세요":
-        missing.append("city")
-    if not district or district == "선택하세요":
-        missing.append("district")
-    if not birth_year:
-        missing.append("birth_year")
-    if not extra_info:
-        missing.append("extra_info")
+    if not city or city == "선택하세요": missing.append("city")
+    if not district or district == "선택하세요": missing.append("district")
+    if not birth_year: missing.append("birth_year")
+    if not extra_info: missing.append("extra_info")
 
-    if missing:
-        raise HTTPException(status_code=400, detail=f"구조화 검색에는 다음 필드가 필요합니다: {', '.join(missing)}")
+    if missing: raise HTTPException(status_code=400, detail=f"필수 필드 누락: {', '.join(missing)}")
+    if not is_valid_birth_year(birth_year): raise HTTPException(status_code=400, detail="올바른 출생연도를 입력하세요.")
 
-    if not is_valid_birth_year(birth_year):
-        raise HTTPException(status_code=400, detail="birth_year는 1900~현재 연도 사이의 4자리 숫자여야 합니다.")
-
-    region_text = build_region_text(city, district, dong)
-    user_message = build_structured_user_message(region_text, birth_year, extra_info)
-    return user_message, "structured_search"
+    return build_structured_user_message(build_region_text(city, district, dong), birth_year, extra_info), "structured_search"
 
 def build_agent_messages(previous_messages: list, current_user_message: str) -> list:
-    agent_messages = []
-    recent_messages = previous_messages[-MAX_CONTEXT_MESSAGES:]
-
-    for message in recent_messages:
-        role = message.get("role", "")
-        content = message.get("content", "")
-        if role in ["user", "assistant"] and content:
-            agent_messages.append({"role": role, "content": content})
-
+    agent_messages = [{"role": m["role"], "content": m["content"]} for m in previous_messages[-MAX_CONTEXT_MESSAGES:] if m.get("content")]
     agent_messages.append({"role": "user", "content": current_user_message})
     return agent_messages
 
-def persist_thread_inputs_if_present(
-    user_id: str, thread_id: str, city: Optional[str], district: Optional[str],
-    dong: Optional[str], birth_year: Optional[str], extra_info: Optional[str],
-):
-    city = (city or "").strip()
-    district = (district or "").strip()
-    dong = (dong or "").strip() or "선택 안 함"
-    birth_year = (birth_year or "").strip()
-    extra_info = (extra_info or "").strip()
-
+def persist_thread_inputs_if_present(user_id, thread_id, city, district, dong, birth_year, extra_info):
     if not any([city, district, dong, birth_year, extra_info]): return
-
     save_thread_inputs(
-        user_id=user_id, thread_id=thread_id, selected_city=city or "선택하세요",
-        selected_district=district or "선택하세요", selected_dong=dong or "선택 안 함",
-        birth_year=birth_year, extra_info=extra_info
+        user_id=user_id, thread_id=thread_id,
+        selected_city=(city or "").strip() or "선택하세요",
+        selected_district=(district or "").strip() or "선택하세요",
+        selected_dong=(dong or "").strip() or "선택 안 함",
+        birth_year=(birth_year or "").strip(),
+        extra_info=(extra_info or "").strip()
     )
 
 # ==========================================
-# 🚦 FastAPI 앱 초기화 및 미들웨어
+# 🚦 FastAPI 초기화
 # ==========================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
     yield
 
-app = FastAPI(
-    title="Policy Navigator API",
-    description="전국민 맞춤형 정책 내비게이터 FastAPI 백엔드",
-    version="0.2.0",
-    lifespan=lifespan,
-)
+app = FastAPI(title="Policy Navigator API", lifespan=lifespan)
 
 allowed_origins = [
-    "http://localhost:3000", 
-    "http://127.0.0.1:3000",
-    "http://localhost:3001",
-    "http://127.0.0.1:3001",
-    "http://192.168.100.185:3000",
+    "http://localhost:3000", "http://127.0.0.1:3000",
+    "http://localhost:3001", "http://127.0.0.1:3001",
     "https://policy-navigator-lac.vercel.app", 
 ]
-
-allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "").strip()
-if allowed_origins_env:
-    allowed_origins.extend([origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()])
+if os.getenv("ALLOWED_ORIGINS"):
+    allowed_origins.extend([o.strip() for o in os.getenv("ALLOWED_ORIGINS").split(",") if o.strip()])
 
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    CORSMiddleware, allow_origins=allowed_origins,
+    allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
 
 # ==========================================
-# 🌐 시스템 및 헬스 체크 API
+# 🌐 헬스 체크 API
 # ==========================================
 @app.get("/")
-def read_root():
-    return {"ok": True, "service": "policy-navigator-api", "message": "FastAPI 백엔드가 정상 실행 중입니다."}
+def read_root(): return {"ok": True, "message": "FastAPI 백엔드가 정상 실행 중입니다."}
 
 @app.get("/health")
-def health_check():
-    return {"ok": True, "status": "healthy"}
-
-@app.get("/health/db")
-def database_health_check():
-    try:
-        with db_session() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1")
-                row = cur.fetchone()
-        return {"ok": True, "status": "healthy", "database": "connected", "result": row[0] if row else None}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"DB 연결 확인 실패: {type(e).__name__}: {e}") from e
+def health_check(): return {"ok": True, "status": "healthy"}
 
 # ==========================================
 # 💬 채팅 및 AI 코어 API
@@ -231,136 +159,110 @@ def database_health_check():
 @app.post("/ask", response_model=PolicySearchResponse)
 def ask_policy(request: PolicySearchRequest):
     try:
-        user_message, message_type = normalize_request(
-            request.city, request.district, request.dong, request.birth_year, request.extra_info, request.query
-        )
+        user_msg, msg_type = normalize_request(request.city, request.district, request.dong, request.birth_year, request.extra_info, request.query)
         agent = create_agent_executor()
-        answer = get_ai_response(agent_executor=agent, messages=[{"role": "user", "content": user_message}])
-        return PolicySearchResponse(ok=True, message_type=message_type, user_message=user_message, answer=answer)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"정책 검색 실패: {e}") from e
-
+        answer = get_ai_response(agent_executor=agent, messages=[{"role": "user", "content": user_msg}])
+        return PolicySearchResponse(ok=True, message_type=msg_type, user_message=user_msg, answer=answer)
+    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
     try:
-        user_id = (request.user_id or "").strip()
-        thread_id = (request.thread_id or "").strip()
-
-        if not user_id:
-            raise HTTPException(status_code=400, detail="user_id는 필수입니다.")
+        user_id, thread_id = (request.user_id or "").strip(), (request.thread_id or "").strip()
+        if not user_id: raise HTTPException(status_code=400, detail="user_id는 필수입니다.")
 
         user_message, message_type = normalize_request(
             request.city, request.district, request.dong,
             request.birth_year, request.extra_info, request.query
         )
 
-        if not thread_id:
-            thread_id = create_thread(user_id=user_id, set_active=False)
+        if not thread_id: thread_id = create_thread(user_id=user_id, set_active=False)
 
         persist_thread_inputs_if_present(
-            user_id=user_id, thread_id=thread_id,
-            city=request.city, district=request.district, dong=request.dong,
-            birth_year=request.birth_year, extra_info=request.extra_info,
+            user_id, thread_id, request.city, request.district, request.dong,
+            request.birth_year, request.extra_info
         )
 
         previous_messages = load_chat_messages(user_id, thread_id)
-
-        saved_user = save_chat_message(
-            user_id=user_id, thread_id=thread_id, role="user",
-            content=user_message, message_type=message_type
-        )
-        if not saved_user:
-            raise HTTPException(status_code=500, detail="사용자 메시지 저장 실패")
+        save_chat_message(user_id, thread_id, "user", user_message, message_type)
 
         agent_messages = build_agent_messages(previous_messages, user_message)
         agent_executor = create_agent_executor()
 
-        # 🌟 실시간 스트리밍 제너레이터 함수
+        # 🌟 하드 타임아웃이 적용된 스트리밍 이벤트 제너레이터
         async def event_generator():
             full_content = ""
-            try:
-                # 1. 스레드 ID 최초 전송
-                yield f"data: {json.dumps({'type': 'thread_id', 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
-                
-                # 2. AI 응답 스트리밍
-                async for chunk in get_ai_response_stream(agent_executor, agent_messages):
-                    yield chunk
-                    # 마지막 done 이벤트에서 전체 내용 추출
-                    if "full_content" in chunk:
-                        try:
-                            data = json.loads(chunk.replace("data: ", ""))
-                            full_content = data.get("full_content", "")
-                        except: pass
-                            
-                # 3. 완료 후 DB 저장
-                save_chat_message(
-                    user_id=user_id, thread_id=thread_id, role="assistant",
-                    content=full_content, 
-                    message_type="search_result" if message_type == "structured_search" else "followup_answer"
-                )
-            except Exception as stream_err:
-                yield f"data: {json.dumps({'type': 'error', 'message': str(stream_err)}, ensure_ascii=False)}\n\n"
+            deadline = asyncio.get_running_loop().time() + 45.0  # 🔥 정확히 45초까지만 허용
 
-        # 🌟 StreamingResponse로 반환하여 연결 유지!
+            try:
+                yield f"data: {json.dumps({'type': 'thread_id', 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
+                gen = get_ai_response_stream(agent_executor, agent_messages)
+                
+                while True:
+                    timeout_left = deadline - asyncio.get_running_loop().time()
+                    if timeout_left <= 0:
+                        raise asyncio.TimeoutError() # 45초 초과 시 강제 탈출!
+
+                    try:
+                        # 스트리밍 조각 하나를 가져오는 데 남은 시간만큼만 대기
+                        chunk = await asyncio.wait_for(anext(gen), timeout=timeout_left)
+                        yield chunk
+                        
+                        if "full_content" in chunk:
+                            try:
+                                data = json.loads(chunk.replace("data: ", ""))
+                                full_content = data.get("full_content", "")
+                            except: pass
+                    except StopAsyncIteration:
+                        break # AI 답변 정상 완료
+                        
+                if full_content:
+                    save_chat_message(
+                        user_id, thread_id, "assistant", full_content, 
+                        "search_result" if message_type == "structured_search" else "followup_answer"
+                    )
+
+            except asyncio.TimeoutError:
+                # 🌟 무한 대기 시 에러 창 대신 클라이언트에 깔끔한 메시지 전송
+                yield f"data: {json.dumps({'type': 'error', 'message': '정책 데이터 조회 시간이 초과되었습니다. 검색 조건을 좁혀서 다시 시도해 주세요.'}, ensure_ascii=False)}\n\n"
+            except Exception as stream_err:
+                yield f"data: {json.dumps({'type': 'error', 'message': f'분석 중 오류 발생: {str(stream_err)}'}, ensure_ascii=False)}\n\n"
+
         return StreamingResponse(event_generator(), media_type="text/event-stream")
 
     except HTTPException: raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"채팅 처리 실패: {e}") from e
+    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
 
 # ==========================================
-# 🗂️ 대화 관리(스레드) API
+# 🗂️ 대화 관리 API
 # ==========================================
 @app.get("/threads")
-def get_threads(user_id: str = Query(..., description="조회할 사용자 ID")):
-    try:
-        user_id = user_id.strip()
-        if not user_id: raise HTTPException(status_code=400, detail="user_id 누락")
-        return {"ok": True, "threads": list_user_threads(user_id)}
-    except Exception as e: raise HTTPException(status_code=500, detail=f"목록 조회 실패: {e}")
+def get_threads(user_id: str = Query(...)): return {"ok": True, "threads": list_user_threads(user_id.strip())}
 
 @app.post("/threads")
-def create_thread_api(req: CreateThreadRequest):
-    try:
-        return {"ok": True, "thread_id": create_thread(user_id=req.user_id.strip(), set_active=True)}
-    except Exception as e: raise HTTPException(status_code=500, detail=f"대화 생성 실패: {e}")
+def create_thread_api(req: CreateThreadRequest): return {"ok": True, "thread_id": create_thread(req.user_id.strip(), set_active=True)}
 
 @app.get("/threads/{thread_id}/messages")
-def get_thread_messages(thread_id: str, user_id: str = Query(...)):
-    try:
-        return {"ok": True, "thread_id": thread_id, "messages": load_chat_messages(user_id.strip(), thread_id.strip())}
-    except Exception as e: raise HTTPException(status_code=500, detail=f"메시지 조회 실패: {e}")
+def get_thread_messages(thread_id: str, user_id: str = Query(...)): return {"ok": True, "thread_id": thread_id, "messages": load_chat_messages(user_id.strip(), thread_id.strip())}
 
 @app.get("/threads/{thread_id}/inputs")
-def get_thread_inputs_api(thread_id: str, user_id: str = Query(...)):
-    try:
-        return {"ok": True, "thread_id": thread_id, "inputs": load_thread_inputs(user_id.strip(), thread_id.strip())}
-    except Exception as e: raise HTTPException(status_code=500, detail=f"입력값 조회 실패: {e}")
+def get_thread_inputs_api(thread_id: str, user_id: str = Query(...)): return {"ok": True, "thread_id": thread_id, "inputs": load_thread_inputs(user_id.strip(), thread_id.strip())}
 
 @app.patch("/threads/{thread_id}")
-def rename_thread_api(thread_id: str, req: RenameRequest):
-    try:
-        rename_thread(req.user_id.strip(), thread_id, req.title.strip())
-        return {"ok": True}
-    except Exception as e: raise HTTPException(status_code=500, detail=f"대화 제목 변경 실패: {e}")
+def rename_thread_api(thread_id: str, req: RenameRequest): 
+    rename_thread(req.user_id.strip(), thread_id, req.title.strip())
+    return {"ok": True}
 
 @app.delete("/threads/{thread_id}")
 def delete_thread_api(thread_id: str, user_id: str = Query(...)):
-    try:
-        delete_thread(user_id.strip(), thread_id)
-        return {"ok": True}
-    except Exception as e: raise HTTPException(status_code=500, detail=f"대화 삭제 실패: {e}")
+    delete_thread(user_id.strip(), thread_id)
+    return {"ok": True}
 
 @app.post("/threads/{thread_id}/inputs")
 def save_inputs_api(thread_id: str, req: SaveInputsRequest):
-    try:
-        save_thread_inputs(
-            user_id=req.user_id.strip(), thread_id=thread_id,
-            selected_city=req.selected_city or "선택하세요",
-            selected_district=req.selected_district or "선택하세요",
-            selected_dong=req.selected_dong or "선택 안 함",
-            birth_year=req.birth_year or "", extra_info=req.extra_info or ""
-        )
-        return {"ok": True}
-    except Exception as e: raise HTTPException(status_code=500, detail=f"입력 상태 저장 실패: {e}")
+    save_thread_inputs(
+        req.user_id.strip(), thread_id, req.selected_city or "선택하세요", 
+        req.selected_district or "선택하세요", req.selected_dong or "선택 안 함", 
+        req.birth_year or "", req.extra_info or ""
+    )
+    return {"ok": True}
