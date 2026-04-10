@@ -197,7 +197,6 @@ async def lifespan(app: FastAPI):
     init_db()
     yield
 
-# 💡 [핵심] 여기서 딱 한 번만 앱을 만들고 설정을 몰아넣습니다.
 app = FastAPI(
     title="Policy Navigator API",
     description="전국민 맞춤형 정책 내비게이터 FastAPI 백엔드",
@@ -205,11 +204,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# 💡 [CORS 설정] React 주소(로컬, IP)를 모두 수동으로 허용
+# 💡 [CORS 설정] Vercel 배포 주소를 포함하여 업데이트 완료!
 allowed_origins = [
     "http://localhost:3000", 
     "http://127.0.0.1:3000",
-    "http://192.168.100.185:3000",  # 터미널에 떴던 IP도 추가!
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+    "http://192.168.100.185:3000",
+    "https://policy-navigator-lac.vercel.app",  # 🌟 국민들이 접속할 실제 Vercel 주소 추가!
 ]
 
 # (선택사항) 환경변수에 설정된 도메인도 있으면 같이 추가
