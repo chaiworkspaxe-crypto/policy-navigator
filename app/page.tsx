@@ -42,9 +42,10 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   
-  // 🌟 모바일 사이드바 토글 상태
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  // 🌟 AI의 실시간 행동 상태(검색 중 등)를 표시하기 위한 상태
+  const [aiStatus, setAiStatus] = useState("");
 
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [city, setCity] = useState(EMPTY_INPUTS.selected_city);
   const [district, setDistrict] = useState(EMPTY_INPUTS.selected_district);
   const [dong, setDong] = useState(EMPTY_INPUTS.selected_dong);
@@ -67,13 +68,9 @@ export default function Home() {
   }, []);
 
   const applyInputs = (inputs?: Partial<ThreadInputs> | null) => {
-    const nextCity = inputs?.selected_city || EMPTY_INPUTS.selected_city;
-    const nextDistrict = inputs?.selected_district || EMPTY_INPUTS.selected_district;
-    const nextDong = inputs?.selected_dong || EMPTY_INPUTS.selected_dong;
-
-    setCity(nextCity);
-    setDistrict(nextDistrict);
-    setDong(nextDong);
+    setCity(inputs?.selected_city || EMPTY_INPUTS.selected_city);
+    setDistrict(inputs?.selected_district || EMPTY_INPUTS.selected_district);
+    setDong(inputs?.selected_dong || EMPTY_INPUTS.selected_dong);
     setBirthYear(inputs?.birth_year || "");
     setExtraInfo(inputs?.extra_info || "");
   };
@@ -92,11 +89,8 @@ export default function Home() {
       const shouldKeepCurrent = threadList.some((thread) => thread.thread_id === currentThreadId);
       const targetThreadId = shouldKeepCurrent ? currentThreadId : threadList[0].thread_id;
 
-      if (targetThreadId) {
-        await selectThread(uid, targetThreadId);
-      }
+      if (targetThreadId) await selectThread(uid, targetThreadId);
     } catch (error) {
-      console.error("[통신 에러 - 대화 목록]:", error);
       setErrorMessage("서버와 연결할 수 없습니다.");
     }
   };
@@ -117,7 +111,6 @@ export default function Home() {
       setMessages(loadedMessages);
       applyInputs(loadedInputs);
     } catch (error) {
-      console.error("[통신 에러 - 대화 불러오기]:", error);
       setErrorMessage(extractApiErrorMessage(error));
     }
   };
@@ -135,7 +128,6 @@ export default function Home() {
       const threadList = await api.listThreads(uid);
       setThreads(threadList);
     } catch (error) {
-      console.error("[통신 에러 - 새 대화 생성]:", error);
       setErrorMessage("새 대화방을 만들 수 없습니다.");
     }
   };
@@ -148,24 +140,22 @@ export default function Home() {
     return "";
   };
 
+  // 🌟 스트리밍 방식으로 대폭 개선된 검색 핸들러
   const handleSearch = async (isFollowUp = false) => {
     setErrorMessage("");
+    setAiStatus("");
 
     if (!userId) {
-      setErrorMessage("사용자 정보가 준비되지 않았습니다. 잠시 후 다시 시도해 주세요.");
-      return;
+      return setErrorMessage("사용자 정보가 준비되지 않았습니다. 잠시 후 다시 시도해 주세요.");
     }
 
-    // 🌟 [핵심 복구 로직] 대화방 ID가 없으면 버튼 누른 시점에 강제 생성
     let targetThreadId = currentThreadId;
     if (!targetThreadId) {
-      console.log("대화방 ID가 없어 새로 생성을 시도합니다...");
       try {
         targetThreadId = await api.createThread(userId);
-        setCurrentThreadId(targetThreadId); // 상태 업데이트 (비동기)
+        setCurrentThreadId(targetThreadId);
       } catch (err) {
-        setErrorMessage("서버와 연결이 원활하지 않아 대화방을 만들 수 없습니다. 잠시 후 다시 시도해 주세요.");
-        return;
+        return setErrorMessage("대화방을 만들 수 없습니다. 새로고침 후 다시 시도해 주세요.");
       }
     }
 
@@ -183,11 +173,15 @@ export default function Home() {
       : `📍 ${city} ${district} ${dong !== DEFAULT_DONG ? dong : ""} | 🎂 ${birthYear}년생 | 📝 ${extraInfo}`;
 
     setLoading(true);
+    // 사용자 메시지 화면에 추가
     setMessages((prev) => [...prev, { role: "user", content: optimisticUserMessage }]);
     if (isFollowUp) setQuery("");
 
+    // 🌟 실시간 타이핑이 이루어질 빈 AI 메시지 박스 미리 추가
+    setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+
     try {
-      // 🔥 여기서 currentThreadId 대신 방금 복구한 targetThreadId 사용!
+      // 1. 입력 조건은 빠르게 DB에 사전 저장
       await api.saveThreadInputs(userId, targetThreadId, {
         selected_city: city,
         selected_district: district,
@@ -196,31 +190,78 @@ export default function Home() {
         extra_info: extraInfo,
       });
 
-      const response = await api.getAiResponse({
-        user_id: userId,
-        thread_id: targetThreadId, // 🔥 여기도 targetThreadId 사용
-        city: isFollowUp ? undefined : city,
-        district: isFollowUp ? undefined : district,
-        dong: isFollowUp ? undefined : dong === DEFAULT_DONG ? "" : dong,
-        birth_year: isFollowUp ? undefined : birthYear,
-        extra_info: isFollowUp ? undefined : extraInfo,
-        query: isFollowUp ? followUpText : undefined,
+      // 2. Fetch를 이용해 스트리밍 API 직접 호출
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: userId,
+          thread_id: targetThreadId,
+          city: isFollowUp ? undefined : city,
+          district: isFollowUp ? undefined : district,
+          dong: isFollowUp ? undefined : dong === DEFAULT_DONG ? "" : dong,
+          birth_year: isFollowUp ? undefined : birthYear,
+          extra_info: isFollowUp ? undefined : extraInfo,
+          query: isFollowUp ? followUpText : undefined,
+        }),
       });
 
-      if (response.thread_id && response.thread_id !== targetThreadId) {
-        setCurrentThreadId(response.thread_id);
-      }
+      if (!response.body) throw new Error("스트리밍을 지원하지 않습니다.");
 
-      setMessages((prev) => [...prev, { role: "assistant", content: response.answer }]);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let accumulatedContent = "";
+      let buffer = ""; // 데이터 조각이 끊겼을 때를 대비한 버퍼
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n\n");
+        buffer = lines.pop() || ""; // 마지막 불완전한 조각은 다음 루프로 넘김
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          
+          try {
+            const data = JSON.parse(line.replace("data: ", ""));
+
+            // 글자가 들어올 때마다 화면 갱신
+            if (data.type === "content") {
+              accumulatedContent += data.delta;
+              setMessages((prev) => {
+                const next = [...prev];
+                next[next.length - 1] = { ...next[next.length - 1], content: accumulatedContent };
+                return next;
+              });
+              setAiStatus(""); // 타이핑이 시작되면 상태 메시지 숨김
+            } 
+            // AI가 검색 도구를 사용할 때 상태 갱신
+            else if (data.type === "status") {
+              setAiStatus(data.message);
+            } 
+            // 서버 에러 발생 시
+            else if (data.type === "error") {
+              setErrorMessage(data.message);
+            }
+          } catch (e) {
+            // 조각난 JSON 무시
+          }
+        }
+      }
+      
+      // 검색 완료 후 히스토리 새로고침
       const threadList = await api.listThreads(userId);
       setThreads(threadList);
 
     } catch (error) {
-      console.error("[통신 에러 - AI 응답 요청]:", error);
-      setMessages((prev) => prev.slice(0, -1));
-      setErrorMessage(extractApiErrorMessage(error) || "분석 중 오류가 발생했습니다.");
+      console.error("[통신 에러 - 스트리밍]:", error);
+      setMessages((prev) => prev.slice(0, -1)); // 에러 시 빈 메시지 삭제
+      setErrorMessage("데이터를 받아오는 중 오류가 발생했습니다.");
     } finally {
       setLoading(false);
+      setAiStatus("");
     }
   };
 
@@ -403,12 +444,15 @@ export default function Home() {
             </div>
           )}
 
-          {loading && (
+          {/* 🌟 로딩 중이면서 글자가 아직 안 나왔을 때만 상태 스피너 표시 */}
+          {loading && messages[messages.length - 1]?.content === "" && (
             <div className="mt-4 flex justify-start gap-3 sm:gap-4">
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-600">
                 <Loader2 size={16} className="animate-spin text-white" />
               </div>
-              <div className="p-3 text-sm text-gray-400">데이터를 분석 중입니다...</div>
+              <div className="p-3 text-sm text-gray-400 font-medium">
+                {aiStatus || "정책 데이터를 분석 중입니다..."}
+              </div>
             </div>
           )}
         </div>
