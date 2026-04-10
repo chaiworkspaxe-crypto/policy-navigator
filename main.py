@@ -1,7 +1,8 @@
 import os
 import re
 import json
-import asyncio # 🌟 무한 대기 방지를 위한 핵심 라이브러리 추가
+import asyncio 
+import traceback # 🌟 에러 추적을 위한 돋보기 모듈 추가
 from datetime import datetime
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -12,7 +13,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-# 👉 DB 및 AI 서비스 임포트
 from chat_db import (
     init_db, db_session, create_thread, rename_thread, delete_thread,
     list_user_threads, load_chat_messages, save_chat_message,
@@ -25,9 +25,6 @@ load_dotenv()
 CURRENT_YEAR = datetime.now().year
 MAX_CONTEXT_MESSAGES = 6
 
-# ==========================================
-# 📦 Pydantic 모델 정의
-# ==========================================
 class PolicySearchRequest(BaseModel):
     city: Optional[str] = Field(default=None, description="시/도")
     district: Optional[str] = Field(default=None, description="시/군/구")
@@ -67,9 +64,6 @@ class SaveInputsRequest(BaseModel):
     birth_year: Optional[str] = None
     extra_info: Optional[str] = None
 
-# ==========================================
-# 🛠️ 헬퍼 함수
-# ==========================================
 def is_valid_birth_year(text: str) -> bool:
     text = (text or "").strip()
     if not re.fullmatch(r"\d{4}", text): return False
@@ -121,9 +115,6 @@ def persist_thread_inputs_if_present(user_id, thread_id, city, district, dong, b
         extra_info=(extra_info or "").strip()
     )
 
-# ==========================================
-# 🚦 FastAPI 초기화
-# ==========================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
@@ -144,18 +135,12 @@ app.add_middleware(
     allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
 
-# ==========================================
-# 🌐 헬스 체크 API
-# ==========================================
 @app.get("/")
 def read_root(): return {"ok": True, "message": "FastAPI 백엔드가 정상 실행 중입니다."}
 
 @app.get("/health")
 def health_check(): return {"ok": True, "status": "healthy"}
 
-# ==========================================
-# 💬 채팅 및 AI 코어 API
-# ==========================================
 @app.post("/ask", response_model=PolicySearchResponse)
 def ask_policy(request: PolicySearchRequest):
     try:
@@ -189,10 +174,9 @@ async def chat(request: ChatRequest):
         agent_messages = build_agent_messages(previous_messages, user_message)
         agent_executor = create_agent_executor()
 
-        # 🌟 하드 타임아웃이 적용된 스트리밍 이벤트 제너레이터
         async def event_generator():
             full_content = ""
-            deadline = asyncio.get_running_loop().time() + 45.0  # 🔥 정확히 45초까지만 허용
+            deadline = asyncio.get_running_loop().time() + 45.0  
 
             try:
                 yield f"data: {json.dumps({'type': 'thread_id', 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
@@ -201,10 +185,9 @@ async def chat(request: ChatRequest):
                 while True:
                     timeout_left = deadline - asyncio.get_running_loop().time()
                     if timeout_left <= 0:
-                        raise asyncio.TimeoutError() # 45초 초과 시 강제 탈출!
+                        raise asyncio.TimeoutError() 
 
                     try:
-                        # 스트리밍 조각 하나를 가져오는 데 남은 시간만큼만 대기
                         chunk = await asyncio.wait_for(anext(gen), timeout=timeout_left)
                         yield chunk
                         
@@ -214,7 +197,7 @@ async def chat(request: ChatRequest):
                                 full_content = data.get("full_content", "")
                             except: pass
                     except StopAsyncIteration:
-                        break # AI 답변 정상 완료
+                        break 
                         
                 if full_content:
                     save_chat_message(
@@ -223,19 +206,18 @@ async def chat(request: ChatRequest):
                     )
 
             except asyncio.TimeoutError:
-                # 🌟 무한 대기 시 에러 창 대신 클라이언트에 깔끔한 메시지 전송
                 yield f"data: {json.dumps({'type': 'error', 'message': '정책 데이터 조회 시간이 초과되었습니다. 검색 조건을 좁혀서 다시 시도해 주세요.'}, ensure_ascii=False)}\n\n"
             except Exception as stream_err:
+                traceback.print_exc() # 🔥 스트리밍 내부 에러 추적기
                 yield f"data: {json.dumps({'type': 'error', 'message': f'분석 중 오류 발생: {str(stream_err)}'}, ensure_ascii=False)}\n\n"
 
         return StreamingResponse(event_generator(), media_type="text/event-stream")
 
     except HTTPException: raise
-    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e: 
+        traceback.print_exc() # 🔥 500 에러의 진짜 원인을 Render 로그에 강제 출력!
+        raise HTTPException(status_code=500, detail=str(e))
 
-# ==========================================
-# 🗂️ 대화 관리 API
-# ==========================================
 @app.get("/threads")
 def get_threads(user_id: str = Query(...)): return {"ok": True, "threads": list_user_threads(user_id.strip())}
 
