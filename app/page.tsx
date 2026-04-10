@@ -19,8 +19,8 @@ import {
   MapPin,
   Search,
   AlertCircle,
-  Menu, // 👈 모바일 메뉴 아이콘 추가
-  X,    // 👈 모바일 닫기 아이콘 추가
+  Menu,
+  X,
 } from "lucide-react";
 
 const DEFAULT_CITY = "선택하세요";
@@ -107,7 +107,7 @@ export default function Home() {
       setCurrentThreadId(tid);
       setMessages([]);
       setQuery("");
-      setIsSidebarOpen(false); // 모바일에서 대화 선택 시 사이드바 닫기
+      setIsSidebarOpen(false);
 
       const [loadedMessages, loadedInputs] = await Promise.all([
         api.loadMessages(uid, tid),
@@ -130,7 +130,7 @@ export default function Home() {
       setMessages([]);
       setQuery("");
       applyInputs(EMPTY_INPUTS);
-      setIsSidebarOpen(false); // 모바일에서 새 대화 시작 시 사이드바 닫기
+      setIsSidebarOpen(false);
 
       const threadList = await api.listThreads(uid);
       setThreads(threadList);
@@ -151,9 +151,22 @@ export default function Home() {
   const handleSearch = async (isFollowUp = false) => {
     setErrorMessage("");
 
-    if (!userId || !currentThreadId) {
-      setErrorMessage("대화방이 준비되지 않았습니다. 새로고침 해주세요.");
+    if (!userId) {
+      setErrorMessage("사용자 정보가 준비되지 않았습니다. 잠시 후 다시 시도해 주세요.");
       return;
+    }
+
+    // 🌟 [핵심 복구 로직] 대화방 ID가 없으면 버튼 누른 시점에 강제 생성
+    let targetThreadId = currentThreadId;
+    if (!targetThreadId) {
+      console.log("대화방 ID가 없어 새로 생성을 시도합니다...");
+      try {
+        targetThreadId = await api.createThread(userId);
+        setCurrentThreadId(targetThreadId); // 상태 업데이트 (비동기)
+      } catch (err) {
+        setErrorMessage("서버와 연결이 원활하지 않아 대화방을 만들 수 없습니다. 잠시 후 다시 시도해 주세요.");
+        return;
+      }
     }
 
     if (isFollowUp) {
@@ -174,7 +187,8 @@ export default function Home() {
     if (isFollowUp) setQuery("");
 
     try {
-      await api.saveThreadInputs(userId, currentThreadId, {
+      // 🔥 여기서 currentThreadId 대신 방금 복구한 targetThreadId 사용!
+      await api.saveThreadInputs(userId, targetThreadId, {
         selected_city: city,
         selected_district: district,
         selected_dong: dong,
@@ -184,7 +198,7 @@ export default function Home() {
 
       const response = await api.getAiResponse({
         user_id: userId,
-        thread_id: currentThreadId,
+        thread_id: targetThreadId, // 🔥 여기도 targetThreadId 사용
         city: isFollowUp ? undefined : city,
         district: isFollowUp ? undefined : district,
         dong: isFollowUp ? undefined : dong === DEFAULT_DONG ? "" : dong,
@@ -193,7 +207,7 @@ export default function Home() {
         query: isFollowUp ? followUpText : undefined,
       });
 
-      if (response.thread_id && response.thread_id !== currentThreadId) {
+      if (response.thread_id && response.thread_id !== targetThreadId) {
         setCurrentThreadId(response.thread_id);
       }
 
@@ -213,7 +227,6 @@ export default function Home() {
   return (
     <div className="flex h-[100dvh] bg-[#121212] text-gray-100 font-sans overflow-hidden">
       
-      {/* 🌟 모바일 배경 오버레이 (사이드바 열렸을 때 바탕 까맣게) */}
       {isSidebarOpen && (
         <div 
           className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm md:hidden transition-opacity"
@@ -221,7 +234,6 @@ export default function Home() {
         />
       )}
 
-      {/* 🌟 반응형 사이드바 (모바일에서는 Slide-in, 데스크탑에서는 고정) */}
       <aside 
         className={`fixed inset-y-0 left-0 z-50 w-72 flex flex-col bg-[#1e1e1e] border-r border-[#333] transform transition-transform duration-300 ease-in-out md:relative md:translate-x-0 ${
           isSidebarOpen ? "translate-x-0" : "-translate-x-full"
@@ -231,7 +243,6 @@ export default function Home() {
           <h1 className="flex items-center gap-2 text-lg font-bold text-green-400">
             <Search size={20} /> 정책 내비게이터
           </h1>
-          {/* 모바일 닫기 버튼 */}
           <button onClick={() => setIsSidebarOpen(false)} className="md:hidden text-gray-400 hover:text-white">
             <X size={24} />
           </button>
@@ -268,10 +279,8 @@ export default function Home() {
         </div>
       </aside>
 
-      {/* 🟢 메인 콘텐츠 영역 */}
       <main className="relative flex h-full flex-1 flex-col w-full">
         
-        {/* 🌟 모바일 전용 상단 헤더 (햄버거 버튼) */}
         <div className="flex items-center justify-between bg-[#1a1a1a] p-4 border-b border-[#333] md:hidden shrink-0">
           <div className="font-bold text-gray-100 flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
@@ -282,7 +291,6 @@ export default function Home() {
           </button>
         </div>
 
-        {/* 조건 입력 폼 */}
         <div className="shrink-0 border-b border-[#333] bg-[#1a1a1a] p-4">
           <div className="mx-auto max-w-4xl space-y-3">
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -324,7 +332,7 @@ export default function Home() {
 
             <div className="flex flex-col gap-2 sm:flex-row">
               <input
-                type="tel" // 모바일에서 숫자 키패드가 뜨도록 tel 사용
+                type="tel"
                 placeholder="출생연도 (예: 1999)"
                 maxLength={4}
                 className="w-full rounded-lg border border-[#444] bg-[#2a2a2a] p-3 text-sm sm:p-2.5 outline-none transition focus:border-green-500 sm:w-1/3"
@@ -358,7 +366,6 @@ export default function Home() {
           </div>
         </div>
 
-        {/* 채팅 결과 출력 영역 */}
         <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col overflow-y-auto p-4 sm:p-8 scroll-smooth">
           {messages.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center text-gray-500 text-center px-4">
@@ -406,7 +413,6 @@ export default function Home() {
           )}
         </div>
 
-        {/* 하단 추가 질문 입력창 */}
         <div className="shrink-0 border-t border-[#333] bg-[#121212] p-3 sm:p-4 pb-safe">
           <div className="relative mx-auto max-w-4xl">
             <input
