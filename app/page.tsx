@@ -418,12 +418,12 @@ export default function Home() {
               작은 후원도 큰 힘이 됩니다! 🙇‍♂️
             </p>
             <div className="bg-gray-50 dark:bg-[#121212] border border-gray-200 dark:border-[#333] p-4 rounded-xl text-left text-sm font-medium text-gray-700 dark:text-gray-300 mb-6 space-y-1">
-              <p className="flex justify-between"><span>은행</span> <span className="font-bold">토스뱅크</span></p>
-              <p className="flex justify-between"><span>계좌번호</span> <span className="font-bold">1000-0000-0000</span></p>
-              <p className="flex justify-between"><span>예금주</span> <span className="font-bold">강창현</span></p>
+              <p className="flex justify-between"><span>은행</span> <span className="font-bold">케이뱅크</span></p>
+              <p className="flex justify-between"><span>계좌번호</span> <span className="font-bold">100238386987</span></p>
+              <p className="flex justify-between"><span>예금주</span> <span className="font-bold">유창현</span></p>
             </div>
             <button 
-              onClick={() => { navigator.clipboard.writeText("100000000000"); alert("계좌번호가 복사되었습니다!"); }}
+              onClick={() => { navigator.clipboard.writeText("100238386987"); alert("계좌번호가 복사되었습니다!"); }}
               className="w-full py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl transition-colors active:scale-95 shadow-sm"
             >
               📋 계좌번호 복사하기
