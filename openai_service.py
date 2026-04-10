@@ -8,18 +8,12 @@ try:
 except Exception:
     pass
 
-# ... (상단 import 부분)
 from langchain_openai import ChatOpenAI
-
-# 🌟 [수정] 임포트 에러를 방지하기 위해 경로를 더 명확하게 나눴어.
-try:
-    from langchain.agents import AgentExecutor, create_openai_tools_agent
-except ImportError:
-    # 혹시 위 경로에서 못 찾을 경우를 대비한 백업 경로야.
-    from langchain.agents.agent import AgentExecutor
-    from langchain.agents import create_openai_tools_agent
-
+# 🌟 [수정] 복잡한 예외 처리 없이 가장 표준적인 경로로 단일화했어.
+from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+
+# ... (이후 tools 임포트 및 시스템 프롬프트 로직은 동일)
 # ... (이후 동일)
 
 SYSTEM_PROMPT = """
