@@ -8,11 +8,19 @@ try:
 except Exception:
     pass
 
+# ... (상단 import 부분)
 from langchain_openai import ChatOpenAI
-from langchain.agents import AgentExecutor, create_openai_tools_agent
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
-from tools import web_search, verify_official_page, get_current_time
+# 🌟 [수정] 임포트 에러를 방지하기 위해 경로를 더 명확하게 나눴어.
+try:
+    from langchain.agents import AgentExecutor, create_openai_tools_agent
+except ImportError:
+    # 혹시 위 경로에서 못 찾을 경우를 대비한 백업 경로야.
+    from langchain.agents.agent import AgentExecutor
+    from langchain.agents import create_openai_tools_agent
+
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+# ... (이후 동일)
 
 SYSTEM_PROMPT = """
 당신은 대한민국 국민 모두의 '정보 비대칭'을 완벽하게 해소해 주는 최고의 '전국민 맞춤형 복지/지원금 내비게이터(Universal Policy Navigator)'입니다.
