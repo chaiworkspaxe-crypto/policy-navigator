@@ -3,6 +3,8 @@ import json
 from functools import lru_cache
 import pytz
 from datetime import datetime
+import requests
+from bs4 import BeautifulSoup
 
 try:
     import truststore
@@ -15,7 +17,6 @@ from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import tool
 
-# 🌟 [복구 완료] 실수로 지워졌던 필수 도구(Tools)들을 완벽하게 살려냈어!
 @tool
 def get_current_time() -> str:
     """현재 날짜와 시간을 확인합니다."""
@@ -31,10 +32,26 @@ def web_search(query: str) -> str:
     except Exception as e:
         return f"검색 중 오류 발생: {e}"
 
+# 🌟 [추가] 실제 웹 크롤링이 적용된 팩트체크 도구
 @tool
 def verify_official_page(url: str) -> str:
     """공식 홈페이지 URL에 접속하여 내용을 팩트체크합니다."""
-    return "공식 페이지 내용 확인 완료"
+    try:
+        # User-Agent를 넣어 관공서 봇 차단을 우회
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        # 불필요한 스크립트, 스타일 태그 제거
+        for script in soup(["script", "style"]):
+            script.extract()
+            
+        text = soup.get_text(separator=' ', strip=True)
+        # 내용이 너무 길면 LLM 토큰이 터지므로 앞 1500자만 잘라서 반환
+        return f"[공식 페이지 스크래핑 결과 요약]\n{text[:1500]}"
+    except Exception as e:
+        return f"페이지 접속 실패 (수동 확인 필요): {str(e)}"
 
 SYSTEM_PROMPT = """
 당신은 대한민국 국민 모두의 '정보 비대칭'을 완벽하게 해소해 주는 최고의 '전국민 맞춤형 복지/지원금 내비게이터(Universal Policy Navigator)'입니다.

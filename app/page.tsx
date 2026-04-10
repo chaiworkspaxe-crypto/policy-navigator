@@ -30,9 +30,7 @@ export default function Home() {
   const [aiStatus, setAiStatus] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  // 🌟 4번 기능: 후원 모달 상태
   const [showDonation, setShowDonation] = useState(false);
-  // 🌟 5번 기능: 다크/라이트 모드 상태 (기본 다크모드)
   const [isDarkMode, setIsDarkMode] = useState(true);
 
   const [city, setCity] = useState(EMPTY_INPUTS.selected_city);
@@ -54,11 +52,9 @@ export default function Home() {
     setUserId(storedId);
     void loadThreads(storedId);
     
-    // 초기 로드 시 다크모드 강제 적용
     document.documentElement.classList.add('dark');
   }, []);
 
-  // 🌟 5번 기능: 테마 토글 함수
   const toggleTheme = () => {
     setIsDarkMode(!isDarkMode);
     if (isDarkMode) {
@@ -68,14 +64,13 @@ export default function Home() {
     }
   };
 
-  // 🌟 1번 기능: 채팅방 삭제 함수
   const handleDeleteThread = async (tid: string, e: React.MouseEvent) => {
-    e.stopPropagation(); // 방 입장 클릭 이벤트와 겹치지 않게 방지
+    e.stopPropagation(); 
     if (!confirm("정말 이 대화 기록을 삭제하시겠습니까?")) return;
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/threads/${tid}?user_id=${userId}`, { method: 'DELETE' });
       if (res.ok) {
-        await loadThreads(userId); // 목록 새로고침
+        await loadThreads(userId);
         if (currentThreadId === tid) {
           setCurrentThreadId("");
           setMessages([]);
@@ -156,7 +151,7 @@ export default function Home() {
       try {
         targetThreadId = await api.createThread(userId);
         setCurrentThreadId(targetThreadId);
-      } catch { return setErrorMessage("대화방을 만들 수 없습니다. 잠시 후 시도해 주세요."); }
+      } catch { return setErrorMessage("대화방을 만들 수 준 수 없습니다. 잠시 후 시도해 주세요."); }
     }
 
     if (isFollowUp) {
@@ -193,11 +188,9 @@ export default function Home() {
         }),
       });
 
-      // 🌟 [추가] 403 에러 (1일 4회 초과) 처리 로직
       if (response.status === 403) {
         const errorData = await response.json();
         setErrorMessage(errorData.detail || "오늘의 검색 횟수를 모두 사용했습니다.");
-        // 실패했으므로 화면에 임시로 그렸던 유저 메시지와 AI 메시지 칸 삭제 (총 2개)
         setMessages((prev) => prev.slice(0, -2)); 
         setLoading(false);
         return;
@@ -252,7 +245,6 @@ export default function Home() {
   };
 
   return (
-    // 🌟 테마에 따라 전체 배경색과 글자색이 바뀌도록 클래스 적용 (bg-gray-50 / dark:bg-[#121212])
     <div className="flex h-[100dvh] bg-gray-50 dark:bg-[#121212] text-gray-900 dark:text-gray-100 font-sans overflow-hidden transition-colors duration-300">
       {isSidebarOpen && <div className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm md:hidden transition-opacity" onClick={() => setIsSidebarOpen(false)} />}
 
@@ -276,7 +268,6 @@ export default function Home() {
                 <MessageSquare size={16} className="shrink-0" />
                 <span className="truncate text-sm">{thread.title || "새 대화"}</span>
               </div>
-              {/* 🌟 1번 기능: 휴지통 아이콘 추가 */}
               <Trash2 
                 size={16} 
                 className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity" 
@@ -286,7 +277,6 @@ export default function Home() {
           ))}
         </div>
 
-        {/* 🌟 4번 기능: 사이드바 하단 후원하기 버튼 */}
         <div className="p-4 border-t border-gray-200 dark:border-[#333]">
           <button 
             onClick={() => setShowDonation(true)}
@@ -298,7 +288,6 @@ export default function Home() {
       </aside>
 
       <main className="relative flex h-full flex-1 flex-col w-full">
-        {/* 🌟 5번 기능: 다크/라이트 모드 토글 버튼 (우측 상단 절대배치) */}
         <div className="absolute top-4 right-4 z-50 hidden md:block">
           <button 
             onClick={toggleTheme}
@@ -313,7 +302,6 @@ export default function Home() {
             <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>맞춤 혜택 찾기
           </div>
           <div className="flex gap-3">
-            {/* 모바일 화면용 토글 버튼 */}
             <button onClick={toggleTheme} className="text-gray-500 dark:text-gray-300"><Sun size={24} className="block dark:hidden"/><Moon size={24} className="hidden dark:block"/></button>
             <button onClick={() => setIsSidebarOpen(true)} className="text-gray-500 dark:text-gray-300"><Menu size={24} /></button>
           </div>
@@ -368,6 +356,31 @@ export default function Home() {
                   )}
                   <div className={`max-w-[90%] sm:max-w-[85%] rounded-2xl p-4 shadow-sm overflow-hidden ${message.role === "user" ? "whitespace-pre-wrap border border-gray-200 dark:border-[#444] bg-white dark:bg-[#2d2d2d] text-gray-800 dark:text-gray-200 text-sm sm:text-base" : "bg-transparent text-gray-800 dark:text-gray-300"}`}>
                     {message.role === "assistant" ? <MarkdownMessage content={message.content} /> : <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>}
+                    
+                    {/* 🌟 [추가] 공유하기 버튼 */}
+                    {message.role === "assistant" && message.content.length > 50 && (
+                      <div className="mt-4 pt-3 border-t border-gray-200 dark:border-[#444] flex justify-end">
+                        <button 
+                          onClick={async () => {
+                            const shareData = {
+                              title: '나에게 딱 맞는 맞춤형 정부 혜택 🎁',
+                              text: '정책 내비게이터가 찾아준 맞춤형 혜택을 확인해보세요!\n\n' + message.content.substring(0, 100) + '...',
+                              url: window.location.href,
+                            };
+                            try {
+                              if (navigator.share) await navigator.share(shareData);
+                              else {
+                                await navigator.clipboard.writeText(shareData.text + '\n' + shareData.url);
+                                alert('결과가 클립보드에 복사되었습니다! 친구에게 붙여넣기 해보세요.');
+                              }
+                            } catch (err) { console.error('공유 실패:', err); }
+                          }}
+                          className="text-xs font-bold bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-3 py-1.5 rounded-lg hover:bg-green-200 dark:hover:bg-green-800/50 transition-colors flex items-center gap-1"
+                        >
+                          🔗 결과 공유하기
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -388,7 +401,6 @@ export default function Home() {
 
         <div className="shrink-0 border-t border-gray-200 dark:border-[#333] bg-gray-50 dark:bg-[#121212] p-3 sm:p-4 pb-safe transition-colors duration-300">
           <div className="relative mx-auto max-w-4xl flex flex-col">
-            {/* 🌟 3번 기능: 추천 질문 예시 박스 */}
             <div className="flex gap-2 mb-3 overflow-x-auto pb-1 scrollbar-hide">
               {["🧑‍🎓 대학생을 위한 월세 지원 정책 찾아줘", "💼 취업 준비생 국비 지원 교육 알려줘", "💰 20대 청년 적금 혜택 정리해 줘"].map((example, idx) => (
                 <button
@@ -411,7 +423,6 @@ export default function Home() {
         </div>
       </main>
 
-      {/* 🌟 4번 기능: 후원하기 모달 팝업 */}
       {showDonation && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] px-4 animate-in fade-in duration-200">
           <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl shadow-xl w-full max-w-sm text-center relative border border-gray-200 dark:border-[#333]">

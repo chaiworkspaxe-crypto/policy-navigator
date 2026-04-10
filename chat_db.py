@@ -867,3 +867,30 @@ def refund_daily_request_quota(user_id: str, usage_date: str = "") -> bool:
             )
 
     return True
+
+# 🌟 [추가] 관리자 대시보드 통계 조회 함수
+def get_admin_dashboard_stats() -> dict:
+    today = today_text()
+    with db_session() as conn:
+        with conn.cursor(cursor_factory=DictCursor) as cur:
+            # 총 가입(접속) 유저 수
+            cur.execute("SELECT COUNT(DISTINCT user_id) as total_users FROM chat_sessions")
+            row = cur.fetchone()
+            total_users = row["total_users"] if row else 0
+            
+            # 총 생성된 대화방 수
+            cur.execute("SELECT COUNT(*) as total_threads FROM chat_threads")
+            row = cur.fetchone()
+            total_threads = row["total_threads"] if row else 0
+            
+            # 오늘 1일 4회 제한에 걸린 사람 수
+            cur.execute("SELECT COUNT(*) as blocked_today FROM daily_request_usage WHERE usage_date = %s AND request_count >= 4", (today,))
+            row = cur.fetchone()
+            blocked_today = row["blocked_today"] if row else 0
+
+    return {
+        "total_users": total_users,
+        "total_threads": total_threads,
+        "blocked_today": blocked_today,
+        "today_date": today
+    }

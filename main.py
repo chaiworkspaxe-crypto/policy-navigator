@@ -17,8 +17,8 @@ from chat_db import (
     init_db, db_session, create_thread, rename_thread, delete_thread,
     list_user_threads, load_chat_messages, save_chat_message,
     save_thread_inputs, load_thread_inputs,
-    # 🌟 [추가] 1일 사용량 체크 함수 임포트
-    consume_daily_request_quota 
+    consume_daily_request_quota,
+    get_admin_dashboard_stats # 🌟 [추가] 관리자 통계 함수 임포트
 )
 from openai_service import create_agent_executor, get_ai_response, get_ai_response_stream
 
@@ -143,6 +143,11 @@ def read_root(): return {"ok": True, "message": "FastAPI 백엔드가 정상 실
 @app.get("/health")
 def health_check(): return {"ok": True, "status": "healthy"}
 
+# 🌟 [추가] 관리자 대시보드 통계 API
+@app.get("/admin/stats")
+def admin_stats():
+    return {"ok": True, "data": get_admin_dashboard_stats()}
+
 @app.post("/ask", response_model=PolicySearchResponse)
 def ask_policy(request: PolicySearchRequest):
     try:
@@ -158,7 +163,6 @@ async def chat(request: ChatRequest):
         user_id, thread_id = (request.user_id or "").strip(), (request.thread_id or "").strip()
         if not user_id: raise HTTPException(status_code=400, detail="user_id는 필수입니다.")
 
-        # 🌟 [추가] 1일 4회 제한 로직 가동!
         quota = consume_daily_request_quota(user_id, daily_limit=4)
         if not quota["allowed"]:
             raise HTTPException(
