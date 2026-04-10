@@ -114,7 +114,7 @@ def create_agent_executor():
 
 async def get_ai_response_stream(agent_executor, messages: list):
     full_answer = ""
-    async for event in agent_executor.astream_events({"messages": messages}, version="v2"):
+    async for event in agent_executor.astream_events({"messages": messages}, version="v1"):
         kind = event["event"]
 
         if kind == "on_chat_model_stream":
