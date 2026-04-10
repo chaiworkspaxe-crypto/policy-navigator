@@ -2,7 +2,7 @@ import os
 import re
 import json
 import asyncio 
-import traceback # 🌟 에러 추적을 위한 돋보기 모듈 추가
+import traceback
 from datetime import datetime
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -17,6 +17,8 @@ from chat_db import (
     init_db, db_session, create_thread, rename_thread, delete_thread,
     list_user_threads, load_chat_messages, save_chat_message,
     save_thread_inputs, load_thread_inputs,
+    # 🌟 [추가] 1일 사용량 체크 함수 임포트
+    consume_daily_request_quota 
 )
 from openai_service import create_agent_executor, get_ai_response, get_ai_response_stream
 
@@ -156,6 +158,14 @@ async def chat(request: ChatRequest):
         user_id, thread_id = (request.user_id or "").strip(), (request.thread_id or "").strip()
         if not user_id: raise HTTPException(status_code=400, detail="user_id는 필수입니다.")
 
+        # 🌟 [추가] 1일 4회 제한 로직 가동!
+        quota = consume_daily_request_quota(user_id, daily_limit=4)
+        if not quota["allowed"]:
+            raise HTTPException(
+                status_code=403, 
+                detail="오늘의 맞춤 혜택 검색 횟수(4회)를 모두 사용하셨습니다. 서버 유지를 위해 내일 다시 찾아와 주세요! 🙇‍♂️"
+            )
+
         user_message, message_type = normalize_request(
             request.city, request.district, request.dong,
             request.birth_year, request.extra_info, request.query
@@ -208,14 +218,14 @@ async def chat(request: ChatRequest):
             except asyncio.TimeoutError:
                 yield f"data: {json.dumps({'type': 'error', 'message': '정책 데이터 조회 시간이 초과되었습니다. 검색 조건을 좁혀서 다시 시도해 주세요.'}, ensure_ascii=False)}\n\n"
             except Exception as stream_err:
-                traceback.print_exc() # 🔥 스트리밍 내부 에러 추적기
+                traceback.print_exc()
                 yield f"data: {json.dumps({'type': 'error', 'message': f'분석 중 오류 발생: {str(stream_err)}'}, ensure_ascii=False)}\n\n"
 
         return StreamingResponse(event_generator(), media_type="text/event-stream")
 
     except HTTPException: raise
     except Exception as e: 
-        traceback.print_exc() # 🔥 500 에러의 진짜 원인을 Render 로그에 강제 출력!
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/threads")

@@ -193,6 +193,16 @@ export default function Home() {
         }),
       });
 
+      // 🌟 [추가] 403 에러 (1일 4회 초과) 처리 로직
+      if (response.status === 403) {
+        const errorData = await response.json();
+        setErrorMessage(errorData.detail || "오늘의 검색 횟수를 모두 사용했습니다.");
+        // 실패했으므로 화면에 임시로 그렸던 유저 메시지와 AI 메시지 칸 삭제 (총 2개)
+        setMessages((prev) => prev.slice(0, -2)); 
+        setLoading(false);
+        return;
+      }
+
       if (!response.ok) throw new Error("서버에서 응답을 거부했습니다.");
       if (!response.body) throw new Error("스트리밍을 지원하지 않습니다.");
 
