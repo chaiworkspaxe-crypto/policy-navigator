@@ -3,9 +3,9 @@ uvicorn[standard]
 python-dotenv
 psycopg2-binary
 openai
-langchain==0.1.20
-langchain-openai==0.1.7
-langchain-community==0.0.38
+langchain
+langchain-openai
+langchain-community
 langgraph
 truststore
 ddgs
