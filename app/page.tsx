@@ -11,7 +11,10 @@ import {
 } from "@/lib/api";
 import { CITY_TO_DISTRICTS, DONG_MAP } from "@/lib/regionData";
 import MarkdownMessage from "@/components/MarkdownMessage";
-import { MessageSquare, Plus, Send, Loader2, MapPin, Search, AlertCircle, Menu, X } from "lucide-react";
+import { 
+  MessageSquare, Plus, Send, Loader2, MapPin, 
+  Search, AlertCircle, Menu, X, Trash2, Sun, Moon, Coffee 
+} from "lucide-react";
 
 const DEFAULT_CITY = "선택하세요";
 const DEFAULT_DONG = "선택 안 함";
@@ -26,6 +29,11 @@ export default function Home() {
   const [errorMessage, setErrorMessage] = useState("");
   const [aiStatus, setAiStatus] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // 🌟 4번 기능: 후원 모달 상태
+  const [showDonation, setShowDonation] = useState(false);
+  // 🌟 5번 기능: 다크/라이트 모드 상태 (기본 다크모드)
+  const [isDarkMode, setIsDarkMode] = useState(true);
 
   const [city, setCity] = useState(EMPTY_INPUTS.selected_city);
   const [district, setDistrict] = useState(EMPTY_INPUTS.selected_district);
@@ -45,7 +53,41 @@ export default function Home() {
     }
     setUserId(storedId);
     void loadThreads(storedId);
+    
+    // 초기 로드 시 다크모드 강제 적용
+    document.documentElement.classList.add('dark');
   }, []);
+
+  // 🌟 5번 기능: 테마 토글 함수
+  const toggleTheme = () => {
+    setIsDarkMode(!isDarkMode);
+    if (isDarkMode) {
+      document.documentElement.classList.remove('dark');
+    } else {
+      document.documentElement.classList.add('dark');
+    }
+  };
+
+  // 🌟 1번 기능: 채팅방 삭제 함수
+  const handleDeleteThread = async (tid: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // 방 입장 클릭 이벤트와 겹치지 않게 방지
+    if (!confirm("정말 이 대화 기록을 삭제하시겠습니까?")) return;
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/threads/${tid}?user_id=${userId}`, { method: 'DELETE' });
+      if (res.ok) {
+        await loadThreads(userId); // 목록 새로고침
+        if (currentThreadId === tid) {
+          setCurrentThreadId("");
+          setMessages([]);
+          applyInputs(EMPTY_INPUTS);
+        }
+      } else {
+        alert("삭제에 실패했습니다.");
+      }
+    } catch (err) {
+      console.error("삭제 에러:", err);
+    }
+  };
 
   const applyInputs = (inputs?: Partial<ThreadInputs> | null) => {
     setCity(inputs?.selected_city || EMPTY_INPUTS.selected_city);
@@ -139,7 +181,6 @@ export default function Home() {
         birth_year: birthYear, extra_info: extraInfo,
       });
 
-      // 🌟 Fetch API 사용 (Axios 타임아웃 회피)
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -184,7 +225,6 @@ export default function Home() {
             } else if (data.type === "status") {
               setAiStatus(data.message);
             } else if (data.type === "error") {
-              // 백엔드에서 보낸 45초 초과 에러 메시지 등을 처리
               setErrorMessage(data.message);
             }
           } catch (e) { /* 조각난 JSON 무시 */ }
@@ -202,17 +242,18 @@ export default function Home() {
   };
 
   return (
-    <div className="flex h-[100dvh] bg-[#121212] text-gray-100 font-sans overflow-hidden">
+    // 🌟 테마에 따라 전체 배경색과 글자색이 바뀌도록 클래스 적용 (bg-gray-50 / dark:bg-[#121212])
+    <div className="flex h-[100dvh] bg-gray-50 dark:bg-[#121212] text-gray-900 dark:text-gray-100 font-sans overflow-hidden transition-colors duration-300">
       {isSidebarOpen && <div className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm md:hidden transition-opacity" onClick={() => setIsSidebarOpen(false)} />}
 
-      <aside className={`fixed inset-y-0 left-0 z-50 w-72 flex flex-col bg-[#1e1e1e] border-r border-[#333] transform transition-transform duration-300 ease-in-out md:relative md:translate-x-0 ${isSidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
-        <div className="flex items-center justify-between border-b border-[#333] p-4">
-          <h1 className="flex items-center gap-2 text-lg font-bold text-green-400"><Search size={20} /> 정책 내비게이터</h1>
-          <button onClick={() => setIsSidebarOpen(false)} className="md:hidden text-gray-400 hover:text-white"><X size={24} /></button>
+      <aside className={`fixed inset-y-0 left-0 z-50 w-72 flex flex-col bg-white dark:bg-[#1e1e1e] border-r border-gray-200 dark:border-[#333] transform transition-transform duration-300 ease-in-out md:relative md:translate-x-0 ${isSidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
+        <div className="flex items-center justify-between border-b border-gray-200 dark:border-[#333] p-4">
+          <h1 className="flex items-center gap-2 text-lg font-bold text-green-600 dark:text-green-400"><Search size={20} /> 정책 내비게이터</h1>
+          <button onClick={() => setIsSidebarOpen(false)} className="md:hidden text-gray-500 hover:text-black dark:text-gray-400 dark:hover:text-white"><X size={24} /></button>
         </div>
 
         <div className="p-4">
-          <button onClick={() => void handleNewThread()} className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#444] bg-[#2d2d2d] py-2.5 font-semibold transition hover:bg-[#3d3d3d] active:scale-95">
+          <button onClick={() => void handleNewThread()} className="flex w-full items-center justify-center gap-2 rounded-xl border border-gray-300 dark:border-[#444] bg-gray-100 dark:bg-[#2d2d2d] py-2.5 font-semibold text-gray-700 dark:text-gray-200 transition hover:bg-gray-200 dark:hover:bg-[#3d3d3d] active:scale-95">
             <Plus size={18} /> 새 대화 시작
           </button>
         </div>
@@ -220,47 +261,79 @@ export default function Home() {
         <div className="flex-1 overflow-y-auto px-3 pb-3">
           <p className="mb-2 px-1 text-xs font-bold text-gray-500">대화 목록</p>
           {threads.map((thread) => (
-            <button key={thread.thread_id} type="button" onClick={() => void selectThread(userId, thread.thread_id)} className={`mb-1 flex w-full items-center justify-between rounded-xl p-3 text-left transition ${currentThreadId === thread.thread_id ? "border border-green-500/30 bg-green-500/10 text-green-400" : "text-gray-300 hover:bg-[#2a2a2a]"}`}>
+            <button key={thread.thread_id} type="button" onClick={() => void selectThread(userId, thread.thread_id)} className={`group mb-1 flex w-full items-center justify-between rounded-xl p-3 text-left transition ${currentThreadId === thread.thread_id ? "border border-green-500/30 bg-green-500/10 text-green-600 dark:text-green-400" : "text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-[#2a2a2a]"}`}>
               <div className="flex min-w-0 items-center gap-2 truncate">
                 <MessageSquare size={16} className="shrink-0" />
                 <span className="truncate text-sm">{thread.title || "새 대화"}</span>
               </div>
+              {/* 🌟 1번 기능: 휴지통 아이콘 추가 */}
+              <Trash2 
+                size={16} 
+                className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity" 
+                onClick={(e) => handleDeleteThread(thread.thread_id, e)}
+              />
             </button>
           ))}
+        </div>
+
+        {/* 🌟 4번 기능: 사이드바 하단 후원하기 버튼 */}
+        <div className="p-4 border-t border-gray-200 dark:border-[#333]">
+          <button 
+            onClick={() => setShowDonation(true)}
+            className="w-full flex items-center justify-center gap-2 py-3 bg-yellow-400 hover:bg-yellow-500 text-yellow-900 font-bold rounded-xl transition-colors shadow-sm"
+          >
+            <Coffee size={18} /> 서버 운영 후원하기
+          </button>
         </div>
       </aside>
 
       <main className="relative flex h-full flex-1 flex-col w-full">
-        <div className="flex items-center justify-between bg-[#1a1a1a] p-4 border-b border-[#333] md:hidden shrink-0">
-          <div className="font-bold text-gray-100 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>맞춤 혜택 찾기</div>
-          <button onClick={() => setIsSidebarOpen(true)} className="text-gray-300 hover:text-white"><Menu size={24} /></button>
+        {/* 🌟 5번 기능: 다크/라이트 모드 토글 버튼 (우측 상단 절대배치) */}
+        <div className="absolute top-4 right-4 z-50 hidden md:block">
+          <button 
+            onClick={toggleTheme}
+            className="p-2.5 rounded-full bg-white dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] text-gray-600 dark:text-gray-300 shadow-sm hover:scale-105 transition-transform"
+          >
+            {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
+          </button>
         </div>
 
-        <div className="shrink-0 border-b border-[#333] bg-[#1a1a1a] p-4">
+        <div className="flex items-center justify-between bg-white dark:bg-[#1a1a1a] p-4 border-b border-gray-200 dark:border-[#333] md:hidden shrink-0">
+          <div className="font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>맞춤 혜택 찾기
+          </div>
+          <div className="flex gap-3">
+            {/* 모바일 화면용 토글 버튼 */}
+            <button onClick={toggleTheme} className="text-gray-500 dark:text-gray-300"><Sun size={24} className="block dark:hidden"/><Moon size={24} className="hidden dark:block"/></button>
+            <button onClick={() => setIsSidebarOpen(true)} className="text-gray-500 dark:text-gray-300"><Menu size={24} /></button>
+          </div>
+        </div>
+
+        <div className="shrink-0 border-b border-gray-200 dark:border-[#333] bg-white dark:bg-[#1a1a1a] p-4 md:pt-16">
           <div className="mx-auto max-w-4xl space-y-3">
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-              <select className="w-full rounded-lg border border-[#444] bg-[#2a2a2a] p-3 text-sm sm:p-2.5 outline-none transition focus:border-green-500" value={city} onChange={(e) => { setCity(e.target.value); setDistrict(DEFAULT_CITY); setDong(DEFAULT_DONG); }}>
+              <select className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500" value={city} onChange={(e) => { setCity(e.target.value); setDistrict(DEFAULT_CITY); setDong(DEFAULT_DONG); }}>
                 <option>{DEFAULT_CITY}</option>{Object.keys(CITY_TO_DISTRICTS).map((c) => <option key={c}>{c}</option>)}
               </select>
-              <select className="w-full rounded-lg border border-[#444] bg-[#2a2a2a] p-3 text-sm sm:p-2.5 outline-none transition focus:border-green-500" value={district} onChange={(e) => { setDistrict(e.target.value); setDong(DEFAULT_DONG); }} disabled={city === DEFAULT_CITY}>
+              <select className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500" value={district} onChange={(e) => { setDistrict(e.target.value); setDong(DEFAULT_DONG); }} disabled={city === DEFAULT_CITY}>
                 <option>{DEFAULT_CITY}</option>{availableDistricts.map((d) => <option key={d}>{d}</option>)}
               </select>
-              <select className="w-full rounded-lg border border-[#444] bg-[#2a2a2a] p-3 text-sm sm:p-2.5 outline-none transition focus:border-green-500" value={dong} onChange={(e) => setDong(e.target.value)} disabled={district === DEFAULT_CITY}>
+              <select className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500" value={dong} onChange={(e) => setDong(e.target.value)} disabled={district === DEFAULT_CITY}>
                 <option>{DEFAULT_DONG}</option>{availableDongs.map((d) => <option key={d}>{d}</option>)}
               </select>
             </div>
 
             <div className="flex flex-col gap-2 sm:flex-row">
-              <input type="tel" placeholder="출생연도 (예: 1999)" maxLength={4} className="w-full rounded-lg border border-[#444] bg-[#2a2a2a] p-3 text-sm sm:p-2.5 outline-none transition focus:border-green-500 sm:w-1/3" value={birthYear} onChange={(e) => setBirthYear(e.target.value.replace(/[^0-9]/g, ""))} />
-              <input type="text" placeholder="추가 정보 (예: 대학생, 1인가구)" className="w-full rounded-lg border border-[#444] bg-[#2a2a2a] p-3 text-sm sm:p-2.5 outline-none transition focus:border-green-500 sm:w-2/3" value={extraInfo} onChange={(e) => setExtraInfo(e.target.value)} />
+              <input type="tel" placeholder="출생연도 (예: 1999)" maxLength={4} className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500 sm:w-1/3" value={birthYear} onChange={(e) => setBirthYear(e.target.value.replace(/[^0-9]/g, ""))} />
+              <input type="text" placeholder="추가 정보 (예: 대학생, 1인가구)" className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500 sm:w-2/3" value={extraInfo} onChange={(e) => setExtraInfo(e.target.value)} />
             </div>
 
-            <button onClick={() => void handleSearch(false)} disabled={loading} className="flex w-full items-center justify-center gap-2 rounded-xl bg-green-600 py-3.5 sm:py-3 font-bold text-white transition hover:bg-green-500 disabled:opacity-50 active:scale-[0.98]">
+            <button onClick={() => void handleSearch(false)} disabled={loading} className="flex w-full items-center justify-center gap-2 rounded-xl bg-green-600 py-3.5 sm:py-3 font-bold text-white transition hover:bg-green-500 disabled:opacity-50 active:scale-[0.98] shadow-md">
               {loading ? <Loader2 className="animate-spin" /> : <Search size={20} />} 맞춤 혜택 찾기
             </button>
 
             {errorMessage && (
-              <div className="flex items-start gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+              <div className="flex items-start gap-2 rounded-xl border border-red-500/30 bg-red-100 dark:bg-red-500/10 px-4 py-3 text-sm text-red-600 dark:text-red-200">
                 <AlertCircle size={18} className="mt-0.5 shrink-0" />
                 <span>{errorMessage}</span>
               </div>
@@ -270,7 +343,7 @@ export default function Home() {
 
         <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col overflow-y-auto p-4 sm:p-8 scroll-smooth">
           {messages.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center text-gray-500 text-center px-4">
+            <div className="flex h-full flex-col items-center justify-center text-gray-400 dark:text-gray-500 text-center px-4">
               <MapPin size={48} className="mb-4 opacity-20" />
               <p className="text-sm sm:text-base">거주지와 정보를 입력하고<br className="sm:hidden" /> 당신만의 혜택을 찾아보세요.</p>
             </div>
@@ -279,11 +352,11 @@ export default function Home() {
               {messages.map((message, index) => (
                 <div key={`${message.role}-${index}`} className={`flex gap-3 sm:gap-4 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
                   {message.role === "assistant" && (
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-600 mt-1">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-600 mt-1 shadow-sm">
                       <span className="text-[10px] sm:text-xs font-bold text-white">AI</span>
                     </div>
                   )}
-                  <div className={`max-w-[90%] sm:max-w-[85%] rounded-2xl p-4 shadow-sm overflow-hidden ${message.role === "user" ? "whitespace-pre-wrap border border-[#444] bg-[#2d2d2d] text-gray-200 text-sm sm:text-base" : "bg-transparent text-gray-300"}`}>
+                  <div className={`max-w-[90%] sm:max-w-[85%] rounded-2xl p-4 shadow-sm overflow-hidden ${message.role === "user" ? "whitespace-pre-wrap border border-gray-200 dark:border-[#444] bg-white dark:bg-[#2d2d2d] text-gray-800 dark:text-gray-200 text-sm sm:text-base" : "bg-transparent text-gray-800 dark:text-gray-300"}`}>
                     {message.role === "assistant" ? <MarkdownMessage content={message.content} /> : <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>}
                   </div>
                 </div>
@@ -293,25 +366,71 @@ export default function Home() {
 
           {loading && messages[messages.length - 1]?.content === "" && (
             <div className="mt-4 flex justify-start gap-3 sm:gap-4">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-600">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-600 shadow-sm">
                 <Loader2 size={16} className="animate-spin text-white" />
               </div>
-              <div className="p-3 text-sm text-gray-400 font-medium">
+              <div className="p-3 text-sm text-gray-500 dark:text-gray-400 font-medium">
                 {aiStatus || "정책 데이터를 분석 중입니다..."}
               </div>
             </div>
           )}
         </div>
 
-        <div className="shrink-0 border-t border-[#333] bg-[#121212] p-3 sm:p-4 pb-safe">
-          <div className="relative mx-auto max-w-4xl">
-            <input type="text" placeholder="추가 질문을 입력하세요 (예: 청년 혜택만 다시)" className="w-full rounded-full border border-[#444] bg-[#1e1e1e] py-3.5 pl-5 pr-12 text-sm text-white outline-none transition focus:border-green-500" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void handleSearch(true); }} disabled={messages.length === 0 || loading} />
-            <button onClick={() => void handleSearch(true)} disabled={!query.trim() || loading} className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full bg-green-600 p-2 text-white transition hover:bg-green-500 disabled:opacity-50">
-              <Send size={16} />
-            </button>
+        <div className="shrink-0 border-t border-gray-200 dark:border-[#333] bg-gray-50 dark:bg-[#121212] p-3 sm:p-4 pb-safe transition-colors duration-300">
+          <div className="relative mx-auto max-w-4xl flex flex-col">
+            {/* 🌟 3번 기능: 추천 질문 예시 박스 */}
+            <div className="flex gap-2 mb-3 overflow-x-auto pb-1 scrollbar-hide">
+              {["🧑‍🎓 대학생을 위한 월세 지원 정책 찾아줘", "💼 취업 준비생 국비 지원 교육 알려줘", "💰 20대 청년 적금 혜택 정리해 줘"].map((example, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => setQuery(example)}
+                  className="whitespace-nowrap px-4 py-1.5 text-sm bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-600 transition-colors shadow-sm"
+                >
+                  {example}
+                </button>
+              ))}
+            </div>
+
+            <div className="relative">
+              <input type="text" placeholder="추가 질문을 입력하세요 (예: 청년 혜택만 다시)" className="w-full rounded-full border border-gray-300 dark:border-[#444] bg-white dark:bg-[#1e1e1e] py-3.5 pl-5 pr-12 text-sm text-gray-800 dark:text-white outline-none transition focus:border-green-500 shadow-sm" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void handleSearch(true); }} disabled={messages.length === 0 || loading} />
+              <button onClick={() => void handleSearch(true)} disabled={!query.trim() || loading} className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full bg-green-600 p-2 text-white transition hover:bg-green-500 disabled:opacity-50">
+                <Send size={16} />
+              </button>
+            </div>
           </div>
         </div>
       </main>
+
+      {/* 🌟 4번 기능: 후원하기 모달 팝업 */}
+      {showDonation && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] px-4 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl shadow-xl w-full max-w-sm text-center relative border border-gray-200 dark:border-[#333]">
+            <button onClick={() => setShowDonation(false)} className="absolute top-3 right-3 p-1 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+              <X size={20} />
+            </button>
+            <div className="w-16 h-16 bg-yellow-100 dark:bg-yellow-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Coffee size={32} className="text-yellow-600 dark:text-yellow-500" />
+            </div>
+            <h2 className="text-xl font-bold mb-2 text-gray-800 dark:text-gray-100">서버 운영에 힘 보태기</h2>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-6 leading-relaxed">
+              여러분에게 유용한 혜택을 찾아주기 위한<br/>
+              AI API 통신비와 서버 유지비로 사용됩니다.<br/>
+              작은 후원도 큰 힘이 됩니다! 🙇‍♂️
+            </p>
+            <div className="bg-gray-50 dark:bg-[#121212] border border-gray-200 dark:border-[#333] p-4 rounded-xl text-left text-sm font-medium text-gray-700 dark:text-gray-300 mb-6 space-y-1">
+              <p className="flex justify-between"><span>은행</span> <span className="font-bold">토스뱅크</span></p>
+              <p className="flex justify-between"><span>계좌번호</span> <span className="font-bold">1000-0000-0000</span></p>
+              <p className="flex justify-between"><span>예금주</span> <span className="font-bold">강창현</span></p>
+            </div>
+            <button 
+              onClick={() => { navigator.clipboard.writeText("100000000000"); alert("계좌번호가 복사되었습니다!"); }}
+              className="w-full py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl transition-colors active:scale-95 shadow-sm"
+            >
+              📋 계좌번호 복사하기
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
