@@ -12,3 +12,6 @@ duckduckgo-search
 pytz
 beautifulsoup4
 requests
+celery
+redis
+websockets
