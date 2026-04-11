@@ -8,8 +8,6 @@ const apiClient = axios.create({
   timeout: 300000, 
 });
 
-// ... 이하 기존 코드 동일 ...
-
 export interface ThreadItem {
   thread_id: string;
   title: string;
@@ -74,6 +72,12 @@ export const api = {
 
   deleteThread: async (userId: string, threadId: string): Promise<void> => {
     await apiClient.delete(`/threads/${threadId}`, { params: { user_id: userId } });
+  },
+
+  // 🌟 [새로 추가된 부분] 관리자 대시보드 통계 가져오기
+  getAdminStats: async (): Promise<{ total_users: number; total_threads: number; blocked_today: number; today_date: string }> => {
+    const res = await apiClient.get("/admin/stats");
+    return res.data.data;
   },
 
   getAiResponse: async (payload: {
