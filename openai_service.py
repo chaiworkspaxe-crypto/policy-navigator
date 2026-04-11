@@ -27,7 +27,7 @@ def web_search(query: str) -> str:
     """주어진 검색어로 웹에서 최신 정책이나 지원금 정보를 검색합니다."""
     try:
         from langchain_community.tools import DuckDuckGoSearchResults
-        search = DuckDuckGoSearchResults(max_results=20)
+        search = DuckDuckGoSearchResults(max_results=15)
         return search.invoke(query)
     except Exception as e:
         return f"검색 중 오류 발생: {e}"
