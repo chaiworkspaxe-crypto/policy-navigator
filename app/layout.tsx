@@ -62,7 +62,7 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col">
         {/* 🌟 [Phase 4] 구글 애널리틱스(GA4) 추적 스크립트 */}
-        <Script strategy="afterInteractive" src={`https://www.googletagmanager.com/gtag/js?id=G-YOUR_GA_ID`} />
+        <Script strategy="afterInteractive" src={`https://www.googletagmanager.com/gtag/js?id=G-EH957MVS6T`} />
         <Script
           id="google-analytics"
           strategy="afterInteractive"
