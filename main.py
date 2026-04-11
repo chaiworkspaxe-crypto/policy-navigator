@@ -190,7 +190,7 @@ async def chat(request: ChatRequest):
 
         async def event_generator():
             full_content = ""
-            deadline = asyncio.get_running_loop().time() + 180  
+            deadline = asyncio.get_running_loop().time() + 600.0  
 
             try:
                 yield f"data: {json.dumps({'type': 'thread_id', 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
