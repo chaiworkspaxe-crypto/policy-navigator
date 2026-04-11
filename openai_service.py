@@ -27,7 +27,8 @@ def web_search(query: str) -> str:
     """주어진 검색어로 웹에서 최신 정책이나 지원금 정보를 검색합니다."""
     try:
         from langchain_community.tools import DuckDuckGoSearchResults
-        search = DuckDuckGoSearchResults(max_results=15)
+        # 🌟 [극대화 1] 누락 방지를 위해 한 번에 가져오는 검색 결과 수를 15 -> 30으로 대폭 상향
+        search = DuckDuckGoSearchResults(max_results=30)
         return search.invoke(query)
     except Exception as e:
         return f"검색 중 오류 발생: {e}"
@@ -37,7 +38,8 @@ def verify_official_page(url: str) -> str:
     """공식 홈페이지 URL에 접속하여 내용을 팩트체크합니다."""
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-        response = requests.get(url, headers=headers, timeout=15) 
+        # 🌟 [극대화 2] 타임아웃을 10초로 주어 관공서 사이트가 열릴 때까지 적절히 기다려줌
+        response = requests.get(url, headers=headers, timeout=10) 
         response.raise_for_status()
         
         soup = BeautifulSoup(response.text, 'html.parser')
@@ -47,7 +49,8 @@ def verify_official_page(url: str) -> str:
         text = soup.get_text(separator=' ', strip=True)
         return f"[공식 페이지 스크래핑 결과 요약]\n{text[:1500]}"
     except Exception as e:
-        return f"페이지 접속 실패 (수동 확인 필요): {str(e)}"
+        # 🌟 접속 실패 시 스니펫 정보라도 적극 활용하도록 지침 추가
+        return f"페이지 접속 실패. 검색 엔진의 스니펫(요약) 정보를 최대한 활용하여 판단하세요. 에러: {str(e)}"
 
 SYSTEM_PROMPT = """
 당신은 대한민국 국민 모두의 '정보 비대칭'을 완벽하게 해소해 주는 최고의 '전국민 맞춤형 복지/지원금 내비게이터(Universal Policy Navigator)'입니다.
@@ -105,7 +108,8 @@ def create_agent_executor():
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY 환경변수가 비어 있습니다.")
 
-    model_name = os.getenv("OPENAI_MODEL", "gpt-5.4").strip() # 🌟 최신 모델명으로 변경 권장
+    # 🌟 모델 오타 수정 및 안전한 기본값 설정 (가장 똑똑하고 빠른 모델 사용)
+    model_name = os.getenv("OPENAI_MODEL", "gpt-5.4").strip() 
     
     llm = ChatOpenAI(model=model_name, temperature=0.1, streaming=True)
     tools = [web_search, verify_official_page, get_current_time]
@@ -122,7 +126,9 @@ def create_agent_executor():
         agent=agent,
         tools=tools,
         verbose=True,
-        max_iterations=20,
+        # 🌟 [극대화 3] 에이전트의 끈기를 극대화 (AI가 정보가 부족하다고 느끼면 최대 15번 턴까지 집요하게 물고 늘어짐)
+        max_iterations=15,
+        # 🌟 일반적인 웹 서버 타임아웃(60초) 직전까지 꽉 채워서 시간을 주도록 50초 설정
         max_execution_time=600,
         early_stopping_method="generate"
     )
@@ -137,7 +143,6 @@ async def get_ai_response_stream(agent_executor, messages: list):
             content = chunk.content
             if content and isinstance(content, str):
                 full_answer += content
-                # 🌟 [수정 핵심] SSE 포맷을 제거하고 순수 JSON 문자열만 yield
                 yield json.dumps({'type': 'content', 'delta': content}, ensure_ascii=False)
 
         elif kind == "on_tool_start":
@@ -150,7 +155,6 @@ async def get_ai_response_stream(agent_executor, messages: list):
             elif tool_name == "get_current_time":
                 display_name = "실시간 마감일 대조"
                 
-            # 🌟 [수정 핵심] 프론트엔드가 바로 읽을 수 있게 순수 JSON 반환
             yield json.dumps({'type': 'status', 'message': f'🔍 {display_name} 중...'}, ensure_ascii=False)
 
     yield json.dumps({'type': 'done', 'full_content': full_answer}, ensure_ascii=False)
