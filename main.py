@@ -139,10 +139,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Policy Navigator API", lifespan=lifespan)
 
+# 🌟 [수정] policyai.kr 주소를 안전한 출처(CORS)로 추가!
 allowed_origins = [
     "http://localhost:3000", "http://127.0.0.1:3000",
     "http://localhost:3001", "http://127.0.0.1:3001",
     "https://policy-navigator-lac.vercel.app", 
+    "https://policyai.kr",
+    "https://www.policyai.kr",
 ]
 if os.getenv("ALLOWED_ORIGINS"):
     allowed_origins.extend([o.strip() for o in os.getenv("ALLOWED_ORIGINS").split(",") if o.strip()])
