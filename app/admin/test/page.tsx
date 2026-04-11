@@ -10,37 +10,12 @@ const DEFAULT_CITY = "선택하세요";
 const DEFAULT_DONG = "선택 안 함";
 const EMPTY_INPUTS: ThreadInputs = { selected_city: DEFAULT_CITY, selected_district: DEFAULT_CITY, selected_dong: DEFAULT_DONG, birth_year: "", extra_info: "" };
 
-// ... 기존 임포트들
-
-export default function AdminTestPage() {
-  const ADMIN_ID = "8011";
-  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false); // 🌟 인증 상태 추가
-
-  useEffect(() => {
-    // 🌟 페이지 열리자마자 비밀번호 묻기
-    const password = window.prompt("관리자 비밀번호를 입력하세요.");
-    if (password === "8011") {
-      setIsAdminAuthenticated(true);
-      setUserId(ADMIN_ID);
-      void loadThreads(ADMIN_ID);
-      document.documentElement.classList.add('dark');
-    } else {
-      alert("비밀번호가 틀렸습니다!");
-      window.location.href = "/"; // 메인으로 쫓아내기
-    }
-  }, []);
-
-  // 🌟 인증 안 됐으면 아무것도 안 보여줌
-  if (!isAdminAuthenticated) return null;
-
-  return (
-    // ... 기존 return 문 전체
-  );
-}
-
 export default function AdminTestPage() {
   const ADMIN_ID = "8011";
   
+  // 🌟 [추가됨] 관리자 인증 상태를 관리하는 변수
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+
   const [userId, setUserId] = useState(ADMIN_ID);
   const [threads, setThreads] = useState<ThreadItem[]>([]);
   const [currentThreadId, setCurrentThreadId] = useState("");
@@ -65,10 +40,19 @@ export default function AdminTestPage() {
   const availableDistricts = useMemo(() => CITY_TO_DISTRICTS[city] || [], [city]);
   const availableDongs = useMemo(() => DONG_MAP[`${city}-${district}`] || [], [city, district]);
 
+  // 🌟 [수정됨] 페이지 접속 시 비밀번호를 묻는 로직 추가
   useEffect(() => {
-    setUserId(ADMIN_ID);
-    void loadThreads(ADMIN_ID);
-    document.documentElement.classList.add('dark');
+    const password = window.prompt("관리자 비밀번호를 입력하세요.");
+    
+    if (password === "8011") {
+      setIsAdminAuthenticated(true); // 인증 성공!
+      setUserId(ADMIN_ID);
+      void loadThreads(ADMIN_ID);
+      document.documentElement.classList.add('dark');
+    } else {
+      alert("비밀번호가 틀렸습니다. 메인 페이지로 이동합니다.");
+      window.location.href = "/"; // 메인 페이지로 강제 이동
+    }
 
     return () => { if (wsRef.current) wsRef.current.close(); };
   }, []);
@@ -230,6 +214,11 @@ export default function AdminTestPage() {
     }
   };
 
+  // 🌟 [추가됨] 인증되지 않았을 때는 아무 화면도 그리지 않음 (완벽한 차단)
+  if (!isAdminAuthenticated) {
+    return null; 
+  }
+
   return (
     <div className="flex h-[100dvh] bg-gray-50 dark:bg-[#121212] text-gray-900 dark:text-gray-100 font-sans overflow-hidden transition-colors duration-300">
       {isSidebarOpen && <div className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm md:hidden transition-opacity" onClick={() => setIsSidebarOpen(false)} />}
@@ -325,7 +314,7 @@ export default function AdminTestPage() {
                   <div className={`max-w-[90%] sm:max-w-[85%] rounded-2xl p-4 shadow-sm overflow-hidden ${message.role === "user" ? "whitespace-pre-wrap border border-gray-200 dark:border-[#444] bg-white dark:bg-[#2d2d2d] text-gray-800 dark:text-gray-200 text-sm sm:text-base" : "bg-transparent text-gray-800 dark:text-gray-300"}`}>
                     {message.role === "assistant" ? <MarkdownMessage content={message.content} /> : <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>}
                     
-                    {/* 🌟 [수정된 부분] 안전한 타입 검사를 적용한 버튼! Vercel 에러 해결! */}
+                    {/* 🌟 안전한 타입 검사를 적용한 버튼 */}
                     {message.role === "assistant" && message.content.length > 50 && (
                       <div className="mt-4 pt-3 border-t border-gray-200 dark:border-[#444] flex justify-end">
                         <button onClick={async () => {
