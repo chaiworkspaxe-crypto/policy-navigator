@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 import redis.asyncio as aioredis # 🌟 [추가] 비동기 Redis 통신
+import sentry_sdk # 🌟 [추가] Sentry 에러 모니터링 라이브러리
 
 from chat_db import (
     init_db, db_session, create_thread, rename_thread, delete_thread,
@@ -25,6 +26,14 @@ from chat_db import (
 from worker import process_chat_task
 
 load_dotenv()
+
+# 🌟 [추가] Sentry 초기화 설정 (Render 환경변수에 SENTRY_DSN을 넣으면 자동 작동!)
+if os.getenv("SENTRY_DSN"):
+    sentry_sdk.init(
+        dsn=os.getenv("SENTRY_DSN"),
+        traces_sample_rate=1.0,
+        profiles_sample_rate=1.0,
+    )
 
 CURRENT_YEAR = datetime.now().year
 MAX_CONTEXT_MESSAGES = 6
