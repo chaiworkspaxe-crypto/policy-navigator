@@ -4,6 +4,7 @@ import json
 import asyncio 
 import traceback
 import hashlib
+import logging # 🌟 [Phase 4] 서버 모니터링을 위한 로깅 모듈 추가
 from datetime import datetime
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -26,6 +27,10 @@ from chat_db import (
 from worker import process_chat_task
 
 load_dotenv()
+
+# 🌟 [Phase 4] 백엔드 로깅 기본 설정 (터미널에서 깔끔하게 보이도록 포맷 지정)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
 # 🌟 [추가] Sentry 초기화 설정 (Render 환경변수에 SENTRY_DSN을 넣으면 자동 작동!)
 if os.getenv("SENTRY_DSN"):
@@ -189,6 +194,7 @@ async def chat(request: ChatRequest, http_request: Request):
             quota = consume_daily_request_quota(fingerprint, daily_limit=4)
             
             if not quota["allowed"]:
+                logger.warning(f"⚠️ [Quota Exceeded] IP 핑거프린트: {fingerprint}") # 🌟 [Phase 4] 사용량 초과 로그
                 raise HTTPException(
                     status_code=403, 
                     detail="오늘의 맞춤 혜택 검색 횟수(4회)를 모두 사용하셨습니다. 서버 유지를 위해 내일 다시 찾아와 주세요! 🙇‍♂️"
@@ -201,6 +207,13 @@ async def chat(request: ChatRequest, http_request: Request):
 
         if not thread_id: thread_id = create_thread(user_id=user_id, set_active=False)
 
+        # 🌟 [Phase 4] 유저의 검색 요청을 터미널에 깔끔하게 로깅
+        logger.info(f"🚀 [새로운 혜택 검색] User: {user_id[-6:]} | Thread: {thread_id[-6:]}")
+        if request.city:
+            logger.info(f"📍 [조건] {request.city} {request.district} | {request.birth_year}년생")
+        else:
+            logger.info(f"💬 [추가질문] {request.query}")
+
         persist_thread_inputs_if_present(
             user_id, thread_id, request.city, request.district, request.dong,
             request.birth_year, request.extra_info
@@ -212,12 +225,14 @@ async def chat(request: ChatRequest, http_request: Request):
         agent_messages = build_agent_messages(previous_messages, user_message)
 
         # 🚀 Celery Worker에게 작업 지시 (비동기 처리)
+        logger.info(f"⚙️ [Worker 전달 완료] 백그라운드 AI 검색 시작...") # 🌟 [Phase 4] 워커 할당 로그
         process_chat_task.delay(thread_id, user_id, agent_messages, message_type)
 
         return {"ok": True, "thread_id": thread_id, "message": "Task queued successfully"}
 
     except HTTPException: raise
     except Exception as e: 
+        logger.error(f"❌ [서버 에러 발생]: {str(e)}") # 🌟 [Phase 4] 에러 로깅
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -241,7 +256,7 @@ async def websocket_endpoint(websocket: WebSocket, thread_id: str):
     except WebSocketDisconnect:
         pass 
     except Exception as e:
-        print(f"웹소켓 에러: {e}")
+        logger.error(f"🔌 [웹소켓 에러]: {e}") # 🌟 [Phase 4] 웹소켓 에러 로깅
     finally:
         await pubsub.unsubscribe(channel_name)
         await redis_client.close()
