@@ -3,16 +3,17 @@ import re
 import json
 import asyncio 
 import traceback
-import hashlib # 🌟 [추가] 핑거프린트 생성을 위한 해시 모듈
+import hashlib
 from datetime import datetime
 from contextlib import asynccontextmanager
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query, Request # 🌟 [추가] Request 모듈 임포트
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+import redis.asyncio as aioredis # 🌟 [추가] 비동기 Redis 통신
 
 from chat_db import (
     init_db, db_session, create_thread, rename_thread, delete_thread,
@@ -21,21 +22,22 @@ from chat_db import (
     consume_daily_request_quota,
     get_admin_dashboard_stats
 )
-from openai_service import create_agent_executor, get_ai_response, get_ai_response_stream
+# 🌟 [추가] 일꾼(Worker) 임포트
+from worker import process_chat_task
 
 load_dotenv()
 
 CURRENT_YEAR = datetime.now().year
 MAX_CONTEXT_MESSAGES = 6
 
-# 🌟 [추가] 유저의 IP와 브라우저 정보를 조합해 고유 ID(핑거프린트) 생성
+# 🌟 [추가] Redis 주소 환경변수 세팅
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
 def get_client_fingerprint(request: Request) -> str:
-    # 클라우드(Vercel/Render) 환경에서는 X-Forwarded-For 헤더에 진짜 IP가 담김
     forwarded = request.headers.get("X-Forwarded-For")
     ip = forwarded.split(",")[0] if forwarded else request.client.host
     user_agent = request.headers.get("User-Agent", "Unknown")
     
-    # IP와 User-Agent를 합쳐서 SHA-256 해시로 변환 (개인정보 보호를 위해 원본은 숨김)
     raw_fingerprint = f"{ip}-{user_agent}"
     return hashlib.sha256(raw_fingerprint.encode('utf-8')).hexdigest()
 
@@ -159,23 +161,13 @@ def health_check(): return {"ok": True, "status": "healthy"}
 def admin_stats():
     return {"ok": True, "data": get_admin_dashboard_stats()}
 
-@app.post("/ask", response_model=PolicySearchResponse)
-def ask_policy(request: PolicySearchRequest):
-    try:
-        user_msg, msg_type = normalize_request(request.city, request.district, request.dong, request.birth_year, request.extra_info, request.query)
-        agent = create_agent_executor()
-        answer = get_ai_response(agent_executor=agent, messages=[{"role": "user", "content": user_msg}])
-        return PolicySearchResponse(ok=True, message_type=msg_type, user_message=user_msg, answer=answer)
-    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
-
-# 🌟 [수정] http_request 매개변수를 추가해서 접속자 정보를 받아옴
+# 🌟 [수정됨] 이제 여기서 AI를 직접 안 돌리고, 백그라운드 워커로 넘긴 뒤 바로 응답함!
 @app.post("/chat")
 async def chat(request: ChatRequest, http_request: Request):
     try:
         user_id, thread_id = (request.user_id or "").strip(), (request.thread_id or "").strip()
         if not user_id: raise HTTPException(status_code=400, detail="user_id는 필수입니다.")
 
-        # 🌟 [수정] 이제 localStorage의 user_id가 아니라, 해싱된 핑거프린트 ID로 횟수를 깎음
         fingerprint = get_client_fingerprint(http_request)
         quota = consume_daily_request_quota(fingerprint, daily_limit=4)
         
@@ -197,56 +189,54 @@ async def chat(request: ChatRequest, http_request: Request):
             request.birth_year, request.extra_info
         )
 
-        # 대화 기록 저장은 기존 user_id를 그대로 유지해 유저별 채팅방은 지켜줌
         previous_messages = load_chat_messages(user_id, thread_id)
         save_chat_message(user_id, thread_id, "user", user_message, message_type)
 
         agent_messages = build_agent_messages(previous_messages, user_message)
-        agent_executor = create_agent_executor()
 
-        async def event_generator():
-            full_content = ""
-            deadline = asyncio.get_running_loop().time() + 600.0  
+        # 🚀 Celery Worker에게 작업 지시 (비동기 처리)
+        process_chat_task.delay(thread_id, user_id, agent_messages, message_type)
 
-            try:
-                yield f"data: {json.dumps({'type': 'thread_id', 'thread_id': thread_id}, ensure_ascii=False)}\n\n"
-                gen = get_ai_response_stream(agent_executor, agent_messages)
-                
-                while True:
-                    timeout_left = deadline - asyncio.get_running_loop().time()
-                    if timeout_left <= 0:
-                        raise asyncio.TimeoutError() 
-
-                    try:
-                        chunk = await asyncio.wait_for(anext(gen), timeout=timeout_left)
-                        yield chunk
-                        
-                        if "full_content" in chunk:
-                            try:
-                                data = json.loads(chunk.replace("data: ", ""))
-                                full_content = data.get("full_content", "")
-                            except: pass
-                    except StopAsyncIteration:
-                        break 
-                        
-                if full_content:
-                    save_chat_message(
-                        user_id, thread_id, "assistant", full_content, 
-                        "search_result" if message_type == "structured_search" else "followup_answer"
-                    )
-
-            except asyncio.TimeoutError:
-                yield f"data: {json.dumps({'type': 'error', 'message': '정책 데이터 조회 시간이 초과되었습니다. 검색 조건을 좁혀서 다시 시도해 주세요.'}, ensure_ascii=False)}\n\n"
-            except Exception as stream_err:
-                traceback.print_exc()
-                yield f"data: {json.dumps({'type': 'error', 'message': f'분석 중 오류 발생: {str(stream_err)}'}, ensure_ascii=False)}\n\n"
-
-        return StreamingResponse(event_generator(), media_type="text/event-stream")
+        # 지시만 내리고 프론트엔드에 즉시 응답 반환 (이제 프론트가 웹소켓으로 붙을 차례)
+        return {"ok": True, "thread_id": thread_id, "message": "Task queued successfully"}
 
     except HTTPException: raise
     except Exception as e: 
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+# 🌟 [추가됨] 프론트엔드와 실시간으로 통신할 웹소켓 엔드포인트
+@app.websocket("/ws/chat/{thread_id}")
+async def websocket_endpoint(websocket: WebSocket, thread_id: str):
+    await websocket.accept()
+    
+    # Redis 구독 준비
+    redis_client = aioredis.from_url(REDIS_URL)
+    pubsub = redis_client.pubsub()
+    channel_name = f"chat_{thread_id}"
+    await pubsub.subscribe(channel_name)
+
+    try:
+        # Redis에서 날아오는 방송을 프론트엔드로 그대로 중계
+        async for message in pubsub.listen():
+            if message['type'] == 'message':
+                data = message['data'].decode('utf-8')
+                await websocket.send_text(data)
+                
+                # 'done'이나 'error' 신호가 오면 통신 종료
+                if '"type": "done"' in data or '"type": "error"' in data:
+                    break
+    except WebSocketDisconnect:
+        pass # 프론트엔드에서 연결을 끊은 경우 자연스럽게 종료
+    except Exception as e:
+        print(f"웹소켓 에러: {e}")
+    finally:
+        # 자원 정리
+        await pubsub.unsubscribe(channel_name)
+        await redis_client.close()
+        try:
+            await websocket.close()
+        except: pass
 
 @app.get("/threads")
 def get_threads(user_id: str = Query(...)): return {"ok": True, "threads": list_user_threads(user_id.strip())}
