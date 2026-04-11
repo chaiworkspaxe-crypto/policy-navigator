@@ -10,6 +10,34 @@ const DEFAULT_CITY = "선택하세요";
 const DEFAULT_DONG = "선택 안 함";
 const EMPTY_INPUTS: ThreadInputs = { selected_city: DEFAULT_CITY, selected_district: DEFAULT_CITY, selected_dong: DEFAULT_DONG, birth_year: "", extra_info: "" };
 
+// ... 기존 임포트들
+
+export default function AdminTestPage() {
+  const ADMIN_ID = "8011";
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false); // 🌟 인증 상태 추가
+
+  useEffect(() => {
+    // 🌟 페이지 열리자마자 비밀번호 묻기
+    const password = window.prompt("관리자 비밀번호를 입력하세요.");
+    if (password === "8011") {
+      setIsAdminAuthenticated(true);
+      setUserId(ADMIN_ID);
+      void loadThreads(ADMIN_ID);
+      document.documentElement.classList.add('dark');
+    } else {
+      alert("비밀번호가 틀렸습니다!");
+      window.location.href = "/"; // 메인으로 쫓아내기
+    }
+  }, []);
+
+  // 🌟 인증 안 됐으면 아무것도 안 보여줌
+  if (!isAdminAuthenticated) return null;
+
+  return (
+    // ... 기존 return 문 전체
+  );
+}
+
 export default function AdminTestPage() {
   const ADMIN_ID = "8011";
   
