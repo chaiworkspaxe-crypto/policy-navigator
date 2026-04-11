@@ -31,7 +31,6 @@ export default function Home() {
   const [extraInfo, setExtraInfo] = useState(EMPTY_INPUTS.extra_info);
   const [query, setQuery] = useState("");
 
-  // 🌟 [추가] WebSocket 연결 객체를 담아둘 통통(Ref)
   const wsRef = useRef<WebSocket | null>(null);
 
   const availableDistricts = useMemo(() => CITY_TO_DISTRICTS[city] || [], [city]);
@@ -44,7 +43,6 @@ export default function Home() {
     void loadThreads(storedId);
     document.documentElement.classList.add('dark');
 
-    // 🌟 [추가] 컴포넌트가 사라지거나 새로고침 될 때 웹소켓 연결을 깔끔하게 끊어줌
     return () => { if (wsRef.current) wsRef.current.close(); };
   }, []);
 
@@ -114,7 +112,6 @@ export default function Home() {
     return "";
   };
 
-  // 🌟 [핵심 변경] WebSocket 실시간 통신이 적용된 검색 함수
   const handleSearch = async (isFollowUp = false) => {
     setErrorMessage(""); setAiStatus("");
 
@@ -145,7 +142,6 @@ export default function Home() {
     try {
       await api.saveThreadInputs(userId, targetThreadId, { selected_city: city, selected_district: district, selected_dong: dong, birth_year: birthYear, extra_info: extraInfo });
 
-      // 1. API 호출로 백엔드(메인 서버)에 작업 요청 던지기
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/chat`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -162,7 +158,6 @@ export default function Home() {
       }
       if (!response.ok) throw new Error("서버 통신 오류");
 
-      // 🌟 2. 응답이 성공(작업 접수 완료)하면 WebSocket 연결을 열어서 실시간 방송 수신 시작
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "";
       const wsProtocol = baseUrl.startsWith("https") ? "wss" : "ws";
       const wsUrl = `${wsProtocol}://${baseUrl.replace(/^https?:\/\//, '')}/ws/chat/${targetThreadId}`;
@@ -171,7 +166,6 @@ export default function Home() {
       wsRef.current = ws;
       let accumulatedContent = "";
 
-      // 방송(메시지)이 들어올 때마다 화면을 업데이트해 줌
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
@@ -186,12 +180,10 @@ export default function Home() {
           } else if (data.type === "status") {
             setAiStatus(data.message);
           } else if (data.type === "done") {
-            // 작업이 끝나면 웹소켓을 닫고 로딩 상태 해제
             ws.close();
             setLoading(false);
             void api.listThreads(userId).then(setThreads);
           } else if (data.type === "error") {
-            // 에러가 났을 때 처리
             setErrorMessage(data.message);
             ws.close();
             setLoading(false);
@@ -199,7 +191,6 @@ export default function Home() {
         } catch (e) { console.error("WS Parse Error", e); }
       };
 
-      // 통신 에러 방어
       ws.onerror = () => {
         setErrorMessage("실시간 통신 연결에 문제가 발생했습니다.");
         setLoading(false);
@@ -309,14 +300,24 @@ export default function Home() {
                   )}
                   <div className={`max-w-[90%] sm:max-w-[85%] rounded-2xl p-4 shadow-sm overflow-hidden ${message.role === "user" ? "whitespace-pre-wrap border border-gray-200 dark:border-[#444] bg-white dark:bg-[#2d2d2d] text-gray-800 dark:text-gray-200 text-sm sm:text-base" : "bg-transparent text-gray-800 dark:text-gray-300"}`}>
                     {message.role === "assistant" ? <MarkdownMessage content={message.content} /> : <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>}
+                    
+                    {/* 🌟 [수정된 부분] 안전한 타입 검사를 적용한 버튼! Vercel 에러 해결! */}
                     {message.role === "assistant" && message.content.length > 50 && (
                       <div className="mt-4 pt-3 border-t border-gray-200 dark:border-[#444] flex justify-end">
                         <button onClick={async () => {
                             const shareData = { title: '나에게 딱 맞는 맞춤형 정부 혜택 🎁', text: '정책 내비게이터가 찾아준 맞춤형 혜택을 확인해보세요!\n\n' + message.content.substring(0, 100) + '...', url: window.location.href };
-                            try { if (navigator.share) await shareData; else { await navigator.clipboard.writeText(shareData.text + '\n' + shareData.url); alert('결과가 클립보드에 복사되었습니다! 친구에게 붙여넣기 해보세요.'); } } catch (err) { console.error('공유 실패:', err); }
+                            try { 
+                              if (typeof navigator.share === 'function') { 
+                                await navigator.share(shareData); 
+                              } else { 
+                                await navigator.clipboard.writeText(shareData.text + '\n' + shareData.url); 
+                                alert('결과가 클립보드에 복사되었습니다! 친구에게 붙여넣기 해보세요.'); 
+                              } 
+                            } catch (err) { console.error('공유 실패:', err); }
                           }} className="text-xs font-bold bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-3 py-1.5 rounded-lg hover:bg-green-200 dark:hover:bg-green-800/50 transition-colors flex items-center gap-1">🔗 결과 공유하기</button>
                       </div>
                     )}
+
                   </div>
                 </div>
               ))}
