@@ -3,12 +3,13 @@ import re
 import json
 import asyncio 
 import traceback
+import hashlib # 🌟 [추가] 핑거프린트 생성을 위한 해시 모듈
 from datetime import datetime
 from contextlib import asynccontextmanager
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request # 🌟 [추가] Request 모듈 임포트
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -18,7 +19,7 @@ from chat_db import (
     list_user_threads, load_chat_messages, save_chat_message,
     save_thread_inputs, load_thread_inputs,
     consume_daily_request_quota,
-    get_admin_dashboard_stats # 🌟 [추가] 관리자 통계 함수 임포트
+    get_admin_dashboard_stats
 )
 from openai_service import create_agent_executor, get_ai_response, get_ai_response_stream
 
@@ -26,6 +27,17 @@ load_dotenv()
 
 CURRENT_YEAR = datetime.now().year
 MAX_CONTEXT_MESSAGES = 6
+
+# 🌟 [추가] 유저의 IP와 브라우저 정보를 조합해 고유 ID(핑거프린트) 생성
+def get_client_fingerprint(request: Request) -> str:
+    # 클라우드(Vercel/Render) 환경에서는 X-Forwarded-For 헤더에 진짜 IP가 담김
+    forwarded = request.headers.get("X-Forwarded-For")
+    ip = forwarded.split(",")[0] if forwarded else request.client.host
+    user_agent = request.headers.get("User-Agent", "Unknown")
+    
+    # IP와 User-Agent를 합쳐서 SHA-256 해시로 변환 (개인정보 보호를 위해 원본은 숨김)
+    raw_fingerprint = f"{ip}-{user_agent}"
+    return hashlib.sha256(raw_fingerprint.encode('utf-8')).hexdigest()
 
 class PolicySearchRequest(BaseModel):
     city: Optional[str] = Field(default=None, description="시/도")
@@ -143,7 +155,6 @@ def read_root(): return {"ok": True, "message": "FastAPI 백엔드가 정상 실
 @app.get("/health")
 def health_check(): return {"ok": True, "status": "healthy"}
 
-# 🌟 [추가] 관리자 대시보드 통계 API
 @app.get("/admin/stats")
 def admin_stats():
     return {"ok": True, "data": get_admin_dashboard_stats()}
@@ -157,13 +168,17 @@ def ask_policy(request: PolicySearchRequest):
         return PolicySearchResponse(ok=True, message_type=msg_type, user_message=user_msg, answer=answer)
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
 
+# 🌟 [수정] http_request 매개변수를 추가해서 접속자 정보를 받아옴
 @app.post("/chat")
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, http_request: Request):
     try:
         user_id, thread_id = (request.user_id or "").strip(), (request.thread_id or "").strip()
         if not user_id: raise HTTPException(status_code=400, detail="user_id는 필수입니다.")
 
-        quota = consume_daily_request_quota(user_id, daily_limit=4)
+        # 🌟 [수정] 이제 localStorage의 user_id가 아니라, 해싱된 핑거프린트 ID로 횟수를 깎음
+        fingerprint = get_client_fingerprint(http_request)
+        quota = consume_daily_request_quota(fingerprint, daily_limit=4)
+        
         if not quota["allowed"]:
             raise HTTPException(
                 status_code=403, 
@@ -182,6 +197,7 @@ async def chat(request: ChatRequest):
             request.birth_year, request.extra_info
         )
 
+        # 대화 기록 저장은 기존 user_id를 그대로 유지해 유저별 채팅방은 지켜줌
         previous_messages = load_chat_messages(user_id, thread_id)
         save_chat_message(user_id, thread_id, "user", user_message, message_type)
 
