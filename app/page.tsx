@@ -13,7 +13,8 @@ import { CITY_TO_DISTRICTS, DONG_MAP } from "@/lib/regionData";
 import MarkdownMessage from "@/components/MarkdownMessage";
 import { 
   MessageSquare, Plus, Send, Loader2, MapPin, 
-  Search, AlertCircle, Menu, X, Trash2, Sun, Moon, Coffee 
+  Search, AlertCircle, Menu, X, Trash2, Sun, Moon, Coffee,
+  ChevronUp, ChevronDown // 🌟 [추가] 접기/펴기 화살표 아이콘
 } from "lucide-react";
 
 const DEFAULT_CITY = "선택하세요";
@@ -32,6 +33,9 @@ export default function Home() {
 
   const [showDonation, setShowDonation] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
+  
+  // 🌟 [추가] 상단 입력폼 접기/펴기 상태 (기본값: 열림)
+  const [isFormExpanded, setIsFormExpanded] = useState(true);
 
   const [city, setCity] = useState(EMPTY_INPUTS.selected_city);
   const [district, setDistrict] = useState(EMPTY_INPUTS.selected_district);
@@ -75,6 +79,7 @@ export default function Home() {
           setCurrentThreadId("");
           setMessages([]);
           applyInputs(EMPTY_INPUTS);
+          setIsFormExpanded(true); // 🌟 대화 삭제 시 새 대화를 위해 폼 다시 열기
         }
       } else {
         alert("삭제에 실패했습니다.");
@@ -116,6 +121,11 @@ export default function Home() {
       ]);
       setMessages(loadedMessages);
       applyInputs(loadedInputs);
+      
+      // 🌟 기존 대화방 진입 시 메시지가 있으면 폼을 자동으로 접어줌
+      if (loadedMessages.length > 0) setIsFormExpanded(false);
+      else setIsFormExpanded(true);
+
     } catch (error) { setErrorMessage(extractApiErrorMessage(error)); }
   };
 
@@ -128,6 +138,7 @@ export default function Home() {
       setQuery("");
       applyInputs(EMPTY_INPUTS);
       setIsSidebarOpen(false);
+      setIsFormExpanded(true); // 🌟 새 대화 시작 시 폼 열기
       setThreads(await api.listThreads(uid));
     } catch { setErrorMessage("새 대화방을 만들 수 없습니다."); }
   };
@@ -151,7 +162,7 @@ export default function Home() {
       try {
         targetThreadId = await api.createThread(userId);
         setCurrentThreadId(targetThreadId);
-      } catch { return setErrorMessage("대화방을 만들 수 준 수 없습니다. 잠시 후 시도해 주세요."); }
+      } catch { return setErrorMessage("대화방을 만들 수 없습니다. 잠시 후 시도해 주세요."); }
     }
 
     if (isFollowUp) {
@@ -160,6 +171,9 @@ export default function Home() {
     } else {
       const validationMessage = validateStructuredSearch();
       if (validationMessage) return setErrorMessage(validationMessage);
+      
+      // 🌟 [추가] 초기 검색이 유효성 검사를 통과하면 입력폼 스르륵 접기!
+      setIsFormExpanded(false);
     }
 
     const followUpText = query.trim();
@@ -193,6 +207,8 @@ export default function Home() {
         setErrorMessage(errorData.detail || "오늘의 검색 횟수를 모두 사용했습니다.");
         setMessages((prev) => prev.slice(0, -2)); 
         setLoading(false);
+        // 에러 시 다시 입력할 수 있도록 폼 열어주기
+        setIsFormExpanded(true);
         return;
       }
 
@@ -238,6 +254,7 @@ export default function Home() {
       console.error(error);
       setMessages((prev) => prev.slice(0, -1));
       setErrorMessage("서버 상태가 불안정하여 연결이 끊어졌습니다. 잠시 후 다시 시도해 주세요.");
+      setIsFormExpanded(true); // 에러 발생 시 폼 다시 열기
     } finally {
       setLoading(false);
       setAiStatus("");
@@ -307,39 +324,53 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="shrink-0 border-b border-gray-200 dark:border-[#333] bg-white dark:bg-[#1a1a1a] p-4 md:pt-16">
-          <div className="mx-auto max-w-4xl space-y-3">
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-              <select className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500" value={city} onChange={(e) => { setCity(e.target.value); setDistrict(DEFAULT_CITY); setDong(DEFAULT_DONG); }}>
-                <option>{DEFAULT_CITY}</option>{Object.keys(CITY_TO_DISTRICTS).map((c) => <option key={c}>{c}</option>)}
-              </select>
-              <select className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500" value={district} onChange={(e) => { setDistrict(e.target.value); setDong(DEFAULT_DONG); }} disabled={city === DEFAULT_CITY}>
-                <option>{DEFAULT_CITY}</option>{availableDistricts.map((d) => <option key={d}>{d}</option>)}
-              </select>
-              <select className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500" value={dong} onChange={(e) => setDong(e.target.value)} disabled={district === DEFAULT_CITY}>
-                <option>{DEFAULT_DONG}</option>{availableDongs.map((d) => <option key={d}>{d}</option>)}
-              </select>
-            </div>
-
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <input type="tel" placeholder="출생연도 (예: 1999)" maxLength={4} className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500 sm:w-1/3" value={birthYear} onChange={(e) => setBirthYear(e.target.value.replace(/[^0-9]/g, ""))} />
-              <input type="text" placeholder="추가 정보 (예: 대학생, 1인가구)" className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500 sm:w-2/3" value={extraInfo} onChange={(e) => setExtraInfo(e.target.value)} />
-            </div>
-
-            <button onClick={() => void handleSearch(false)} disabled={loading} className="flex w-full items-center justify-center gap-2 rounded-xl bg-green-600 py-3.5 sm:py-3 font-bold text-white transition hover:bg-green-500 disabled:opacity-50 active:scale-[0.98] shadow-md">
-              {loading ? <Loader2 className="animate-spin" /> : <Search size={20} />} 맞춤 혜택 찾기
-            </button>
-
-            {errorMessage && (
-              <div className="flex items-start gap-2 rounded-xl border border-red-500/30 bg-red-100 dark:bg-red-500/10 px-4 py-3 text-sm text-red-600 dark:text-red-200">
-                <AlertCircle size={18} className="mt-0.5 shrink-0" />
-                <span>{errorMessage}</span>
+        {/* 🌟 [수정] 상단 입력폼 영역 (아코디언 UI 적용) */}
+        <div className="shrink-0 bg-white dark:bg-[#1a1a1a] relative border-b border-gray-200 dark:border-[#333] md:pt-16 z-20">
+          <div className={`mx-auto max-w-4xl px-4 transition-all duration-300 ease-in-out origin-top ${isFormExpanded ? 'max-h-[500px] py-4 opacity-100' : 'max-h-0 py-0 opacity-0 overflow-hidden'}`}>
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <select className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500" value={city} onChange={(e) => { setCity(e.target.value); setDistrict(DEFAULT_CITY); setDong(DEFAULT_DONG); }}>
+                  <option>{DEFAULT_CITY}</option>{Object.keys(CITY_TO_DISTRICTS).map((c) => <option key={c}>{c}</option>)}
+                </select>
+                <select className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500" value={district} onChange={(e) => { setDistrict(e.target.value); setDong(DEFAULT_DONG); }} disabled={city === DEFAULT_CITY}>
+                  <option>{DEFAULT_CITY}</option>{availableDistricts.map((d) => <option key={d}>{d}</option>)}
+                </select>
+                <select className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500" value={dong} onChange={(e) => setDong(e.target.value)} disabled={district === DEFAULT_CITY}>
+                  <option>{DEFAULT_DONG}</option>{availableDongs.map((d) => <option key={d}>{d}</option>)}
+                </select>
               </div>
-            )}
+
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <input type="tel" placeholder="출생연도 (예: 1999)" maxLength={4} className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500 sm:w-1/3" value={birthYear} onChange={(e) => setBirthYear(e.target.value.replace(/[^0-9]/g, ""))} />
+                <input type="text" placeholder="추가 정보 (예: 대학생, 1인가구)" className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500 sm:w-2/3" value={extraInfo} onChange={(e) => setExtraInfo(e.target.value)} />
+              </div>
+
+              <button onClick={() => void handleSearch(false)} disabled={loading} className="flex w-full items-center justify-center gap-2 rounded-xl bg-green-600 py-3.5 sm:py-3 font-bold text-white transition hover:bg-green-500 disabled:opacity-50 active:scale-[0.98] shadow-md">
+                {loading ? <Loader2 className="animate-spin" /> : <Search size={20} />} 맞춤 혜택 찾기
+              </button>
+
+              {errorMessage && (
+                <div className="flex items-start gap-2 rounded-xl border border-red-500/30 bg-red-100 dark:bg-red-500/10 px-4 py-3 text-sm text-red-600 dark:text-red-200">
+                  <AlertCircle size={18} className="mt-0.5 shrink-0" />
+                  <span>{errorMessage}</span>
+                </div>
+              )}
+            </div>
+          </div>
+          
+          {/* 🌟 [추가] 폼 접기/펴기 토글 화살표 버튼 (가운데 아래 배치) */}
+          <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 z-30">
+            <button 
+              onClick={() => setIsFormExpanded(!isFormExpanded)}
+              className="bg-white dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] rounded-full p-1.5 text-gray-500 hover:text-green-600 dark:hover:text-green-400 shadow-md transition-transform hover:scale-105"
+            >
+              {isFormExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
           </div>
         </div>
 
-        <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col overflow-y-auto p-4 sm:p-8 scroll-smooth">
+        {/* --- 채팅 메인 영역 --- */}
+        <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col overflow-y-auto p-4 sm:p-8 scroll-smooth z-10">
           {messages.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center text-gray-400 dark:text-gray-500 text-center px-4">
               <MapPin size={48} className="mb-4 opacity-20" />
@@ -357,7 +388,6 @@ export default function Home() {
                   <div className={`max-w-[90%] sm:max-w-[85%] rounded-2xl p-4 shadow-sm overflow-hidden ${message.role === "user" ? "whitespace-pre-wrap border border-gray-200 dark:border-[#444] bg-white dark:bg-[#2d2d2d] text-gray-800 dark:text-gray-200 text-sm sm:text-base" : "bg-transparent text-gray-800 dark:text-gray-300"}`}>
                     {message.role === "assistant" ? <MarkdownMessage content={message.content} /> : <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>}
                     
-                    {/* 🌟 [추가] 공유하기 버튼 */}
                     {message.role === "assistant" && message.content.length > 50 && (
                       <div className="mt-4 pt-3 border-t border-gray-200 dark:border-[#444] flex justify-end">
                         <button 
@@ -399,7 +429,7 @@ export default function Home() {
           )}
         </div>
 
-        <div className="shrink-0 border-t border-gray-200 dark:border-[#333] bg-gray-50 dark:bg-[#121212] p-3 sm:p-4 pb-safe transition-colors duration-300">
+        <div className="shrink-0 border-t border-gray-200 dark:border-[#333] bg-gray-50 dark:bg-[#121212] p-3 sm:p-4 pb-safe transition-colors duration-300 z-20">
           <div className="relative mx-auto max-w-4xl flex flex-col">
             <div className="flex gap-2 mb-3 overflow-x-auto pb-1 scrollbar-hide">
               {["🧑‍🎓 대학생을 위한 월세 지원 정책 찾아줘", "💼 취업 준비생 국비 지원 교육 알려줘", "💰 20대 청년 적금 혜택 정리해 줘"].map((example, idx) => (
@@ -423,6 +453,7 @@ export default function Home() {
         </div>
       </main>
 
+      {/* --- 모달 영역 --- */}
       {showDonation && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] px-4 animate-in fade-in duration-200">
           <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl shadow-xl w-full max-w-sm text-center relative border border-gray-200 dark:border-[#333]">
