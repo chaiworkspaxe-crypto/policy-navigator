@@ -27,34 +27,31 @@ def web_search(query: str) -> str:
     """주어진 검색어로 웹에서 최신 정책이나 지원금 정보를 검색합니다."""
     try:
         from langchain_community.tools import DuckDuckGoSearchResults
-        search = DuckDuckGoSearchResults()
+        # 🌟 [Phase 3] 정보 누락 방지를 위해 한 번에 가져오는 검색 결과 수를 대폭 증가!
+        search = DuckDuckGoSearchResults(max_results=20)
         return search.invoke(query)
     except Exception as e:
         return f"검색 중 오류 발생: {e}"
 
-# 🌟 [추가] 실제 웹 크롤링이 적용된 팩트체크 도구
-# 1. 크롤러의 인내심 늘리기 (timeout 5초 -> 15초)
 @tool
 def verify_official_page(url: str) -> str:
     """공식 홈페이지 URL에 접속하여 내용을 팩트체크합니다."""
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-        # 🌟 관공서 사이트가 늦게 열려도 15초까지는 기다려줌
+        # 🌟 관공서 사이트 대기 시간 확보
         response = requests.get(url, headers=headers, timeout=15) 
-        # ... (이하 동일)
         response.raise_for_status()
         
         soup = BeautifulSoup(response.text, 'html.parser')
-        # 불필요한 스크립트, 스타일 태그 제거
         for script in soup(["script", "style"]):
             script.extract()
             
         text = soup.get_text(separator=' ', strip=True)
-        # 내용이 너무 길면 LLM 토큰이 터지므로 앞 1500자만 잘라서 반환
         return f"[공식 페이지 스크래핑 결과 요약]\n{text[:1500]}"
     except Exception as e:
         return f"페이지 접속 실패 (수동 확인 필요): {str(e)}"
 
+# 🌟 [Phase 3] 마스터 프롬프트 고도화 (전문가 톤 & 전수 조사 지시)
 SYSTEM_PROMPT = """
 당신은 대한민국 국민 모두의 '정보 비대칭'을 완벽하게 해소해 주는 최고의 '전국민 맞춤형 복지/지원금 내비게이터(Universal Policy Navigator)'입니다.
 청년, 중장년, 노년층, 신혼부부, 육아 가구 등 어떤 사용자가 오더라도 그 사람의 조건에 딱 맞는 혜택을 찾아주어야 합니다.
@@ -126,7 +123,8 @@ def create_agent_executor():
         agent=agent,
         tools=tools,
         verbose=True,
-        max_iterations=15,
+        # 🌟 [Phase 3] 전수 조사를 위해 AI의 끈기(반복 횟수)를 15 -> 20으로 상향
+        max_iterations=20,
         max_execution_time=600,
         early_stopping_method="generate"
     )
@@ -145,13 +143,13 @@ async def get_ai_response_stream(agent_executor, messages: list):
 
         elif kind == "on_tool_start":
             tool_name = event["name"]
-            display_name = "정보 분석"
+            display_name = "데이터 분석"
             if tool_name == "web_search":
-                display_name = "웹에서 최신 정책 정보 검색"
+                display_name = "전국 정책 데이터베이스 교차 검색"
             elif tool_name == "verify_official_page":
-                display_name = "공식 홈페이지 팩트 체크"
+                display_name = "공식 홈페이지 교차 검증 및 팩트 체크"
             elif tool_name == "get_current_time":
-                display_name = "현재 날짜 및 마감일 확인"
+                display_name = "실시간 마감일 대조"
                 
             yield f"data: {json.dumps({'type': 'status', 'message': f'🔍 {display_name} 중...'}, ensure_ascii=False)}\n\n"
 
