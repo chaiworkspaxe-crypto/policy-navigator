@@ -11,7 +11,6 @@ const DEFAULT_DONG = "선택 안 함";
 const EMPTY_INPUTS: ThreadInputs = { selected_city: DEFAULT_CITY, selected_district: DEFAULT_CITY, selected_dong: DEFAULT_DONG, birth_year: "", extra_info: "" };
 
 export default function AdminTestPage() {
-  // 🌟 [핵심] 랜덤 아이디를 만들지 않고 무조건 8011로 고정!
   const ADMIN_ID = "8011";
   
   const [userId, setUserId] = useState(ADMIN_ID);
@@ -39,7 +38,6 @@ export default function AdminTestPage() {
   const availableDongs = useMemo(() => DONG_MAP[`${city}-${district}`] || [], [city, district]);
 
   useEffect(() => {
-    // 🌟 로컬 스토리지 확인 없이 그냥 무조건 8011로 시작
     setUserId(ADMIN_ID);
     void loadThreads(ADMIN_ID);
     document.documentElement.classList.add('dark');
@@ -141,7 +139,6 @@ export default function AdminTestPage() {
     try {
       await api.saveThreadInputs(userId, targetThreadId, { selected_city: city, selected_district: district, selected_dong: dong, birth_year: birthYear, extra_info: extraInfo });
 
-      // 1. 서버에 요청 (무조건 8011 이라는 신분증을 내밀기 때문에 제한에 안 걸림!)
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/chat`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -158,7 +155,6 @@ export default function AdminTestPage() {
       }
       if (!response.ok) throw new Error("서버 통신 오류");
 
-      // 2. 웹소켓 실시간 수신
       const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "";
       const wsProtocol = baseUrl.startsWith("https") ? "wss" : "ws";
       const wsUrl = `${wsProtocol}://${baseUrl.replace(/^https?:\/\//, '')}/ws/chat/${targetThreadId}`;
@@ -300,6 +296,24 @@ export default function AdminTestPage() {
                   )}
                   <div className={`max-w-[90%] sm:max-w-[85%] rounded-2xl p-4 shadow-sm overflow-hidden ${message.role === "user" ? "whitespace-pre-wrap border border-gray-200 dark:border-[#444] bg-white dark:bg-[#2d2d2d] text-gray-800 dark:text-gray-200 text-sm sm:text-base" : "bg-transparent text-gray-800 dark:text-gray-300"}`}>
                     {message.role === "assistant" ? <MarkdownMessage content={message.content} /> : <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>}
+                    
+                    {/* 🌟 [수정된 부분] 안전한 타입 검사를 적용한 버튼! Vercel 에러 해결! */}
+                    {message.role === "assistant" && message.content.length > 50 && (
+                      <div className="mt-4 pt-3 border-t border-gray-200 dark:border-[#444] flex justify-end">
+                        <button onClick={async () => {
+                            const shareData = { title: '나에게 딱 맞는 맞춤형 정부 혜택 🎁', text: '정책 내비게이터가 찾아준 맞춤형 혜택을 확인해보세요!\n\n' + message.content.substring(0, 100) + '...', url: window.location.href };
+                            try { 
+                              if (typeof navigator.share === 'function') { 
+                                await navigator.share(shareData); 
+                              } else { 
+                                await navigator.clipboard.writeText(shareData.text + '\n' + shareData.url); 
+                                alert('결과가 클립보드에 복사되었습니다! 친구에게 붙여넣기 해보세요.'); 
+                              } 
+                            } catch (err) { console.error('공유 실패:', err); }
+                          }} className="text-xs font-bold bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-3 py-1.5 rounded-lg hover:bg-green-200 dark:hover:bg-green-800/50 transition-colors flex items-center gap-1">🔗 결과 공유하기</button>
+                      </div>
+                    )}
+
                   </div>
                 </div>
               ))}
