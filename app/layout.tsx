@@ -12,7 +12,6 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-// 🌟 [핵심] 검색 엔진과 카카오톡 공유를 위한 SEO 메타데이터 세팅
 export const metadata: Metadata = {
   title: "정책 내비게이터 | 나에게 딱 맞는 맞춤형 정부 혜택 찾기",
   description: "거주지와 출생연도만 입력하면 나에게 딱 맞는 청년 정책, 월세 지원, 취업 지원금, 장학금 등 정부 맞춤 혜택을 AI가 실시간으로 찾아드립니다.",
@@ -20,7 +19,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "정책 내비게이터 | 맞춤형 정부 혜택 찾기",
     description: "놓치고 있던 내 몫의 정부 혜택, AI가 10초 만에 찾아드려요! 🎁",
-    url: "https://policy-navigator-lac.vercel.app", // 창현이의 Vercel 도메인
+    url: "https://policy-navigator-lac.vercel.app",
     siteName: "정책 내비게이터",
     locale: "ko_KR",
     type: "website",
@@ -41,7 +40,6 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    // 🌟 [수정] lang="en"을 lang="ko"로 변경 (한국어 사이트임을 검색 엔진에 알림)
     <html
       lang="ko"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
