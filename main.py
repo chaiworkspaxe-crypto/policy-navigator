@@ -22,7 +22,6 @@ from chat_db import (
     consume_daily_request_quota,
     get_admin_dashboard_stats
 )
-# 🌟 [추가] 일꾼(Worker) 임포트
 from worker import process_chat_task
 
 load_dotenv()
@@ -30,8 +29,10 @@ load_dotenv()
 CURRENT_YEAR = datetime.now().year
 MAX_CONTEXT_MESSAGES = 6
 
-# 🌟 [추가] Redis 주소 환경변수 세팅
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+# 🌟 [추가] 관리자 비밀 암호 (환경변수가 없으면 기본값 8011 사용)
+ADMIN_PASS_KEY = os.getenv("ADMIN_PASS_KEY", "8011")
 
 def get_client_fingerprint(request: Request) -> str:
     forwarded = request.headers.get("X-Forwarded-For")
@@ -161,21 +162,25 @@ def health_check(): return {"ok": True, "status": "healthy"}
 def admin_stats():
     return {"ok": True, "data": get_admin_dashboard_stats()}
 
-# 🌟 [수정됨] 이제 여기서 AI를 직접 안 돌리고, 백그라운드 워커로 넘긴 뒤 바로 응답함!
 @app.post("/chat")
 async def chat(request: ChatRequest, http_request: Request):
     try:
         user_id, thread_id = (request.user_id or "").strip(), (request.thread_id or "").strip()
         if not user_id: raise HTTPException(status_code=400, detail="user_id는 필수입니다.")
 
-        fingerprint = get_client_fingerprint(http_request)
-        quota = consume_daily_request_quota(fingerprint, daily_limit=4)
-        
-        if not quota["allowed"]:
-            raise HTTPException(
-                status_code=403, 
-                detail="오늘의 맞춤 혜택 검색 횟수(4회)를 모두 사용하셨습니다. 서버 유지를 위해 내일 다시 찾아와 주세요! 🙇‍♂️"
-            )
+        # 🌟 [수정] 아이디가 비밀 암호(8011)와 일치하는지 확인!
+        is_admin = (user_id == ADMIN_PASS_KEY)
+
+        # 🌟 [수정] 관리자가 아닐 때(일반 유저일 때)만 횟수를 깎음
+        if not is_admin:
+            fingerprint = get_client_fingerprint(http_request)
+            quota = consume_daily_request_quota(fingerprint, daily_limit=4)
+            
+            if not quota["allowed"]:
+                raise HTTPException(
+                    status_code=403, 
+                    detail="오늘의 맞춤 혜택 검색 횟수(4회)를 모두 사용하셨습니다. 서버 유지를 위해 내일 다시 찾아와 주세요! 🙇‍♂️"
+                )
 
         user_message, message_type = normalize_request(
             request.city, request.district, request.dong,
@@ -197,7 +202,6 @@ async def chat(request: ChatRequest, http_request: Request):
         # 🚀 Celery Worker에게 작업 지시 (비동기 처리)
         process_chat_task.delay(thread_id, user_id, agent_messages, message_type)
 
-        # 지시만 내리고 프론트엔드에 즉시 응답 반환 (이제 프론트가 웹소켓으로 붙을 차례)
         return {"ok": True, "thread_id": thread_id, "message": "Task queued successfully"}
 
     except HTTPException: raise
@@ -205,33 +209,28 @@ async def chat(request: ChatRequest, http_request: Request):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-# 🌟 [추가됨] 프론트엔드와 실시간으로 통신할 웹소켓 엔드포인트
 @app.websocket("/ws/chat/{thread_id}")
 async def websocket_endpoint(websocket: WebSocket, thread_id: str):
     await websocket.accept()
     
-    # Redis 구독 준비
     redis_client = aioredis.from_url(REDIS_URL)
     pubsub = redis_client.pubsub()
     channel_name = f"chat_{thread_id}"
     await pubsub.subscribe(channel_name)
 
     try:
-        # Redis에서 날아오는 방송을 프론트엔드로 그대로 중계
         async for message in pubsub.listen():
             if message['type'] == 'message':
                 data = message['data'].decode('utf-8')
                 await websocket.send_text(data)
                 
-                # 'done'이나 'error' 신호가 오면 통신 종료
                 if '"type": "done"' in data or '"type": "error"' in data:
                     break
     except WebSocketDisconnect:
-        pass # 프론트엔드에서 연결을 끊은 경우 자연스럽게 종료
+        pass 
     except Exception as e:
         print(f"웹소켓 에러: {e}")
     finally:
-        # 자원 정리
         await pubsub.unsubscribe(channel_name)
         await redis_client.close()
         try:
@@ -240,31 +239,15 @@ async def websocket_endpoint(websocket: WebSocket, thread_id: str):
 
 @app.get("/threads")
 def get_threads(user_id: str = Query(...)): return {"ok": True, "threads": list_user_threads(user_id.strip())}
-
 @app.post("/threads")
 def create_thread_api(req: CreateThreadRequest): return {"ok": True, "thread_id": create_thread(req.user_id.strip(), set_active=True)}
-
 @app.get("/threads/{thread_id}/messages")
 def get_thread_messages(thread_id: str, user_id: str = Query(...)): return {"ok": True, "thread_id": thread_id, "messages": load_chat_messages(user_id.strip(), thread_id.strip())}
-
 @app.get("/threads/{thread_id}/inputs")
 def get_thread_inputs_api(thread_id: str, user_id: str = Query(...)): return {"ok": True, "thread_id": thread_id, "inputs": load_thread_inputs(user_id.strip(), thread_id.strip())}
-
 @app.patch("/threads/{thread_id}")
-def rename_thread_api(thread_id: str, req: RenameRequest): 
-    rename_thread(req.user_id.strip(), thread_id, req.title.strip())
-    return {"ok": True}
-
+def rename_thread_api(thread_id: str, req: RenameRequest): rename_thread(req.user_id.strip(), thread_id, req.title.strip()); return {"ok": True}
 @app.delete("/threads/{thread_id}")
-def delete_thread_api(thread_id: str, user_id: str = Query(...)):
-    delete_thread(user_id.strip(), thread_id)
-    return {"ok": True}
-
+def delete_thread_api(thread_id: str, user_id: str = Query(...)): delete_thread(user_id.strip(), thread_id); return {"ok": True}
 @app.post("/threads/{thread_id}/inputs")
-def save_inputs_api(thread_id: str, req: SaveInputsRequest):
-    save_thread_inputs(
-        req.user_id.strip(), thread_id, req.selected_city or "선택하세요", 
-        req.selected_district or "선택하세요", req.selected_dong or "선택 안 함", 
-        req.birth_year or "", req.extra_info or ""
-    )
-    return {"ok": True}
+def save_inputs_api(thread_id: str, req: SaveInputsRequest): save_thread_inputs(req.user_id.strip(), thread_id, req.selected_city or "선택하세요", req.selected_district or "선택하세요", req.selected_dong or "선택 안 함", req.birth_year or "", req.extra_info or ""); return {"ok": True}
