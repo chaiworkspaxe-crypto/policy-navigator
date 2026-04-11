@@ -293,54 +293,45 @@ export default function Home() {
             </div>
           ) : (
             <div className="space-y-6 pb-4">
-              {messages.map((message, index) => (
-                <div key={`${message.role}-${index}`} className={`flex gap-3 sm:gap-4 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-                  {message.role === "assistant" && (
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-600 mt-1 shadow-sm"><span className="text-[10px] sm:text-xs font-bold text-white">AI</span></div>
-                  )}
-                  <div className={`max-w-[90%] sm:max-w-[85%] rounded-2xl p-4 shadow-sm overflow-hidden ${message.role === "user" ? "whitespace-pre-wrap border border-gray-200 dark:border-[#444] bg-white dark:bg-[#2d2d2d] text-gray-800 dark:text-gray-200 text-sm sm:text-base" : "bg-transparent text-gray-800 dark:text-gray-300"}`}>
-                    {message.role === "assistant" ? <MarkdownMessage content={message.content} /> : <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>}
-                    
-                    {message.role === "assistant" && message.content.length > 50 && (
-                      <div className="mt-4 pt-3 border-t border-gray-200 dark:border-[#444] flex justify-end">
-                        <button onClick={async () => {
-                            const shareData = { title: '나에게 딱 맞는 맞춤형 정부 혜택 🎁', text: '정책 내비게이터가 찾아준 맞춤형 혜택을 확인해보세요!\n\n' + message.content.substring(0, 100) + '...', url: window.location.href };
-                            try { 
-                              if (typeof navigator.share === 'function') { 
-                                await navigator.share(shareData); 
-                              } else { 
-                                await navigator.clipboard.writeText(shareData.text + '\n' + shareData.url); 
-                                alert('결과가 클립보드에 복사되었습니다! 친구에게 붙여넣기 해보세요.'); 
-                              } 
-                            } catch (err) { console.error('공유 실패:', err); }
-                          }} className="text-xs font-bold bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-3 py-1.5 rounded-lg hover:bg-green-200 dark:hover:bg-green-800/50 transition-colors flex items-center gap-1">🔗 결과 공유하기</button>
-                      </div>
+              {messages.map((message, index) => {
+                const isLastMessage = index === messages.length - 1;
+                const isAssistant = message.role === "assistant";
+
+                return (
+                  <div key={`${message.role}-${index}`} className={`flex gap-3 sm:gap-4 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+                    {isAssistant && (
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-600 mt-1 shadow-sm"><span className="text-[10px] sm:text-xs font-bold text-white">AI</span></div>
                     )}
+                    <div className={`max-w-[90%] sm:max-w-[85%] rounded-2xl p-4 shadow-sm overflow-hidden ${message.role === "user" ? "whitespace-pre-wrap border border-gray-200 dark:border-[#444] bg-white dark:bg-[#2d2d2d] text-gray-800 dark:text-gray-200 text-sm sm:text-base" : "bg-transparent text-gray-800 dark:text-gray-300"}`}>
+                      
+                      {isAssistant ? <MarkdownMessage content={message.content} /> : <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>}
+                      
+                      {isLastMessage && isAssistant && loading && (
+                        <div className="mt-4 flex items-center gap-2 text-sm font-bold text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 px-4 py-2.5 rounded-xl w-fit animate-pulse border border-green-200 dark:border-green-800/30 shadow-sm">
+                          <Loader2 size={16} className="animate-spin shrink-0" />
+                          <span>{aiStatus || "정책 데이터를 열심히 분석하고 있습니다..."}</span>
+                        </div>
+                      )}
+
+                      {!loading && isAssistant && message.content.length > 50 && (
+                        <div className="mt-4 pt-3 border-t border-gray-200 dark:border-[#444] flex justify-end animate-in fade-in duration-300">
+                          <button onClick={async () => {
+                              const shareData = { title: '나에게 딱 맞는 맞춤형 정부 혜택 🎁', text: '정책 내비게이터가 찾아준 맞춤형 혜택을 확인해보세요!\n\n' + message.content.substring(0, 100) + '...', url: window.location.href };
+                              try { 
+                                if (typeof navigator.share === 'function') { 
+                                  await navigator.share(shareData); 
+                                } else { 
+                                  await navigator.clipboard.writeText(shareData.text + '\n' + shareData.url); 
+                                  alert('결과가 클립보드에 복사되었습니다! 친구에게 붙여넣기 해보세요.'); 
+                                } 
+                              } catch (err) { console.error('공유 실패:', err); }
+                            }} className="text-xs font-bold bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-3 py-1.5 rounded-lg hover:bg-green-200 dark:hover:bg-green-800/50 transition-colors flex items-center gap-1">🔗 결과 공유하기</button>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
-          
-          {/* 🌟 [수정] 전문적인 스켈레톤 로딩 애니메이션 */}
-          {loading && messages[messages.length - 1]?.content === "" && (
-            <div className="mt-4 flex gap-3 sm:gap-4 justify-start animate-in fade-in duration-300">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-600 mt-1 shadow-sm">
-                <span className="text-[10px] sm:text-xs font-bold text-white">AI</span>
-              </div>
-              <div className="max-w-[90%] sm:max-w-[85%] rounded-2xl p-4 shadow-sm border border-gray-200 dark:border-[#444] bg-white dark:bg-[#2d2d2d] w-full sm:w-[400px]">
-                <div className="flex items-center gap-2 mb-3">
-                  <Loader2 size={16} className="animate-spin text-green-600 dark:text-green-400" />
-                  <span className="text-sm font-bold text-green-600 dark:text-green-400">
-                    {aiStatus || "정책 데이터를 분석 중입니다..."}
-                  </span>
-                </div>
-                <div className="space-y-3">
-                  <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded-full w-3/4 animate-pulse"></div>
-                  <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded-full w-full animate-pulse"></div>
-                  <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded-full w-5/6 animate-pulse"></div>
-                </div>
-              </div>
+                );
+              })}
             </div>
           )}
         </div>
