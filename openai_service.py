@@ -27,7 +27,6 @@ def web_search(query: str) -> str:
     """주어진 검색어로 웹에서 최신 정책이나 지원금 정보를 검색합니다."""
     try:
         from langchain_community.tools import DuckDuckGoSearchResults
-        # 🌟 [Phase 3] 정보 누락 방지를 위해 한 번에 가져오는 검색 결과 수를 대폭 증가!
         search = DuckDuckGoSearchResults(max_results=20)
         return search.invoke(query)
     except Exception as e:
@@ -38,7 +37,6 @@ def verify_official_page(url: str) -> str:
     """공식 홈페이지 URL에 접속하여 내용을 팩트체크합니다."""
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-        # 🌟 관공서 사이트 대기 시간 확보
         response = requests.get(url, headers=headers, timeout=15) 
         response.raise_for_status()
         
@@ -51,7 +49,6 @@ def verify_official_page(url: str) -> str:
     except Exception as e:
         return f"페이지 접속 실패 (수동 확인 필요): {str(e)}"
 
-# 🌟 [Phase 3] 마스터 프롬프트 고도화 (전문가 톤 & 전수 조사 지시)
 SYSTEM_PROMPT = """
 당신은 대한민국 국민 모두의 '정보 비대칭'을 완벽하게 해소해 주는 최고의 '전국민 맞춤형 복지/지원금 내비게이터(Universal Policy Navigator)'입니다.
 청년, 중장년, 노년층, 신혼부부, 육아 가구 등 어떤 사용자가 오더라도 그 사람의 조건에 딱 맞는 혜택을 찾아주어야 합니다.
@@ -106,9 +103,9 @@ SYSTEM_PROMPT = """
 def create_agent_executor():
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY 환경변수가 비어 있습니다. .env 파일 또는 Render 환경변수를 확인해 주세요.")
+        raise RuntimeError("OPENAI_API_KEY 환경변수가 비어 있습니다.")
 
-    model_name = os.getenv("OPENAI_MODEL", "gpt-5.4").strip()
+    model_name = os.getenv("OPENAI_MODEL", "gpt-4o").strip() # 🌟 최신 모델명으로 변경 권장
     
     llm = ChatOpenAI(model=model_name, temperature=0.1, streaming=True)
     tools = [web_search, verify_official_page, get_current_time]
@@ -125,7 +122,6 @@ def create_agent_executor():
         agent=agent,
         tools=tools,
         verbose=True,
-        # 🌟 [Phase 3] 전수 조사를 위해 AI의 끈기(반복 횟수)를 15 -> 20으로 상향
         max_iterations=20,
         max_execution_time=600,
         early_stopping_method="generate"
@@ -141,7 +137,8 @@ async def get_ai_response_stream(agent_executor, messages: list):
             content = chunk.content
             if content and isinstance(content, str):
                 full_answer += content
-                yield f"data: {json.dumps({'type': 'content', 'delta': content}, ensure_ascii=False)}\n\n"
+                # 🌟 [수정 핵심] SSE 포맷을 제거하고 순수 JSON 문자열만 yield
+                yield json.dumps({'type': 'content', 'delta': content}, ensure_ascii=False)
 
         elif kind == "on_tool_start":
             tool_name = event["name"]
@@ -153,9 +150,10 @@ async def get_ai_response_stream(agent_executor, messages: list):
             elif tool_name == "get_current_time":
                 display_name = "실시간 마감일 대조"
                 
-            yield f"data: {json.dumps({'type': 'status', 'message': f'🔍 {display_name} 중...'}, ensure_ascii=False)}\n\n"
+            # 🌟 [수정 핵심] 프론트엔드가 바로 읽을 수 있게 순수 JSON 반환
+            yield json.dumps({'type': 'status', 'message': f'🔍 {display_name} 중...'}, ensure_ascii=False)
 
-    yield f"data: {json.dumps({'type': 'done', 'full_content': full_answer}, ensure_ascii=False)}\n\n"
+    yield json.dumps({'type': 'done', 'full_content': full_answer}, ensure_ascii=False)
 
 def get_ai_response(agent_executor, messages: list) -> str:
     result = agent_executor.invoke({"messages": messages})
