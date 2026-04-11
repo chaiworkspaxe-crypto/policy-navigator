@@ -1,3 +1,4 @@
+import { withSentryConfig } from "@sentry/nextjs";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
@@ -5,4 +6,9 @@ const nextConfig: NextConfig = {
   // CORS는 백엔드(FastAPI)에서 컨트롤하는 것이 올바른 아키텍처입니다.
 };
 
-export default nextConfig;
+// Sentry 설정을 적용하여 내보냅니다.
+export default withSentryConfig(nextConfig, {
+  silent: true,
+  org: "본인의_Sentry_조직명", // 🌟 Sentry 대시보드에서 확인한 조직명을 넣어줘!
+  project: "policy-navigator-web",
+});
