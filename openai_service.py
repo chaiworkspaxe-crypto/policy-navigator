@@ -33,13 +33,15 @@ def web_search(query: str) -> str:
         return f"검색 중 오류 발생: {e}"
 
 # 🌟 [추가] 실제 웹 크롤링이 적용된 팩트체크 도구
+# 1. 크롤러의 인내심 늘리기 (timeout 5초 -> 15초)
 @tool
 def verify_official_page(url: str) -> str:
     """공식 홈페이지 URL에 접속하여 내용을 팩트체크합니다."""
     try:
-        # User-Agent를 넣어 관공서 봇 차단을 우회
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-        response = requests.get(url, headers=headers, timeout=10)
+        # 🌟 관공서 사이트가 늦게 열려도 15초까지는 기다려줌
+        response = requests.get(url, headers=headers, timeout=15) 
+        # ... (이하 동일)
         response.raise_for_status()
         
         soup = BeautifulSoup(response.text, 'html.parser')
