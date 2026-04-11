@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import Script from "next/script"; // 🌟 [Phase 4] 구글 애널리틱스 연동을 위한 Script 임포트
 import "./globals.css";
 
 const geistSans = Geist({
@@ -59,7 +60,25 @@ export default function RootLayout({
       lang="ko"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {/* 🌟 [Phase 4] 구글 애널리틱스(GA4) 추적 스크립트 */}
+        <Script strategy="afterInteractive" src={`https://www.googletagmanager.com/gtag/js?id=G-YOUR_GA_ID`} />
+        <Script
+          id="google-analytics"
+          strategy="afterInteractive"
+          dangerouslySetInnerHTML={{
+            __html: `
+              window.dataLayer = window.dataLayer || [];
+              function gtag(){dataLayer.push(arguments);}
+              gtag('js', new Date());
+              gtag('config', 'G-YOUR_GA_ID', {
+                page_path: window.location.pathname,
+              });
+            `,
+          }}
+        />
+        {children}
+      </body>
     </html>
   );
 }
