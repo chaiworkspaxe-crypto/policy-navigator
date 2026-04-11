@@ -61,7 +61,7 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        {/* 🌟 [Phase 4] 구글 애널리틱스(GA4) 추적 스크립트 */}
+        {/* 🌟 [Phase 4] 구글 애널리틱스(GA4) 추적 스크립트 세팅 완료 */}
         <Script strategy="afterInteractive" src={`https://www.googletagmanager.com/gtag/js?id=G-EH957MVS6T`} />
         <Script
           id="google-analytics"
@@ -71,7 +71,7 @@ export default function RootLayout({
               window.dataLayer = window.dataLayer || [];
               function gtag(){dataLayer.push(arguments);}
               gtag('js', new Date());
-              gtag('config', 'G-YOUR_GA_ID', {
+              gtag('config', 'G-EH957MVS6T', { // 👈 여기를 정확한 ID로 수정 완료!
                 page_path: window.location.pathname,
               });
             `,
