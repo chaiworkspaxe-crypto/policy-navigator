@@ -301,7 +301,6 @@ export default function Home() {
                   <div className={`max-w-[90%] sm:max-w-[85%] rounded-2xl p-4 shadow-sm overflow-hidden ${message.role === "user" ? "whitespace-pre-wrap border border-gray-200 dark:border-[#444] bg-white dark:bg-[#2d2d2d] text-gray-800 dark:text-gray-200 text-sm sm:text-base" : "bg-transparent text-gray-800 dark:text-gray-300"}`}>
                     {message.role === "assistant" ? <MarkdownMessage content={message.content} /> : <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>}
                     
-                    {/* 🌟 [수정된 부분] 안전한 타입 검사를 적용한 버튼! Vercel 에러 해결! */}
                     {message.role === "assistant" && message.content.length > 50 && (
                       <div className="mt-4 pt-3 border-t border-gray-200 dark:border-[#444] flex justify-end">
                         <button onClick={async () => {
@@ -317,16 +316,31 @@ export default function Home() {
                           }} className="text-xs font-bold bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-3 py-1.5 rounded-lg hover:bg-green-200 dark:hover:bg-green-800/50 transition-colors flex items-center gap-1">🔗 결과 공유하기</button>
                       </div>
                     )}
-
                   </div>
                 </div>
               ))}
             </div>
           )}
+          
+          {/* 🌟 [수정] 전문적인 스켈레톤 로딩 애니메이션 */}
           {loading && messages[messages.length - 1]?.content === "" && (
-            <div className="mt-4 flex justify-start gap-3 sm:gap-4">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-600 shadow-sm"><Loader2 size={16} className="animate-spin text-white" /></div>
-              <div className="p-3 text-sm text-gray-500 dark:text-gray-400 font-medium">{aiStatus || "정책 데이터를 분석 중입니다..."}</div>
+            <div className="mt-4 flex gap-3 sm:gap-4 justify-start animate-in fade-in duration-300">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-600 mt-1 shadow-sm">
+                <span className="text-[10px] sm:text-xs font-bold text-white">AI</span>
+              </div>
+              <div className="max-w-[90%] sm:max-w-[85%] rounded-2xl p-4 shadow-sm border border-gray-200 dark:border-[#444] bg-white dark:bg-[#2d2d2d] w-full sm:w-[400px]">
+                <div className="flex items-center gap-2 mb-3">
+                  <Loader2 size={16} className="animate-spin text-green-600 dark:text-green-400" />
+                  <span className="text-sm font-bold text-green-600 dark:text-green-400">
+                    {aiStatus || "정책 데이터를 분석 중입니다..."}
+                  </span>
+                </div>
+                <div className="space-y-3">
+                  <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded-full w-3/4 animate-pulse"></div>
+                  <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded-full w-full animate-pulse"></div>
+                  <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded-full w-5/6 animate-pulse"></div>
+                </div>
+              </div>
             </div>
           )}
         </div>
