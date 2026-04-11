@@ -48,3 +48,16 @@ body {
   margin: 1rem 0;
   border-color: #2f2f2f;
 }
+
+/* 마크다운 내부 강조 텍스트(강조, 코드 블록) 라이트/다크 모드 대응 */
+.prose code, 
+.markdown-body code,
+code {
+  @apply bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 px-1 py-0.5 rounded;
+}
+
+.prose strong,
+.markdown-body strong,
+strong {
+  @apply text-green-700 dark:text-green-400 font-bold;
+}
