@@ -126,8 +126,8 @@ def create_agent_executor():
         agent=agent,
         tools=tools,
         verbose=True,
-        max_iterations=10,
-        max_execution_time=180,
+        max_iterations=15,
+        max_execution_time=600,
         early_stopping_method="generate"
     )
 
