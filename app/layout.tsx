@@ -42,10 +42,10 @@ export const metadata: Metadata = {
   icons: {
     icon: "/favicon.ico",
   },
-  // 🌟 [추가] 구글/네이버 검색 엔진 등록용 메타태그 (값은 나중에 발급받아서 넣기)
+  // 🌟 [최종 삽입] 구글과 네이버의 소유권 확인 코드 적용 완료!
   verification: {
-    google: "여기에_구글_콘솔_코드를_넣을거야",
-    other: { "naver-site-verification": ["여기에_네이버_코드를_넣을거야"] },
+    google: "o4xskzx_MZmnxwxuP7UNSZ1uAP_bjH6BuGBq8dMCrkE",
+    other: { "naver-site-verification": ["196916b6176cc9eca7f3fb5f15b0f1826e7df031"] },
   },
 };
 
