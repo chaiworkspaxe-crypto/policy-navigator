@@ -15,8 +15,13 @@ load_dotenv()
 # Upstash Redis 주소
 REDIS_URL = os.getenv("REDIS_URL")
 
-# Celery 앱 설정
-celery_app = Celery("policy_worker", broker=REDIS_URL, backend=REDIS_URL)
+# 🌟 [에러 해결] Celery가 rediss:// (보안 연결)을 사용할 때 SSL 인증서 에러가 나지 않도록 옵션 추가
+CELERY_BROKER_URL = REDIS_URL
+if REDIS_URL and REDIS_URL.startswith("rediss://") and "ssl_cert_reqs" not in REDIS_URL:
+    CELERY_BROKER_URL += "?ssl_cert_reqs=CERT_NONE"
+
+# Celery 앱 설정 (수정된 URL 사용)
+celery_app = Celery("policy_worker", broker=CELERY_BROKER_URL, backend=CELERY_BROKER_URL)
 redis_client = redis.from_url(REDIS_URL)
 
 async def run_agent_and_publish(thread_id: str, user_id: str, agent_messages: list, message_type: str):
