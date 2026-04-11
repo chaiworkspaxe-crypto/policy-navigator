@@ -105,7 +105,7 @@ def create_agent_executor():
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY 환경변수가 비어 있습니다.")
 
-    model_name = os.getenv("OPENAI_MODEL", "gpt-4o").strip() # 🌟 최신 모델명으로 변경 권장
+    model_name = os.getenv("OPENAI_MODEL", "gpt-5.4").strip() # 🌟 최신 모델명으로 변경 권장
     
     llm = ChatOpenAI(model=model_name, temperature=0.1, streaming=True)
     tools = [web_search, verify_official_page, get_current_time]
