@@ -5,8 +5,9 @@ from zoneinfo import ZoneInfo
 from contextlib import contextmanager
 
 import psycopg2
-from psycopg2.pool import ThreadedConnectionPool # 🌟 [최적화 1] 연결 풀링 추가
+from psycopg2.pool import ThreadedConnectionPool # 🌟 [최적화 1] 연결 풀링
 from psycopg2.extras import DictCursor
+from pgvector.psycopg2 import register_vector # 🌟 [Phase 1] AI 벡터 검색 라이브러리 연동
 from dotenv import load_dotenv
 
 # .env 파일에서 DATABASE_URL 등 환경변수 불러오기
@@ -60,6 +61,9 @@ def init_db():
     """
     with db_session() as conn:
         with conn.cursor() as cur:
+            # 🌟 [Phase 1] Supabase의 핵심! Vector 익스텐션 활성화
+            cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -151,6 +155,79 @@ def init_db():
                 CREATE INDEX IF NOT EXISTS idx_daily_request_usage_date
                 ON daily_request_usage (usage_date, updated_at DESC)
                 """
+            )
+
+            # 🚀 [핵심 1] 100% 누락 없는 '궁극의 정책 DB' 테이블 생성
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS policies (
+                    policy_id TEXT PRIMARY KEY,       -- 고유 식별자 (예: 공공데이터 API의 ID)
+                    title TEXT NOT NULL,              -- 정책명
+                    provider TEXT NOT NULL,           -- 주관 기관 (예: 강남구청, LH)
+                    category TEXT,                    -- 지원 분야 (주거, 금융, 취업 등)
+                    target_audience TEXT,             -- 대상 (예: 대학생, 신혼부부)
+                    age_req TEXT,                     -- 연령 조건 파싱 텍스트
+                    income_req TEXT,                  -- 소득 조건 파싱 텍스트
+                    region_req TEXT,                  -- 지역 조건
+                    summary TEXT NOT NULL,            -- LLM이 읽기 좋게 정제된 요약본
+                    url TEXT,                         -- 공식 신청 링크
+                    deadline TEXT,                    -- 마감일
+                    is_active BOOLEAN DEFAULT TRUE,   -- 현재 신청 가능 여부
+                    embedding VECTOR(1536),           -- 🌟 OpenAI가 0.01초 만에 검색할 벡터 값
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            
+            # 🚀 [핵심 2] 수만 개의 데이터 중 가장 적합한 것을 빠르게 찾는 HNSW 인덱스
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_policies_embedding
+                ON policies USING hnsw (embedding vector_cosine_ops)
+                """
+            )
+
+
+# 🚀 [핵심 3] 새벽에 긁어온 데이터를 DB에 밀어 넣거나 업데이트하는 함수
+def upsert_policy(policy_data: dict):
+    """
+    수집 봇이 가져온 정책 1건을 DB에 삽입하거나 이미 있으면 덮어씌웁니다.
+    """
+    now = now_text()
+    with db_session() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO policies (
+                    policy_id, title, provider, category, target_audience,
+                    age_req, income_req, region_req, summary, url, deadline,
+                    embedding, created_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (policy_id) DO UPDATE SET
+                    title = EXCLUDED.title,
+                    provider = EXCLUDED.provider,
+                    category = EXCLUDED.category,
+                    target_audience = EXCLUDED.target_audience,
+                    age_req = EXCLUDED.age_req,
+                    income_req = EXCLUDED.income_req,
+                    region_req = EXCLUDED.region_req,
+                    summary = EXCLUDED.summary,
+                    url = EXCLUDED.url,
+                    deadline = EXCLUDED.deadline,
+                    embedding = EXCLUDED.embedding,
+                    updated_at = EXCLUDED.updated_at,
+                    is_active = TRUE
+                """,
+                (
+                    policy_data['policy_id'], policy_data['title'], policy_data['provider'], 
+                    policy_data.get('category', ''), policy_data.get('target_audience', ''),
+                    policy_data.get('age_req', ''), policy_data.get('income_req', ''),
+                    policy_data.get('region_req', ''), policy_data['summary'], 
+                    policy_data.get('url', ''), policy_data.get('deadline', ''),
+                    policy_data.get('embedding'), now, now
+                )
             )
 
 
