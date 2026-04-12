@@ -20,15 +20,21 @@ logger = logging.getLogger(__name__)
 
 REDIS_URL = os.getenv("REDIS_URL")
 
-# 🌟 Celery 및 실시간 통신 모두에 사용할 안전한 SSL 무시 URL 생성
+# Celery 전용 브로커 URL (Celery는 CERT_NONE 대문자를 좋아함)
 CELERY_BROKER_URL = REDIS_URL
-if REDIS_URL and REDIS_URL.startswith("rediss://") and "ssl_cert_reqs" not in REDIS_URL:
-    CELERY_BROKER_URL += "?ssl_cert_reqs=CERT_NONE"
-
-SAFE_REDIS_URL = CELERY_BROKER_URL
+clean_base_url = REDIS_URL.split("?")[0] if REDIS_URL else ""
+if clean_base_url.startswith("rediss://") and "ssl_cert_reqs" not in (REDIS_URL or ""):
+    CELERY_BROKER_URL = clean_base_url + "?ssl_cert_reqs=CERT_NONE"
 
 celery_app = Celery("policy_worker", broker=CELERY_BROKER_URL, backend=CELERY_BROKER_URL)
 client = OpenAI()
+
+# 🌟 [완벽 해결] aioredis는 꼬리표 다 떼고 "none" 소문자만 전달! (SAFE_REDIS_URL 악성 변수 삭제)
+def get_async_redis_client():
+    clean_url = REDIS_URL.split("?")[0] if REDIS_URL else ""
+    if clean_url.startswith("rediss://"):
+        return aioredis.from_url(clean_url, ssl_cert_reqs="none")
+    return aioredis.from_url(clean_url)
 
 # ==============================================================================
 # [라이브 서비스] 유저가 검색을 누르면 실시간으로 돌아가는 기존 AI 에이전트
@@ -39,8 +45,8 @@ async def run_agent_and_publish(thread_id: str, user_id: str, agent_messages: li
     full_content = ""
     channel_name = f"chat_{thread_id}"
     
-    # 🌟 [수정] 원본 REDIS_URL 대신 SAFE_REDIS_URL 사용
-    async_redis = aioredis.from_url(SAFE_REDIS_URL)
+    # 🌟 [수정] 꼬리표 없는 안전한 Redis 클라이언트로 연결
+    async_redis = get_async_redis_client()
     
     try:
         logger.info(f"[{thread_id}] AI 정책 검색 시작")
