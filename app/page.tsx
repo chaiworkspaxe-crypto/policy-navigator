@@ -196,6 +196,17 @@ export default function Home() {
         setLoading(false);
       };
 
+      // 🌟 [수정] 통신이 비정상적으로 끊기면 무한 로딩을 멈추고 에러 처리
+      ws.onclose = () => {
+        setLoading((prev) => {
+          if (prev) {
+            setErrorMessage("서버와의 연결이 끊어졌습니다. 도메인 연결 및 인증서 발급 후 정상 작동합니다.");
+            return false;
+          }
+          return prev;
+        });
+      };
+
     } catch (error) {
       console.error(error);
       setMessages((prev) => prev.slice(0, -1));
