@@ -4,7 +4,7 @@ import json
 import asyncio 
 import traceback
 import hashlib
-import logging # 🌟 [Phase 4] 서버 모니터링을 위한 로깅 모듈 추가
+import logging
 from datetime import datetime
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -14,8 +14,8 @@ from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-import redis.asyncio as aioredis # 🌟 [추가] 비동기 Redis 통신
-import sentry_sdk # 🌟 [추가] Sentry 에러 모니터링 라이브러리
+import redis.asyncio as aioredis 
+import sentry_sdk 
 
 from chat_db import (
     init_db, db_session, create_thread, rename_thread, delete_thread,
@@ -28,11 +28,11 @@ from worker import process_chat_task
 
 load_dotenv()
 
-# 🌟 [Phase 4] 백엔드 로깅 기본 설정 (터미널에서 깔끔하게 보이도록 포맷 지정)
+# 🌟 [Phase 4] 백엔드 로깅 기본 설정
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# 🌟 [추가] Sentry 초기화 설정 (Render 환경변수에 SENTRY_DSN을 넣으면 자동 작동!)
+# 🌟 [추가] Sentry 초기화 설정
 if os.getenv("SENTRY_DSN"):
     sentry_sdk.init(
         dsn=os.getenv("SENTRY_DSN"),
@@ -45,12 +45,12 @@ MAX_CONTEXT_MESSAGES = 6
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
-# 🌟 [수정] 실시간 통신 파이프에도 SSL 보안 에러 방지 옵션 강제 적용!
-SAFE_REDIS_URL = REDIS_URL
-if SAFE_REDIS_URL and SAFE_REDIS_URL.startswith("rediss://") and "ssl_cert_reqs" not in SAFE_REDIS_URL:
-    SAFE_REDIS_URL += "?ssl_cert_reqs=CERT_NONE"
+# 🌟 [수정] URL 파싱 에러를 완벽히 막기 위한 안전한 Redis 클라이언트 생성 함수
+def get_async_redis_client():
+    if REDIS_URL.startswith("rediss://"):
+        return aioredis.from_url(REDIS_URL, ssl_cert_reqs="none")
+    return aioredis.from_url(REDIS_URL)
 
-# 🌟 [추가] 관리자 비밀 암호 (환경변수가 없으면 기본값 8011 사용)
 ADMIN_PASS_KEY = os.getenv("ADMIN_PASS_KEY", "8011")
 
 def get_client_fingerprint(request: Request) -> str:
@@ -158,7 +158,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Policy Navigator API", lifespan=lifespan)
 
-# 🌟 [수정] policyai.kr 주소를 안전한 출처(CORS)로 추가!
 allowed_origins = [
     "http://localhost:3000", "http://127.0.0.1:3000",
     "http://localhost:3001", "http://127.0.0.1:3001",
@@ -190,16 +189,14 @@ async def chat(request: ChatRequest, http_request: Request):
         user_id, thread_id = (request.user_id or "").strip(), (request.thread_id or "").strip()
         if not user_id: raise HTTPException(status_code=400, detail="user_id는 필수입니다.")
 
-        # 🌟 [수정] 아이디가 비밀 암호(8011)와 일치하는지 확인!
         is_admin = (user_id == ADMIN_PASS_KEY)
 
-        # 🌟 [수정] 관리자가 아닐 때(일반 유저일 때)만 횟수를 깎음
         if not is_admin:
             fingerprint = get_client_fingerprint(http_request)
             quota = consume_daily_request_quota(fingerprint, daily_limit=4)
             
             if not quota["allowed"]:
-                logger.warning(f"⚠️ [Quota Exceeded] IP 핑거프린트: {fingerprint}") # 🌟 [Phase 4] 사용량 초과 로그
+                logger.warning(f"⚠️ [Quota Exceeded] IP 핑거프린트: {fingerprint}")
                 raise HTTPException(
                     status_code=403, 
                     detail="오늘의 맞춤 혜택 검색 횟수(4회)를 모두 사용하셨습니다. 서버 유지를 위해 내일 다시 찾아와 주세요! 🙇‍♂️"
@@ -212,7 +209,6 @@ async def chat(request: ChatRequest, http_request: Request):
 
         if not thread_id: thread_id = create_thread(user_id=user_id, set_active=False)
 
-        # 🌟 [Phase 4] 유저의 검색 요청을 터미널에 깔끔하게 로깅
         logger.info(f"🚀 [새로운 혜택 검색] User: {user_id[-6:]} | Thread: {thread_id[-6:]}")
         if request.city:
             logger.info(f"📍 [조건] {request.city} {request.district} | {request.birth_year}년생")
@@ -229,15 +225,14 @@ async def chat(request: ChatRequest, http_request: Request):
 
         agent_messages = build_agent_messages(previous_messages, user_message)
 
-        # 🚀 Celery Worker에게 작업 지시 (비동기 처리)
-        logger.info(f"⚙️ [Worker 전달 완료] 백그라운드 AI 검색 시작...") # 🌟 [Phase 4] 워커 할당 로그
+        logger.info(f"⚙️ [Worker 전달 완료] 백그라운드 AI 검색 시작...")
         process_chat_task.delay(thread_id, user_id, agent_messages, message_type)
 
         return {"ok": True, "thread_id": thread_id, "message": "Task queued successfully"}
 
     except HTTPException: raise
     except Exception as e: 
-        logger.error(f"❌ [서버 에러 발생]: {str(e)}") # 🌟 [Phase 4] 에러 로깅
+        logger.error(f"❌ [서버 에러 발생]: {str(e)}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -245,11 +240,23 @@ async def chat(request: ChatRequest, http_request: Request):
 async def websocket_endpoint(websocket: WebSocket, thread_id: str):
     await websocket.accept()
     
-    # 🌟 [수정] 원본 REDIS_URL 대신 SAFE_REDIS_URL 사용 (SSL 충돌 방지)
-    redis_client = aioredis.from_url(SAFE_REDIS_URL)
+    # 🌟 [수정] 안전한 Redis 통신 객체 생성
+    redis_client = get_async_redis_client()
     pubsub = redis_client.pubsub()
     channel_name = f"chat_{thread_id}"
     await pubsub.subscribe(channel_name)
+
+    # 🌟 [핵심 해결책] Render 100초 타임아웃 방어: 20초마다 빈 신호(Ping)를 보내 파이프를 유지시킴
+    async def keep_alive():
+        while True:
+            await asyncio.sleep(20)
+            try:
+                # 프론트엔드는 이 "ping" 메시지를 무시하도록 짜여져 있음
+                await websocket.send_text(json.dumps({"type": "ping"}))
+            except:
+                break
+
+    ping_task = asyncio.create_task(keep_alive())
 
     try:
         async for message in pubsub.listen():
@@ -262,8 +269,9 @@ async def websocket_endpoint(websocket: WebSocket, thread_id: str):
     except WebSocketDisconnect:
         pass 
     except Exception as e:
-        logger.error(f"🔌 [웹소켓 에러]: {e}") # 🌟 [Phase 4] 웹소켓 에러 로깅
+        logger.error(f"🔌 [웹소켓 에러]: {e}")
     finally:
+        ping_task.cancel() # 🌟 통신이 끝나면 핑 보내는 작업도 깔끔하게 종료
         await pubsub.unsubscribe(channel_name)
         await redis_client.close()
         try:
