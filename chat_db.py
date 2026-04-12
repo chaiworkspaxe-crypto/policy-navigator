@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 from contextlib import contextmanager
 
 import psycopg2
+from psycopg2.pool import ThreadedConnectionPool # 🌟 [최적화 1] 연결 풀링 추가
 from psycopg2.extras import DictCursor
 from dotenv import load_dotenv
 
@@ -12,6 +13,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 KST = ZoneInfo("Asia/Seoul")
+
+# 🌟 [최적화 2] 글로벌 DB 연결 풀 객체 (최소 1개, 최대 10개 연결 유지)
+_db_pool = None
+
+def get_pool():
+    global _db_pool
+    if _db_pool is None:
+        db_url = os.getenv("DATABASE_URL")
+        if not db_url:
+            raise ValueError("DATABASE_URL 환경변수가 설정되지 않았습니다. .env 파일을 확인해 주세요.")
+        _db_pool = ThreadedConnectionPool(1, 10, db_url)
+    return _db_pool
 
 
 def now_text() -> str:
@@ -26,13 +39,10 @@ def today_text() -> str:
 def db_session():
     """
     PostgreSQL 데이터베이스 연결을 관리하는 컨텍스트 매니저입니다.
-    작업이 성공하면 자동으로 commit 하고, 에러가 나면 rollback 한 뒤 연결을 닫습니다.
+    작업이 성공하면 자동으로 commit 하고, 에러가 나면 rollback 한 뒤 연결을 반납(putconn)합니다.
     """
-    db_url = os.getenv("DATABASE_URL")
-    if not db_url:
-        raise ValueError("DATABASE_URL 환경변수가 설정되지 않았습니다. .env 파일을 확인해 주세요.")
-    
-    conn = psycopg2.connect(db_url)
+    pool = get_pool()
+    conn = pool.getconn() # 🌟 [최적화 3] 매번 새로 연결하지 않고 풀에서 쏙 빼옴 (초고속)
     try:
         yield conn
         conn.commit()
@@ -40,7 +50,7 @@ def db_session():
         conn.rollback()
         raise e
     finally:
-        conn.close()
+        pool.putconn(conn) # 🌟 [최적화 4] 연결을 끊지 않고 풀에 다시 반납
 
 
 def init_db():
