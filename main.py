@@ -45,6 +45,11 @@ MAX_CONTEXT_MESSAGES = 6
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
+# 🌟 [수정] 실시간 통신 파이프에도 SSL 보안 에러 방지 옵션 강제 적용!
+SAFE_REDIS_URL = REDIS_URL
+if SAFE_REDIS_URL and SAFE_REDIS_URL.startswith("rediss://") and "ssl_cert_reqs" not in SAFE_REDIS_URL:
+    SAFE_REDIS_URL += "?ssl_cert_reqs=CERT_NONE"
+
 # 🌟 [추가] 관리자 비밀 암호 (환경변수가 없으면 기본값 8011 사용)
 ADMIN_PASS_KEY = os.getenv("ADMIN_PASS_KEY", "8011")
 
@@ -240,7 +245,8 @@ async def chat(request: ChatRequest, http_request: Request):
 async def websocket_endpoint(websocket: WebSocket, thread_id: str):
     await websocket.accept()
     
-    redis_client = aioredis.from_url(REDIS_URL)
+    # 🌟 [수정] 원본 REDIS_URL 대신 SAFE_REDIS_URL 사용 (SSL 충돌 방지)
+    redis_client = aioredis.from_url(SAFE_REDIS_URL)
     pubsub = redis_client.pubsub()
     channel_name = f"chat_{thread_id}"
     await pubsub.subscribe(channel_name)
