@@ -41,7 +41,10 @@ def get_async_redis_client():
 # ==============================================================================
 async def run_agent_and_publish(thread_id: str, user_id: str, agent_messages: list, message_type: str):
     """AI 실행 및 Redis 채널로 실시간 송출"""
-    agent_executor = create_agent_executor()
+    
+    # 🌟 [해결 1] 프론트엔드가 웹소켓 문을 열 수 있도록 1.5초 기다려주는 매너 타임 (레이스 컨디션 방지)
+    await asyncio.sleep(1.5)
+    
     full_content = ""
     channel_name = f"chat_{thread_id}"
     
@@ -53,8 +56,11 @@ async def run_agent_and_publish(thread_id: str, user_id: str, agent_messages: li
         
         await async_redis.publish(
             channel_name, 
-            json.dumps({'type': 'status', 'message': '🔍 전국 정책 데이터를 샅샅이 뒤지는 중입니다...'}, ensure_ascii=False)
+            json.dumps({'type': 'status', 'message': '🔍 AI 두뇌를 깨우고 전국 정책을 스캔 중입니다...'}, ensure_ascii=False)
         )
+        
+        # 🌟 [해결 2] AI 엔진 생성 코드를 try 블록 안으로 이동! (에러 발생 시 프론트로 즉시 통보)
+        agent_executor = create_agent_executor()
         
         gen = get_ai_response_stream(agent_executor, agent_messages)
         is_first_chunk = True
@@ -90,9 +96,12 @@ async def run_agent_and_publish(thread_id: str, user_id: str, agent_messages: li
     except Exception as e:
         logger.error(f"[{thread_id}] ❌ AI 실행 에러: {str(e)}")
         traceback.print_exc()
+        
+        # 🌟 이제 에러가 나면 무한 로딩 대신, 정확한 에러 원인을 유저 화면에 띄워줌!
+        error_msg = str(e)[:100] # 에러 메시지 앞부분 추출
         await async_redis.publish(
             channel_name, 
-            json.dumps({'type': 'error', 'message': "AI 분석 중 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요."}, ensure_ascii=False)
+            json.dumps({'type': 'error', 'message': f"AI 엔진 오류로 멈췄습니다. (상세: {error_msg}...)"}, ensure_ascii=False)
         )
     finally:
         await async_redis.close()
