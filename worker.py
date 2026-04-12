@@ -5,12 +5,13 @@ import traceback
 import logging
 from celery import Celery
 from dotenv import load_dotenv
+from openai import OpenAI # 🌟 [Phase 3] 텍스트 벡터 변환을 위해 추가
 
 import redis.asyncio as aioredis 
 
 # 기존 AI 서비스 및 DB 함수 임포트
 from openai_service import create_agent_executor, get_ai_response_stream
-from chat_db import save_chat_message, upsert_policy # 🌟 [Phase 2] 저장 함수 임포트 추가
+from chat_db import save_chat_message, upsert_policy # 🌟 [Phase 2] 저장 함수 임포트
 
 load_dotenv()
 
@@ -24,6 +25,7 @@ if REDIS_URL and REDIS_URL.startswith("rediss://") and "ssl_cert_reqs" not in RE
     CELERY_BROKER_URL += "?ssl_cert_reqs=CERT_NONE"
 
 celery_app = Celery("policy_worker", broker=CELERY_BROKER_URL, backend=CELERY_BROKER_URL)
+client = OpenAI() # 🌟 OpenAI API 클라이언트 초기화
 
 # ==============================================================================
 # [라이브 서비스] 유저가 검색을 누르면 실시간으로 돌아가는 기존 AI 에이전트
@@ -91,7 +93,7 @@ def process_chat_task(thread_id: str, user_id: str, agent_messages: list, messag
 
 
 # ==============================================================================
-# 🚀 [Phase 2] '무결점 RAG' 구축을 위한 궁극의 데이터 수집 봇 (ETL Pipeline)
+# 🚀 [Phase 2 & 3] '무결점 RAG' 구축을 위한 궁극의 데이터 수집 봇 (ETL Pipeline)
 # ==============================================================================
 @celery_app.task(name="worker.collect_policies_task")
 def collect_policies_task():
@@ -101,16 +103,36 @@ def collect_policies_task():
     """
     logger.info("🚀 [ETL Pipeline] 정책 데이터 수집 봇 스웜(Bot Swarm) 가동 시작...")
     try:
-        # TODO: 추후 여기에 Playwright(브라우저 자동화) 기반 우회 스크래핑 코드 
-        # 또는 온라인청년센터 오픈 API (requests) 호출 로직이 들어갈 예정입니다.
+        # 💡 실전 테스트용 샘플 데이터 1건 생성 (추후 진짜 API 연동 로직으로 확장될 부분입니다)
+        sample_policy = {
+            "policy_id": "GOV_YOUTH_RENT_001",
+            "title": "청년 월세 특별지원 (2차)",
+            "provider": "국토교통부",
+            "category": "주거/금융",
+            "target_audience": "만 19~34세 독립 거주 무주택 청년",
+            "age_req": "만 19세 ~ 34세",
+            "income_req": "기준 중위소득 60% 이하",
+            "region_req": "전국",
+            "summary": "월 최대 20만원씩 12개월간 월세를 지원하는 정책입니다.",
+            "url": "https://www.bokjiro.go.kr",
+            "deadline": "2025-02-24"
+        }
+
+        # 🧠 [Phase 3] 데이터를 AI 검색이 가능하도록 벡터화(Embedding)
+        # 정책의 제목, 요약, 대상자를 하나로 합쳐서 AI가 의미를 파악하기 좋은 문장으로 만듭니다.
+        text_to_embed = f"{sample_policy['title']} {sample_policy['summary']} {sample_policy['target_audience']}"
         
-        # 예시: 
-        # mock_data = fetch_from_government_api()
-        # for item in mock_data:
-        #    parsed_item = llm_json_parser(item)
-        #    upsert_policy(parsed_item)
+        # OpenAI 임베딩 모델(text-embedding-3-small)을 사용해 텍스트를 숫자로 변환
+        response = client.embeddings.create(
+            input=text_to_embed, 
+            model="text-embedding-3-small"
+        )
+        sample_policy['embedding'] = response.data[0].embedding
+
+        # 변환된 벡터 데이터를 포함하여 DB에 꽂아넣기
+        upsert_policy(sample_policy)
         
-        logger.info("✅ [ETL Pipeline] 데이터 웨어하우스 최신화 완료!")
+        logger.info(f"✅ [ETL Pipeline] '{sample_policy['title']}' 수집 및 벡터화 완료!")
     except Exception as e:
         logger.error(f"❌ [ETL Pipeline] 데이터 수집 중 치명적 오류 발생: {str(e)}")
         traceback.print_exc()
