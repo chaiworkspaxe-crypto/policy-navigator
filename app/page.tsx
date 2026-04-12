@@ -165,6 +165,7 @@ export default function Home() {
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
       let accumulatedContent = "";
+      let isNormalClose = false; // 🌟 핵심: 정상 종료 여부 체크 스위치
 
       ws.onmessage = (event) => {
         try {
@@ -180,10 +181,12 @@ export default function Home() {
           } else if (data.type === "status") {
             setAiStatus(data.message);
           } else if (data.type === "done") {
+            isNormalClose = true; // 🌟 정상 종료 마킹
             ws.close();
             setLoading(false);
             void api.listThreads(userId).then(setThreads);
           } else if (data.type === "error") {
+            isNormalClose = true; // 🌟 에러로 인한 종료 마킹
             setErrorMessage(data.message);
             ws.close();
             setLoading(false);
@@ -192,19 +195,27 @@ export default function Home() {
       };
 
       ws.onerror = () => {
-        setErrorMessage("실시간 통신 연결에 문제가 발생했습니다.");
-        setLoading(false);
+        if (!isNormalClose) {
+          setErrorMessage("실시간 통신 연결에 문제가 발생했습니다.");
+          setLoading(false);
+        }
       };
 
-      // 🌟 [수정] 통신이 비정상적으로 끊기면 무한 로딩을 멈추고 에러 처리
       ws.onclose = () => {
-        setLoading((prev) => {
-          if (prev) {
-            setErrorMessage("서버와의 연결이 끊어졌습니다. 도메인 연결 및 인증서 발급 후 정상 작동합니다.");
-            return false;
-          }
-          return prev;
-        });
+        // 🌟 비정상적으로 끊겼을 때만 에러를 띄우고 빈 말풍선을 지움
+        if (!isNormalClose) {
+          setErrorMessage("서버와의 연결이 끊어졌습니다. 도메인 연결 및 인증서 발급 후 정상 작동합니다.");
+          setLoading(false);
+          
+          setMessages((prev) => {
+            const next = [...prev];
+            // 마지막 메시지가 assistant이고 내용이 비어있다면 삭제
+            if (next.length > 0 && next[next.length - 1].role === "assistant" && next[next.length - 1].content === "") {
+              return next.slice(0, -1);
+            }
+            return next;
+          });
+        }
       };
 
     } catch (error) {
