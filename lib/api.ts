@@ -1,10 +1,11 @@
 import axios from 'axios';
 
+// 🌟 [체크포인트] Vercel 환경변수에 NEXT_PUBLIC_API_BASE_URL 이 잘 들어가 있는지 꼭 확인해!
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://policy-navigator-1.onrender.com';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  // 90000(90초) -> 300000(5분)으로 변경. (또는 0으로 주면 프론트엔드는 무한 대기함)
+  // AI 응답 대기 시간을 위해 5분(300000ms)으로 세팅 (아주 좋은 설정!)
   timeout: 300000, 
 });
 
@@ -74,7 +75,6 @@ export const api = {
     await apiClient.delete(`/threads/${threadId}`, { params: { user_id: userId } });
   },
 
-  // 🌟 [새로 추가된 부분] 관리자 대시보드 통계 가져오기
   getAdminStats: async (): Promise<{ total_users: number; total_threads: number; blocked_today: number; today_date: string }> => {
     const res = await apiClient.get("/admin/stats");
     return res.data.data;
