@@ -45,11 +45,12 @@ MAX_CONTEXT_MESSAGES = 6
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
-# 🌟 [수정] URL 파싱 에러를 완벽히 막기 위한 안전한 Redis 클라이언트 생성 함수
+# 🌟 [완벽 해결] 꼬리에 붙은 이상한 옵션을 싹둑 자르고 퓨어한 주소로만 연결!
 def get_async_redis_client():
-    if REDIS_URL.startswith("rediss://"):
-        return aioredis.from_url(REDIS_URL, ssl_cert_reqs="none")
-    return aioredis.from_url(REDIS_URL)
+    clean_url = REDIS_URL.split("?")[0]
+    if clean_url.startswith("rediss://"):
+        return aioredis.from_url(clean_url, ssl_cert_reqs="none")
+    return aioredis.from_url(clean_url)
 
 ADMIN_PASS_KEY = os.getenv("ADMIN_PASS_KEY", "8011")
 
@@ -240,18 +241,17 @@ async def chat(request: ChatRequest, http_request: Request):
 async def websocket_endpoint(websocket: WebSocket, thread_id: str):
     await websocket.accept()
     
-    # 🌟 [수정] 안전한 Redis 통신 객체 생성
+    # 🌟 [수정] 꼬리표 떼어낸 안전한 redis 클라이언트로 연결!
     redis_client = get_async_redis_client()
     pubsub = redis_client.pubsub()
     channel_name = f"chat_{thread_id}"
     await pubsub.subscribe(channel_name)
 
-    # 🌟 [핵심 해결책] Render 100초 타임아웃 방어: 20초마다 빈 신호(Ping)를 보내 파이프를 유지시킴
+    # 🌟 [핵심 해결책] Render 100초 타임아웃 방어 (20초마다 심장 박동)
     async def keep_alive():
         while True:
             await asyncio.sleep(20)
             try:
-                # 프론트엔드는 이 "ping" 메시지를 무시하도록 짜여져 있음
                 await websocket.send_text(json.dumps({"type": "ping"}))
             except:
                 break
@@ -271,7 +271,7 @@ async def websocket_endpoint(websocket: WebSocket, thread_id: str):
     except Exception as e:
         logger.error(f"🔌 [웹소켓 에러]: {e}")
     finally:
-        ping_task.cancel() # 🌟 통신이 끝나면 핑 보내는 작업도 깔끔하게 종료
+        ping_task.cancel()
         await pubsub.unsubscribe(channel_name)
         await redis_client.close()
         try:
