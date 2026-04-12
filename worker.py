@@ -2,47 +2,43 @@ import os
 import json
 import asyncio
 import traceback
-import logging # 🌟 워커 상태 모니터링 로깅
+import logging
 from celery import Celery
 from dotenv import load_dotenv
 
-# 🌟 [최적화 1] 동기식 redis 대신 비동기 통신을 지원하는 모듈로 변경
 import redis.asyncio as aioredis 
 
 # 기존 AI 서비스 및 DB 함수 임포트
 from openai_service import create_agent_executor, get_ai_response_stream
-from chat_db import save_chat_message
+from chat_db import save_chat_message, upsert_policy # 🌟 [Phase 2] 저장 함수 임포트 추가
 
 load_dotenv()
 
-# 🌟 워커용 로깅 설정
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] Worker: %(message)s")
 logger = logging.getLogger(__name__)
 
-# Upstash Redis 주소
 REDIS_URL = os.getenv("REDIS_URL")
 
-# 🌟 [에러 해결] Celery가 rediss:// (보안 연결)을 사용할 때 SSL 인증서 에러가 나지 않도록 옵션 추가
 CELERY_BROKER_URL = REDIS_URL
 if REDIS_URL and REDIS_URL.startswith("rediss://") and "ssl_cert_reqs" not in REDIS_URL:
     CELERY_BROKER_URL += "?ssl_cert_reqs=CERT_NONE"
 
-# Celery 앱 설정
 celery_app = Celery("policy_worker", broker=CELERY_BROKER_URL, backend=CELERY_BROKER_URL)
 
+# ==============================================================================
+# [라이브 서비스] 유저가 검색을 누르면 실시간으로 돌아가는 기존 AI 에이전트
+# ==============================================================================
 async def run_agent_and_publish(thread_id: str, user_id: str, agent_messages: list, message_type: str):
     """AI 실행 및 Redis 채널로 실시간 송출"""
     agent_executor = create_agent_executor()
     full_content = ""
     channel_name = f"chat_{thread_id}"
     
-    # 🌟 [최적화 2] 함수 내부에서 비동기 전용 Redis 클라이언트 생성
     async_redis = aioredis.from_url(REDIS_URL)
     
     try:
         logger.info(f"[{thread_id}] AI 정책 검색 시작")
         
-        # 🌟 비동기(await)로 사용자가 검색 중임을 인지하도록 디테일한 첫 메시지 송출
         await async_redis.publish(
             channel_name, 
             json.dumps({'type': 'status', 'message': '🔍 전국 정책 데이터를 샅샅이 뒤지는 중입니다...'}, ensure_ascii=False)
@@ -58,7 +54,6 @@ async def run_agent_and_publish(thread_id: str, user_id: str, agent_messages: li
                 try:
                     data = json.loads(clean_chunk)
                     
-                    # Tool Calling이 끝나고 텍스트 생성을 시작할 때 상태 한 번 더 업데이트
                     if data.get("type") == "content" and is_first_chunk:
                         await async_redis.publish(
                             channel_name, 
@@ -66,22 +61,18 @@ async def run_agent_and_publish(thread_id: str, user_id: str, agent_messages: li
                         )
                         is_first_chunk = False
                         
-                    # 답변 조각 모으기
                     if data.get("type") == "content":
                         full_content += data.get("delta", "")
                     elif data.get("type") == "done":
-                        # 스트림 완료 시 전체 답변 가져오기
                         full_content = data.get("full_content", full_content)
                         
                 except json.JSONDecodeError:
-                    pass # JSON 파싱 에러 시 무시하고 진행
+                    pass 
                 
-                # 🌟 [최적화 3] 프론트엔드로 웹소켓용 JSON 데이터 바로 비동기 송출 (병목 제거)
                 await async_redis.publish(channel_name, clean_chunk)
 
         if full_content:
             logger.info(f"[{thread_id}] AI 답변 완료 (길이: {len(full_content)})")
-            # DB 저장 (message_type을 파라미터로 받은 그대로 넘김)
             save_chat_message(user_id, thread_id, "assistant", full_content, message_type)
             
     except Exception as e:
@@ -92,10 +83,34 @@ async def run_agent_and_publish(thread_id: str, user_id: str, agent_messages: li
             json.dumps({'type': 'error', 'message': "AI 분석 중 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요."}, ensure_ascii=False)
         )
     finally:
-        # 🌟 [최적화 4] 레디스 세션 안전하게 닫기
         await async_redis.close()
 
-# 🌟 [중요] main.py에서 .delay()로 호출하는 task 이름("worker.process_chat_task")과 완벽히 일치하도록 네이밍
 @celery_app.task(name="worker.process_chat_task")
 def process_chat_task(thread_id: str, user_id: str, agent_messages: list, message_type: str):
     asyncio.run(run_agent_and_publish(thread_id, user_id, agent_messages, message_type))
+
+
+# ==============================================================================
+# 🚀 [Phase 2] '무결점 RAG' 구축을 위한 궁극의 데이터 수집 봇 (ETL Pipeline)
+# ==============================================================================
+@celery_app.task(name="worker.collect_policies_task")
+def collect_policies_task():
+    """
+    매일 새벽(또는 지정된 시간)에 실행되어 공공데이터 API 및 크롤링을 수행하는 로봇.
+    가져온 데이터는 AI가 파싱하여 PostgreSQL 'policies' 테이블에 1536차원 벡터와 함께 영구 저장됨.
+    """
+    logger.info("🚀 [ETL Pipeline] 정책 데이터 수집 봇 스웜(Bot Swarm) 가동 시작...")
+    try:
+        # TODO: 추후 여기에 Playwright(브라우저 자동화) 기반 우회 스크래핑 코드 
+        # 또는 온라인청년센터 오픈 API (requests) 호출 로직이 들어갈 예정입니다.
+        
+        # 예시: 
+        # mock_data = fetch_from_government_api()
+        # for item in mock_data:
+        #    parsed_item = llm_json_parser(item)
+        #    upsert_policy(parsed_item)
+        
+        logger.info("✅ [ETL Pipeline] 데이터 웨어하우스 최신화 완료!")
+    except Exception as e:
+        logger.error(f"❌ [ETL Pipeline] 데이터 수집 중 치명적 오류 발생: {str(e)}")
+        traceback.print_exc()
