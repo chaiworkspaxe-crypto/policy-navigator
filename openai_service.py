@@ -52,7 +52,7 @@ def web_search(query: str) -> str:
     try:
         from langchain_community.tools import DuckDuckGoSearchResults
         # 🌟 [극대화 1] 누락 방지를 위해 한 번에 가져오는 검색 결과 수를 15 -> 30으로 대폭 상향
-        search = DuckDuckGoSearchResults(max_results=30)
+        search = DuckDuckGoSearchResults(max_results=15)
         return search.invoke(query)
     except Exception as e:
         return f"검색 중 오류 발생: {e}"
@@ -137,7 +137,7 @@ def create_agent_executor():
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY 환경변수가 비어 있습니다.")
 
-    # 🌟 모델 오타 수정 및 안전한 기본값 설정
+    # 🌟 [핵심] 창현이의 API 환경에 맞춘 최신 강력한 모델 gpt-5.4 고정 사용!
     model_name = os.getenv("OPENAI_MODEL", "gpt-5.4").strip() 
     
     llm = ChatOpenAI(model=model_name, temperature=0.1, streaming=True)
@@ -196,4 +196,4 @@ async def get_ai_response_stream(agent_executor, messages: list):
 
 def get_ai_response(agent_executor, messages: list) -> str:
     result = agent_executor.invoke({"messages": messages})
-    return result.get("output", "결과를 정리하는 중에 오류가 발생했습니다.")    
+    return result.get("output", "결과를 정리하는 중에 오류가 발생했습니다.")
