@@ -51,8 +51,8 @@ def web_search(query: str) -> str:
     """주어진 검색어로 웹에서 최신 정책이나 지원금 정보를 검색합니다."""
     try:
         from langchain_community.tools import DuckDuckGoSearchResults
-        # 🌟 [극대화 1] 누락 방지를 위해 한 번에 가져오는 검색 결과 수를 15 -> 30으로 대폭 상향
-        search = DuckDuckGoSearchResults(max_results=15)
+        # 🌟 [해결책] 검색 결과를 10개로 압축해서 100초 타임아웃 전에 빠르게 응답하도록 수정
+        search = DuckDuckGoSearchResults(max_results=10)
         return search.invoke(query)
     except Exception as e:
         return f"검색 중 오류 발생: {e}"
