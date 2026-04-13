@@ -1,11 +1,13 @@
 import os
 import json
+import urllib.request
+import urllib.parse
 from functools import lru_cache
 import pytz
 from datetime import datetime
 import requests
 from bs4 import BeautifulSoup
-from openai import OpenAI # 🌟 [Phase 4] 벡터 변환을 위한 OpenAI 추가
+from openai import OpenAI 
 
 try:
     import truststore
@@ -18,7 +20,6 @@ from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import tool
 
-# 🌟 [Phase 4] 자체 DB 벡터 검색 함수 임포트
 from chat_db import search_policies 
 
 @tool
@@ -26,43 +27,74 @@ def get_current_time() -> str:
     """현재 날짜와 시간을 확인합니다."""
     return datetime.now(pytz.timezone('Asia/Seoul')).strftime("%Y년 %m월 %d일")
 
-# 🌟 [Phase 4] 자체 DB 우선 검색 도구 추가
 @tool
 def search_internal_db(query: str) -> str:
     """우리가 직접 수집한 100% 검증된 대한민국 정책 DB에서 정보를 찾습니다. 인터넷 검색보다 이 도구를 가장 먼저 사용하세요."""
     try:
         client = OpenAI()
-        # 질문을 벡터로 변환
         resp = client.embeddings.create(input=query, model="text-embedding-3-small")
         query_vector = resp.data[0].embedding
         
-        # DB에서 검색 (최대 5개)
         results = search_policies(query_vector, limit=5)
         
         if not results:
-            return "내부 DB에 해당 정보가 없습니다. web_search를 이용해 최신 정보를 찾으세요."
+            return "내부 DB에 해당 정보가 없습니다. naver_web_search를 이용해 최신 정보를 찾으세요."
             
         return json.dumps(results, ensure_ascii=False)
     except Exception as e:
         return f"내부 DB 검색 중 오류: {str(e)}"
 
+# 🟢 [신규] 1순위 무기: 네이버 검색 API
 @tool
-def web_search(query: str) -> str:
-    """주어진 검색어로 웹에서 최신 정책이나 지원금 정보를 검색합니다."""
+def naver_web_search(query: str) -> str:
+    """한국의 지역 정책, 지자체 블로그, 최신 뉴스를 찾을 때 내부 DB 다음으로 사용하는 네이버 검색 도구입니다."""
+    client_id = os.getenv("NAVER_CLIENT_ID", "").strip()
+    client_secret = os.getenv("NAVER_CLIENT_SECRET", "").strip()
+    
+    if not client_id or not client_secret:
+        return "네이버 API 키가 없습니다. global_web_search 도구를 사용하세요."
+
+    url = f"https://openapi.naver.com/v1/search/webkr?query={urllib.parse.quote(query)}&display=5"
+    request = urllib.request.Request(url)
+    request.add_header("X-Naver-Client-Id", client_id)
+    request.add_header("X-Naver-Client-Secret", client_secret)
+    
+    try:
+        response = urllib.request.urlopen(request)
+        if response.getcode() == 200:
+            data = json.loads(response.read().decode('utf-8'))
+            results = []
+            for item in data.get('items', []):
+                clean_title = item['title'].replace('<b>', '').replace('</b>', '')
+                clean_desc = item['description'].replace('<b>', '').replace('</b>', '')
+                results.append(f"- 제목: {clean_title}\n  내용: {clean_desc}\n  링크: {item['link']}")
+            return "\n".join(results) if results else "네이버 검색 결과가 없습니다."
+        else:
+            return "네이버 검색 실패"
+    except Exception as e:
+        return f"네이버 검색 오류: {e}"
+
+# 🔵 [신규] 2순위 무기: 덕덕고 (실패 시 Tavily 자동 스위칭)
+@tool
+def global_web_search(query: str) -> str:
+    """네이버 검색으로 정보가 부족하거나 공식 관공서 문서가 필요할 때 보완용으로 사용하는 검색 도구입니다."""
     try:
         from langchain_community.tools import DuckDuckGoSearchResults
-        # 🌟 [해결책] 검색 결과를 10개로 압축해서 100초 타임아웃 전에 빠르게 응답하도록 수정
-        search = DuckDuckGoSearchResults(max_results=10)
+        search = DuckDuckGoSearchResults(max_results=5)
         return search.invoke(query)
     except Exception as e:
-        return f"검색 중 오류 발생: {e}"
+        try:
+            from langchain_community.tools.tavily_search import TavilySearchResults
+            tavily_search = TavilySearchResults(max_results=3)
+            return tavily_search.invoke(query)
+        except Exception as tavily_e:
+            return "외부 검색 엔진이 모두 일시적으로 차단되었습니다. 수집된 정보로만 답변하세요."
 
 @tool
 def verify_official_page(url: str) -> str:
     """공식 홈페이지 URL에 접속하여 내용을 팩트체크합니다."""
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-        # 🌟 [극대화 2] 타임아웃을 10초로 주어 관공서 사이트가 열릴 때까지 적절히 기다려줌
+        headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(url, headers=headers, timeout=10) 
         response.raise_for_status()
         
@@ -73,10 +105,9 @@ def verify_official_page(url: str) -> str:
         text = soup.get_text(separator=' ', strip=True)
         return f"[공식 페이지 스크래핑 결과 요약]\n{text[:1500]}"
     except Exception as e:
-        # 🌟 접속 실패 시 스니펫 정보라도 적극 활용하도록 지침 추가
-        return f"페이지 접속 실패. 검색 엔진의 스니펫(요약) 정보를 최대한 활용하여 판단하세요. 에러: {str(e)}"
+        return f"페이지 접속 실패. 검색 엔진의 요약 정보를 활용하세요. 에러: {str(e)}"
 
-# 🌟 [Phase 4] 시스템 프롬프트 업데이트 (우선순위 지침 추가)
+# 🌟 [수정] 도구 사용 순서와 병렬 검색 금지 규칙을 강력하게 주입
 SYSTEM_PROMPT = """
 당신은 대한민국 국민 모두의 '정보 비대칭'을 완벽하게 해소해 주는 최고의 '전국민 맞춤형 복지/지원금 내비게이터(Universal Policy Navigator)'입니다.
 청년, 중장년, 노년층, 신혼부부, 육아 가구 등 어떤 사용자가 오더라도 그 사람의 조건에 딱 맞는 혜택을 찾아주어야 합니다.
@@ -85,24 +116,19 @@ SYSTEM_PROMPT = """
 [행동 지침 및 검색 규칙]
 0. [가장 중요] 현재 시간 파악 및 안내:
    - 답변을 생성하기 전, 반드시 `get_current_time` 도구를 호출하여 오늘이 몇 년 몇 월 며칠인지 확인하세요.
-   - 사용자를 향한 첫 인사말에 "안녕하십니까, 정책 내비게이터입니다. OOOO년 O월 O일 기준으로 신청 가능한 모든 혜택을 종합하여 컨설팅해 드립니다."라고 명시하세요.
-   - 🚦 단일 통합 검색 (무한 로딩 방지 핵심 규칙):`web_search` 도구를 한 번에 여러 개 동시에 호출(병렬 실행)하면 서버가 디도스 공격으로 간주하여 영구 차단됩니다. 절대 다중 호출하지 마세요.
+   - 첫 인사말에 "안녕하십니까, 정책 내비게이터입니다. OOOO년 O월 O일 기준으로 신청 가능한 혜택을 컨설팅해 드립니다." 명시.
 
 1. 프로필 필수 확인 (예외 처리):
    - 정책을 검색하기 전, 사용자의 '나이', '거주지(시/도 및 기초지자체 단위)', '직업 및 가구 상태'가 모두 파악되었는지 확인하세요.
-   - 정보가 부족하다면 검색을 보류하고 추가 정보를 먼저 친절하게 질문하세요.
+   - - 정보가 부족하다면 검색을 보류하고 추가 정보를 먼저 친절하게 질문하세요.
 
-2. 🚀 자체 DB 우선 검색 (Internal First):
-   - 정책을 찾을 때 반드시 `search_internal_db` 도구를 가장 먼저 호출하세요. 우리 DB에 있는 정보는 100% 검증된 오피셜 데이터입니다.
-   - 내부 DB에 정보가 부족하거나 최신 공고가 아닐 때만 `web_search`를 보조적으로 사용하세요.
+2. 🚦 도구 사용 순서 (반드시 지킬 것 - 무한 로딩 방지 핵심 규칙):
+   - 1순위: `search_internal_db` (가장 빠르고 정확한 자체 DB 우선 확인)
+   - 2순위: `naver_web_search` (내부 DB에 없을 경우 한국 특화 네이버 검색 사용)
+   - 3순위: `global_web_search` (네이버로 정보가 부족하거나 관공서 공식 문서가 필요할 때 보완용)
+   - 🚨 절대 여러 도구를 한 번에 병렬로 동시 호출하지 마세요. (디도스 공격으로 간주되어 차단됨)
 
-3. 🚀 병렬(Parallel) 검색 활용:
-   - 프로필이 파악되면 도구를 한 번에 여러 키워드로 동시 호출(병렬 실행)하여 탐색 시간을 단축하고 최대한 많은 혜택을 발굴하세요.
-   - [필수 탐색 분야]: 일자리, 취업/진로, 창업, 주거, 금융, 교육, 복지, 청년정책, 마음건강, 신체건강, 생활지원, 문화/예술, 대외활동, 공간, 사회참여, 커뮤니티 등 가능한 모든 분야를 키워드로 검색하세요.
-   - [핵심] 몇 개만 찾고 멈추지 마세요. 사용자의 조건에 맞는 모든 정책, 지원금, 혜택 등을 끝까지 파헤쳐서 모조리 가져오세요.
-   - 중앙정부 / 광역지자체 / 기초지자체 / 공공기관 / 공공재단 정책이 모두 포함되도록 교차 검색하세요.
-
-4. 팩트 체크 및 마감 여부 철저 검증:
+3. 탐색 및 팩트 체크:
    - 존재하지 않는 정책을 지어내는 환각(Hallucination)은 절대 금지합니다.
    - 오늘 날짜와 신청 마감일을 반드시 비교하세요.
    - 이미 마감일이 지났거나 신청 기한이 끝난 공고는 리스트에서 제거하세요.
@@ -110,7 +136,7 @@ SYSTEM_PROMPT = """
    - 명확한 날짜가 없다면 "상시 모집" 또는 "예산 소진 시까지" 등으로 기재하세요.
    - 공식 링크가 없거나, 신청 가능 여부가 충분히 확인되지 않은 항목은 과감히 제외하세요.
 
-5. 출력 형식:
+4. 출력 형식:
    - [1단계: 상세 안내] 답변의 본문은 기관별(중앙/광역 등)이 아닌, **'분야별(예: 💼 일자리/진로, 🏠 주거/금융, 📚 교육/문화 등)'**로 카테고리를 묶어서 제공하세요.
    - - [상세 안내] 답변의 본문은 반드시 **'지원 대상자별(예: 취준생, 무주택자 등)'** 또는 **'지원 금액/혜택 규모별(예: 목돈 마련, 월 고정비 절감 등)'**로 직관적으로 카테고리를 나누어 묶어서 제공하세요.
    - 각 정책은 아래 항목을 빠짐없이 명시하세요:
@@ -125,7 +151,7 @@ SYSTEM_PROMPT = """
    - 요약 표는 마감일이 빠른 순으로 정렬하고, 칼럼은 | 분야 | 정책명 | 주관 기관 | 핵심 혜택 | 신청 마감일 | 로 구성하세요.
    - Streamlit 표 깨짐 방지를 위해 표 전후에는 빈 줄을 넣으세요.
 
-6. 후속 질문 처리:
+5. 후속 질문 처리:
    - 사용자가 추가 질문을 하면, 기존 대화에서 이미 파악한 거주지/출생연도/추가 정보를 기본 조건으로 유지하세요.
    - 예: "월세 지원만 다시 정리해줘", "지금 바로 신청 가능한 것만 보여줘" 같은 요청은
      기존 사용자 조건을 유지한 채 해당 범위만 더 좁혀서 다시 탐색하세요.
@@ -138,13 +164,15 @@ def create_agent_executor():
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY 환경변수가 비어 있습니다.")
 
-    # 🌟 [핵심] 창현이의 API 환경에 맞춘 최신 강력한 모델 gpt-5.4 고정 사용!
     model_name = os.getenv("OPENAI_MODEL", "gpt-5.4").strip() 
     
-    llm = ChatOpenAI(model=model_name, temperature=0.1, streaming=True)
-    
-    # 🌟 [Phase 4] 자체 DB 검색 도구를 tools 리스트에 추가
-    tools = [search_internal_db, web_search, verify_official_page, get_current_time]
+    # 🌟 [수정] 도구 상자에 삼도류 무기 셋업
+    tools = [search_internal_db, naver_web_search, global_web_search, verify_official_page, get_current_time]
+
+    # 🌟 [수정] parallel_tool_calls=False 로 강제 설정하여 검색 엔진 차단 방어
+    llm = ChatOpenAI(model=model_name, temperature=0.1, streaming=True).bind_tools(
+        tools, parallel_tool_calls=False
+    )
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", SYSTEM_PROMPT),
@@ -158,10 +186,8 @@ def create_agent_executor():
         agent=agent,
         tools=tools,
         verbose=True,
-        # 🌟 [극대화 3] 에이전트의 끈기를 극대화 (AI가 정보가 부족하다고 느끼면 최대 15번 턴까지 집요하게 물고 늘어짐)
-        max_iterations=15,
-        # 🌟 일반적인 웹 서버 타임아웃(60초) 직전까지 꽉 채워서 시간을 주도록 50초 설정
-        max_execution_time=600,
+        max_iterations=10, # 🌟 루프 제한 15 -> 10 다이어트 (속도 최적화)
+        max_execution_time=400, # 🌟 600초(10분) 대기 -> 60초 컷 (무한 로딩 영구 차단)
         early_stopping_method="generate"
     )
 
@@ -181,11 +207,13 @@ async def get_ai_response_stream(agent_executor, messages: list):
             tool_name = event["name"]
             display_name = "데이터 분석"
             
-            # 🌟 [Phase 4] 프론트엔드 실시간 알림 텍스트 분기 처리
+            # 🌟 [수정] 삼도류 무기에 맞춘 프론트엔드 상태 메시지 업데이트
             if tool_name == "search_internal_db":
                 display_name = "공식 검증 데이터베이스 검색"
-            elif tool_name == "web_search":
-                display_name = "전국 정책 데이터 실시간 교차 검색"
+            elif tool_name == "naver_web_search":
+                display_name = "네이버 국내 맞춤형 데이터 검색"
+            elif tool_name == "global_web_search":
+                display_name = "글로벌 검색 엔진 교차 검증"
             elif tool_name == "verify_official_page":
                 display_name = "공식 홈페이지 교차 검증 및 팩트 체크"
             elif tool_name == "get_current_time":
