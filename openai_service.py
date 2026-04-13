@@ -44,7 +44,7 @@ def search_internal_db(query: str) -> str:
     except Exception as e:
         return f"내부 DB 검색 중 오류: {str(e)}"
 
-# 🟢 [신규] 1순위 무기: 네이버 검색 API
+# 🟢 1순위 무기: 네이버 검색 API
 @tool
 def naver_web_search(query: str) -> str:
     """한국의 지역 정책, 지자체 블로그, 최신 뉴스를 찾을 때 내부 DB 다음으로 사용하는 네이버 검색 도구입니다."""
@@ -74,7 +74,7 @@ def naver_web_search(query: str) -> str:
     except Exception as e:
         return f"네이버 검색 오류: {e}"
 
-# 🔵 [신규] 2순위 무기: 덕덕고 (실패 시 Tavily 자동 스위칭)
+# 🔵 2순위 무기: 덕덕고 (실패 시 Tavily 자동 스위칭)
 @tool
 def global_web_search(query: str) -> str:
     """네이버 검색으로 정보가 부족하거나 공식 관공서 문서가 필요할 때 보완용으로 사용하는 검색 도구입니다."""
@@ -107,7 +107,7 @@ def verify_official_page(url: str) -> str:
     except Exception as e:
         return f"페이지 접속 실패. 검색 엔진의 요약 정보를 활용하세요. 에러: {str(e)}"
 
-# 🌟 [수정] 도구 사용 순서와 병렬 검색 금지 규칙을 강력하게 주입
+# 🌟 [수정] 도구 사용 규칙 변경: 동시(병렬) 검색 허용으로 속도 극대화
 SYSTEM_PROMPT = """
 당신은 대한민국 국민 모두의 '정보 비대칭'을 완벽하게 해소해 주는 최고의 '전국민 맞춤형 복지/지원금 내비게이터(Universal Policy Navigator)'입니다.
 청년, 중장년, 노년층, 신혼부부, 육아 가구 등 어떤 사용자가 오더라도 그 사람의 조건에 딱 맞는 혜택을 찾아주어야 합니다.
@@ -120,13 +120,11 @@ SYSTEM_PROMPT = """
 
 1. 프로필 필수 확인 (예외 처리):
    - 정책을 검색하기 전, 사용자의 '나이', '거주지(시/도 및 기초지자체 단위)', '직업 및 가구 상태'가 모두 파악되었는지 확인하세요.
-   - - 정보가 부족하다면 검색을 보류하고 추가 정보를 먼저 친절하게 질문하세요.
+   - 정보가 부족하다면 검색을 보류하고 추가 정보를 먼저 친절하게 질문하세요.
 
-2. 🚦 도구 사용 순서 (반드시 지킬 것 - 무한 로딩 방지 핵심 규칙):
-   - 1순위: `search_internal_db` (가장 빠르고 정확한 자체 DB 우선 확인)
-   - 2순위: `naver_web_search` (내부 DB에 없을 경우 한국 특화 네이버 검색 사용)
-   - 3순위: `global_web_search` (네이버로 정보가 부족하거나 관공서 공식 문서가 필요할 때 보완용)
-   - 🚨 절대 여러 도구를 한 번에 병렬로 동시 호출하지 마세요. (디도스 공격으로 간주되어 차단됨)
+2. 🚀 고속 정보 탐색 (동시 검색 적극 권장):
+   - 사용자의 질문에 완벽히 답하기 위해 `search_internal_db`, `naver_web_search`, `global_web_search` 도구를 상황에 맞게 **동시에(병렬로) 여러 개 호출**하여 가장 빠르고 폭넓게 데이터를 수집하세요.
+   - 한 도구의 결과가 나올 때까지 기다렸다가 다음 도구를 쓰는 등 시간을 낭비하지 마세요. 필요한 도구들을 한 번에 쏘세요.
 
 3. 탐색 및 팩트 체크:
    - 존재하지 않는 정책을 지어내는 환각(Hallucination)은 절대 금지합니다.
@@ -138,7 +136,7 @@ SYSTEM_PROMPT = """
 
 4. 출력 형식:
    - [1단계: 상세 안내] 답변의 본문은 기관별(중앙/광역 등)이 아닌, **'분야별(예: 💼 일자리/진로, 🏠 주거/금융, 📚 교육/문화 등)'**로 카테고리를 묶어서 제공하세요.
-   - - [상세 안내] 답변의 본문은 반드시 **'지원 대상자별(예: 취준생, 무주택자 등)'** 또는 **'지원 금액/혜택 규모별(예: 목돈 마련, 월 고정비 절감 등)'**로 직관적으로 카테고리를 나누어 묶어서 제공하세요.
+   - [상세 안내] 답변의 본문은 반드시 **'지원 대상자별(예: 취준생, 무주택자 등)'** 또는 **'지원 금액/혜택 규모별(예: 목돈 마련, 월 고정비 절감 등)'**로 직관적으로 카테고리를 나누어 묶어서 제공하세요.
    - 각 정책은 아래 항목을 빠짐없이 명시하세요:
      * 🏢 주관 기관:
      * 🎯 지원 형태: (예: 현금성, 비용 절감 등)
@@ -166,13 +164,10 @@ def create_agent_executor():
 
     model_name = os.getenv("OPENAI_MODEL", "gpt-5.4").strip() 
     
-    # 🌟 [수정] 도구 상자에 삼도류 무기 셋업
     tools = [search_internal_db, naver_web_search, global_web_search, verify_official_page, get_current_time]
 
-    # 🌟 [수정] parallel_tool_calls=False 로 강제 설정하여 검색 엔진 차단 방어
-    llm = ChatOpenAI(model=model_name, temperature=0.1, streaming=True).bind_tools(
-        tools, parallel_tool_calls=False
-    )
+    # 🌟 [수정] parallel_tool_calls=False 삭제! AI가 툴을 동시에 쏠 수 있도록 자물쇠 해제!
+    llm = ChatOpenAI(model=model_name, temperature=0.1, streaming=True).bind_tools(tools)
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", SYSTEM_PROMPT),
@@ -186,8 +181,8 @@ def create_agent_executor():
         agent=agent,
         tools=tools,
         verbose=True,
-        max_iterations=10, # 🌟 루프 제한 15 -> 10 다이어트 (속도 최적화)
-        max_execution_time=400, # 🌟 600초(10분) 대기 -> 60초 컷 (무한 로딩 영구 차단)
+        max_iterations=10, 
+        max_execution_time=400, 
         early_stopping_method="force"
     )
 
@@ -207,7 +202,6 @@ async def get_ai_response_stream(agent_executor, messages: list):
             tool_name = event["name"]
             display_name = "데이터 분석"
             
-            # 🌟 [수정] 삼도류 무기에 맞춘 프론트엔드 상태 메시지 업데이트
             if tool_name == "search_internal_db":
                 display_name = "공식 검증 데이터베이스 검색"
             elif tool_name == "naver_web_search":
