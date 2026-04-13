@@ -188,7 +188,7 @@ def create_agent_executor():
         verbose=True,
         max_iterations=10, # 🌟 루프 제한 15 -> 10 다이어트 (속도 최적화)
         max_execution_time=400, # 🌟 600초(10분) 대기 -> 60초 컷 (무한 로딩 영구 차단)
-        early_stopping_method="generate"
+        early_stopping_method="force"
     )
 
 async def get_ai_response_stream(agent_executor, messages: list):
