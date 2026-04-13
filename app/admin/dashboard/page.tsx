@@ -32,7 +32,7 @@ export default function AdminDashboardPage() {
     setLoading(true);
     try {
       const data = await api.getAdminStats();
-      setStats(data as DashboardStats));
+      setStats(data as DashboardStats);
     } catch (error) {
       console.error("통계 불러오기 실패:", error);
       alert("데이터를 불러오지 못했습니다.");
