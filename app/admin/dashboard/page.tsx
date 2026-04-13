@@ -1,4 +1,5 @@
 "use client";
+// Vercel 강제 업데이트용
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
