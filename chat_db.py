@@ -147,7 +147,6 @@ def init_db():
 # 정책 데이터 파이프라인 및 RAG 검색 (Phase 2 & 4)
 # ==============================================================================
 
-# 🌟 [최적화 3] ON CONFLICT를 활용한 단일 쿼리 Upsert
 def upsert_policy(policy_data: dict):
     now = now_text()
     with db_session() as conn:
@@ -200,7 +199,6 @@ def search_policies(query_embedding: list, limit: int = 10):
                 """,
                 (query_embedding, limit)
             )
-            # 깔끔하게 리스트 컴프리헨션으로 반환
             return [dict(row) for row in cur.fetchall()]
 
 
@@ -540,10 +538,14 @@ def refund_daily_request_quota(user_id: str, usage_date: str = "") -> bool:
             return True
 
 
+# 🌟 [신규 추가] 관리자 대시보드를 위한 고급 통계 추출
 def get_admin_dashboard_stats() -> dict:
     today = today_text()
+    current_year = datetime.now(KST).year
+
     with db_session() as conn:
         with conn.cursor(cursor_factory=DictCursor) as cur:
+            # 1. 기본 수치 (유저 수, 대화방 수, 차단 수)
             cur.execute("SELECT COUNT(DISTINCT user_id) as total_users FROM chat_sessions")
             total_users = cur.fetchone()["total_users"] or 0
             
@@ -553,9 +555,80 @@ def get_admin_dashboard_stats() -> dict:
             cur.execute("SELECT COUNT(*) as blocked_today FROM daily_request_usage WHERE usage_date = %s AND request_count >= 4", (today,))
             blocked_today = cur.fetchone()["blocked_today"] or 0
 
+            # 2. 📍 지역별 랭킹 (Top 5)
+            cur.execute("""
+                SELECT selected_city, selected_district, COUNT(*) as count
+                FROM chat_thread_inputs
+                WHERE selected_city != '선택하세요' AND selected_city != ''
+                GROUP BY selected_city, selected_district
+                ORDER BY count DESC
+                LIMIT 5
+            """)
+            region_ranking = [{"name": f"{r['selected_city']} {r['selected_district']}".strip(), "value": r["count"]} for r in cur.fetchall()]
+
+            # 3. 🎂 연령대 분포 (10대 ~ 60대 이상)
+            cur.execute("""
+                SELECT birth_year
+                FROM chat_thread_inputs
+                WHERE birth_year ~ '^[0-9]{4}$'
+            """)
+            age_counts = {}
+            for row in cur.fetchall():
+                by = int(row['birth_year'])
+                age = current_year - by
+                if age < 20: group = "10대 이하"
+                elif age < 30: group = "20대"
+                elif age < 40: group = "30대"
+                elif age < 50: group = "40대"
+                elif age < 60: group = "50대"
+                else: group = "60대 이상"
+                age_counts[group] = age_counts.get(group, 0) + 1
+            age_distribution = [{"name": k, "value": v} for k, v in sorted(age_counts.items(), key=lambda x: x[0])]
+
+            # 4. ⚔️ 대화 깊이 (평균 티키타카 횟수)
+            cur.execute("""
+                SELECT AVG(msg_count) as avg_depth
+                FROM (
+                    SELECT thread_id, COUNT(*) as msg_count
+                    FROM chat_messages
+                    GROUP BY thread_id
+                ) sub
+            """)
+            avg_depth_row = cur.fetchone()
+            avg_depth = round(float(avg_depth_row["avg_depth"]), 1) if avg_depth_row and avg_depth_row["avg_depth"] else 0
+
+            # 5. 🕒 시간대별 트래픽 집중도
+            cur.execute("""
+                SELECT SUBSTR(created_at, 12, 2) as hour, COUNT(*) as count
+                FROM chat_messages
+                GROUP BY hour
+                ORDER BY hour ASC
+            """)
+            time_traffic = [{"hour": f"{r['hour']}시", "count": r["count"]} for r in cur.fetchall()]
+
+            # 6. 🔥 인기 키워드 분석 (추가 정보에서 핵심 단어 추출)
+            cur.execute("SELECT extra_info FROM chat_thread_inputs WHERE extra_info != ''")
+            keyword_freq = {}
+            stop_words = {"입니다", "합니다", "있음", "없음", "어떻게", "찾아주세요", "알려주세요"}
+            for row in cur.fetchall():
+                text = row['extra_info']
+                words = text.split()
+                for w in words:
+                    # 특수문자 제거 후 순수 텍스트만 추출
+                    w_clean = "".join(filter(str.isalnum, w))
+                    if len(w_clean) > 1 and w_clean not in stop_words:
+                        keyword_freq[w_clean] = keyword_freq.get(w_clean, 0) + 1
+            
+            top_keywords = [{"keyword": k, "count": v} for k, v in sorted(keyword_freq.items(), key=lambda item: item[1], reverse=True)[:10]]
+
     return {
+        "today_date": today,
         "total_users": total_users,
         "total_threads": total_threads,
         "blocked_today": blocked_today,
-        "today_date": today
+        "avg_conversation_depth": avg_depth,
+        "region_ranking": region_ranking,
+        "age_distribution": age_distribution,
+        "time_traffic": time_traffic,
+        "top_keywords": top_keywords
     }
