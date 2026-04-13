@@ -4,9 +4,9 @@ python-dotenv
 psycopg2-binary
 pgvector==0.2.5
 openai
-langchain>=0.1.20
-langchain-openai>=0.1.7
-langchain-community>=0.0.38
+langchain==0.1.20
+langchain-openai==0.1.7
+langchain-community==0.0.38
 tavily-python
 langgraph
 truststore
