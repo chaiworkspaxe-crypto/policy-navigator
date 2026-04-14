@@ -3,6 +3,7 @@ import json
 import asyncio
 import traceback
 import logging
+from datetime import datetime
 from celery import Celery
 from dotenv import load_dotenv
 from openai import OpenAI 
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 REDIS_URL = os.getenv("REDIS_URL")
 
-# Celery 전용 브로커 URL (Celery는 CERT_NONE 대문자를 좋아함)
+# Celery 전용 브로커 URL
 CELERY_BROKER_URL = REDIS_URL
 clean_base_url = REDIS_URL.split("?")[0] if REDIS_URL else ""
 if clean_base_url.startswith("rediss://") and "ssl_cert_reqs" not in (REDIS_URL or ""):
@@ -30,14 +31,14 @@ if clean_base_url.startswith("rediss://") and "ssl_cert_reqs" not in (REDIS_URL 
 celery_app = Celery("policy_worker", broker=CELERY_BROKER_URL, backend=CELERY_BROKER_URL)
 client = OpenAI()
 
-# 🌟 [추가] Supabase DB 연결 초기화
+# Supabase DB 연결 초기화
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 supabase: Client = None
 if SUPABASE_URL and SUPABASE_KEY:
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# 🌟 [완벽 해결] aioredis는 꼬리표 다 떼고 "none" 소문자만 전달!
+# aioredis 안전한 연결
 def get_async_redis_client():
     clean_url = REDIS_URL.split("?")[0] if REDIS_URL else ""
     if clean_url.startswith("rediss://"):
@@ -48,15 +49,10 @@ def get_async_redis_client():
 # [라이브 서비스] 유저가 검색을 누르면 실시간으로 돌아가는 기존 AI 에이전트
 # ==============================================================================
 async def run_agent_and_publish(thread_id: str, user_id: str, agent_messages: list, message_type: str):
-    """AI 실행 및 Redis 채널로 실시간 송출"""
-    
-    # 🌟 [해결 1] 프론트엔드가 웹소켓 문을 열 수 있도록 1.5초 기다려주는 매너 타임
     await asyncio.sleep(1.5)
     
     full_content = ""
     channel_name = f"chat_{thread_id}"
-    
-    # 🌟 [수정] 꼬리표 없는 안전한 Redis 클라이언트로 연결
     async_redis = get_async_redis_client()
     
     try:
@@ -64,12 +60,10 @@ async def run_agent_and_publish(thread_id: str, user_id: str, agent_messages: li
         
         await async_redis.publish(
             channel_name, 
-            json.dumps({'type': 'status', 'message': '🔍 전국 정책 DB와 지자체 혜택을 매칭 중입니다...'}, ensure_ascii=False)
+            json.dumps({'type': 'status', 'message': '🔍 조건에 맞는 맞춤형 혜택을 DB에서 선별 중입니다...'}, ensure_ascii=False)
         )
         
-        # 🌟 [해결 2] AI 엔진 생성 코드를 try 블록 안으로 이동!
         agent_executor = create_agent_executor()
-        
         gen = get_ai_response_stream(agent_executor, agent_messages)
         is_first_chunk = True
         
@@ -83,7 +77,7 @@ async def run_agent_and_publish(thread_id: str, user_id: str, agent_messages: li
                     if data.get("type") == "content" and is_first_chunk:
                         await async_redis.publish(
                             channel_name, 
-                            json.dumps({'type': 'status', 'message': '✍️ 창현 님에게 딱 맞는 혜택을 정리하고 있어요!'}, ensure_ascii=False)
+                            json.dumps({'type': 'status', 'message': '✍️ 찾은 혜택들을 읽기 쉽게 정리하고 있어요!'}, ensure_ascii=False)
                         )
                         is_first_chunk = False
                         
@@ -105,7 +99,6 @@ async def run_agent_and_publish(thread_id: str, user_id: str, agent_messages: li
         logger.error(f"[{thread_id}] ❌ AI 실행 에러: {str(e)}")
         traceback.print_exc()
         
-        # 🌟 이제 에러가 나면 무한 로딩 대신, 정확한 에러 원인을 유저 화면에 띄워줌!
         error_msg = str(e)[:100]
         await async_redis.publish(
             channel_name, 
@@ -115,13 +108,14 @@ async def run_agent_and_publish(thread_id: str, user_id: str, agent_messages: li
         await async_redis.close()
 
 # ==============================================================================
-# 🌟 [핵심 변경] AI에게 넘기기 전에 Supabase 데이터와 사용자 프로필을 주입하는 작업
+# 🌟 [핵심 변경] 스마트 필터링 (True RAG)을 통한 맞춤형 DB 스캔 로직 추가
 # ==============================================================================
 @celery_app.task(name="worker.process_chat_task")
 def process_chat_task(thread_id: str, user_id: str, agent_messages: list, message_type: str):
-    logger.info(f"[{thread_id}] 컨텍스트 주입 시작...")
+    logger.info(f"[{thread_id}] 컨텍스트 주입 및 스마트 필터링 시작...")
     
-    # 1. 사용자 프로필(지역, 나이, 관심사) 불러오기
+    # 1. 사용자 프로필 불러오기 및 기본값 세팅
+    city, district, dong, birth_year, extra_info = "", "", "", "", ""
     try:
         inputs = load_thread_inputs(user_id, thread_id)
         city = inputs.get('selected_city', '')
@@ -135,16 +129,44 @@ def process_chat_task(thread_id: str, user_id: str, agent_messages: list, messag
         logger.warning(f"사용자 프로필 로드 실패: {e}")
         profile_text = "프로필 정보 없음"
 
-    # 2. Supabase DB에서 최신 정부 정책 데이터 긁어오기 (가스라이팅용)
+    # 2. Supabase DB에서 '나이'와 '키워드'에 맞는 데이터만 쏙 뽑아오기
     db_context = "현재 DB에서 데이터를 불러올 수 없습니다."
     if supabase:
         try:
-            # 너무 많으면 토큰 낭비니까 15개 정도만 참고용으로 가져옴
-            response = supabase.table("policies").select("title, agency, description").limit(15).execute()
+            query = supabase.table("policies").select("title, agency, description")
+            filters = []
+
+            # (1) 나이 기반 '청년' 조건 자동 추가
+            if birth_year and birth_year.isdigit():
+                age = datetime.now().year - int(birth_year)
+                if 19 <= age <= 34:
+                    filters.append("title.ilike.%청년%")
+                    filters.append("description.ilike.%청년%")
+
+            # (2) 추가정보 기반 핵심 키워드 자동 추출
+            if extra_info:
+                # 사용자가 입력할 법한 대표 키워드 리스트
+                target_keywords = ["취업", "창업", "주거", "월세", "전세", "IT", "소프트웨어", "개발", "금융", "의료", "건강"]
+                for kw in target_keywords:
+                    if kw in extra_info:
+                        filters.append(f"title.ilike.%{kw}%")
+                        filters.append(f"description.ilike.%{kw}%")
+
+            # (3) 필터 조건이 모였다면 DB에 OR 조건으로 검색 명령 내리기
+            if filters:
+                or_condition = ",".join(filters)
+                query = query.or_(or_condition)
+                
+            # 조건에 맞는 것만 최대 15~20개 추출
+            response = query.limit(20).execute()
+
             if response.data:
                 db_context = "\n".join([f"[{p.get('agency', '기관')}] {p.get('title', '제목')}: {p.get('description', '')[:100]}..." for p in response.data])
+            else:
+                db_context = "입력하신 조건과 직접적으로 일치하는 정부 공식 데이터가 부족합니다. AI가 가진 지자체 및 민간 지식을 활용해 대체 정책을 강력하게 추천해주세요."
+
         except Exception as e:
-            logger.error(f"Supabase DB 읽기 에러: {e}")
+            logger.error(f"Supabase DB 스마트 검색 에러: {e}")
 
     # 3. 🧠 강력한 시스템 프롬프트(가스라이팅) 작성
     system_prompt_content = (
@@ -153,32 +175,25 @@ def process_chat_task(thread_id: str, user_id: str, agent_messages: list, messag
         
         f"### 👤 사용자 프로필 ###\n{profile_text}\n\n"
         
-        f"### 🏛️ 공식 정부 DB 정책 리스트 (참고용) ###\n{db_context}\n\n"
+        f"### 🏛️ 스마트 필터링된 정부 공식 DB 리스트 (우선 참고) ###\n{db_context}\n\n"
         
         "### 🎯 답변 작성 지시사항 ###\n"
-        "1. [국가 혜택]: 위 '공식 정부 DB 정책 리스트' 중에서 사용자에게 적합한 혜택을 찾아 우선 추천하세요.\n"
-        "2. [지자체 혜택]: (매우 중요) 사용자의 거주지(시/군/구)를 파악하고, 당신이 알고 있는 해당 지역의 특화 혜택(청년수당, 월세 지원 등)을 발굴해서 알려주세요.\n"
+        "1. [국가 혜택]: 위 '스마트 필터링된 DB 리스트' 중에서 사용자에게 가장 적합한 혜택을 찾아 우선 추천하세요.\n"
+        "2. [지자체 혜택]: (매우 중요) 사용자의 거주지(시/군/구)를 파악하고, 당신이 알고 있는 해당 지역의 특화 혜택(청년수당, 월세 지원, 취업 장려금 등)을 발굴해서 알려주세요.\n"
         "3. [민간/재단 혜택]: 정부 혜택 외에도 사용자의 '추가정보(관심사/상황)'와 관련된 공공기관이나 민간 재단의 지원금, 교육 프로그램 등을 꼭 추가하세요.\n"
         "4. 마크다운(글머리 기호, 굵은 글씨 등)을 활용하여 가독성 좋고 친절한 컨설턴트 말투로 답변하세요. "
         "존재하지 않는 혜택을 지어내지 말고(No Hallucination), 실제 존재하는 혜택 위주로 안내하세요."
     )
 
-    # 기존 메시지 리스트의 맨 앞에 시스템 프롬프트(지시사항)를 끼워 넣음!
     enhanced_messages = [{"role": "system", "content": system_prompt_content}] + agent_messages
-
-    # 완성된 메시지를 들고 기존 AI 스트리밍 함수로 이동
     asyncio.run(run_agent_and_publish(thread_id, user_id, enhanced_messages, message_type))
 
-
 # ==============================================================================
-# 🚀 [Phase 2 & 3] '무결점 RAG' 구축을 위한 궁극의 데이터 수집 봇 (ETL Pipeline)
+# 🚀 [Phase 2 & 3] ETL Pipeline
 # ==============================================================================
 @celery_app.task(name="worker.collect_policies_task")
 def collect_policies_task():
-    """
-    매일 새벽(또는 지정된 시간)에 실행되어 공공데이터 API 및 크롤링을 수행하는 로봇.
-    """
-    logger.info("🚀 [ETL Pipeline] 정책 데이터 수집 봇 스웜(Bot Swarm) 가동 시작...")
+    logger.info("🚀 [ETL Pipeline] 정책 데이터 수집 봇 스웜 가동 시작...")
     try:
         sample_policy = {
             "policy_id": "GOV_YOUTH_RENT_001",
@@ -193,18 +208,11 @@ def collect_policies_task():
             "url": "https://www.bokjiro.go.kr",
             "deadline": "2025-02-24"
         }
-
         text_to_embed = f"{sample_policy['title']} {sample_policy['summary']} {sample_policy['target_audience']}"
-        
-        response = client.embeddings.create(
-            input=text_to_embed, 
-            model="text-embedding-3-small"
-        )
+        response = client.embeddings.create(input=text_to_embed, model="text-embedding-3-small")
         sample_policy['embedding'] = response.data[0].embedding
-
         upsert_policy(sample_policy)
-        
         logger.info(f"✅ [ETL Pipeline] '{sample_policy['title']}' 수집 및 벡터화 완료!")
     except Exception as e:
-        logger.error(f"❌ [ETL Pipeline] 데이터 수집 중 치명적 오류 발생: {str(e)}")
+        logger.error(f"❌ [ETL Pipeline] 오류: {str(e)}")
         traceback.print_exc()
