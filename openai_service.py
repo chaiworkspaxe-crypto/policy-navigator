@@ -169,7 +169,7 @@ def create_agent_executor():
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY 환경변수가 비어 있습니다.")
 
-    model_name = os.getenv("OPENAI_MODEL", "gpt-4o").strip() 
+    model_name = os.getenv("OPENAI_MODEL", "gpt-5.4").strip() 
     
     tools = [search_internal_db, naver_web_search, global_web_search, verify_official_page, get_current_time]
 
