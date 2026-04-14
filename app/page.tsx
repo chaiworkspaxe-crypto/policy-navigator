@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from "uuid";
 import { api, ChatMessage, extractApiErrorMessage, ThreadInputs, ThreadItem } from "@/lib/api";
 import { CITY_TO_DISTRICTS, DONG_MAP } from "@/lib/regionData";
 import MarkdownMessage from "@/components/MarkdownMessage";
-import { MessageSquare, Plus, Send, Loader2, MapPin, Search, AlertCircle, Menu, X, Trash2, Sun, Moon, Coffee, ChevronUp, ChevronDown } from "lucide-react";
+import { MessageSquare, Plus, Send, Loader2, MapPin, Search, AlertCircle, Menu, X, Trash2, Sun, Moon, Coffee, ChevronUp, ChevronDown, Instagram } from "lucide-react";
 
 const DEFAULT_CITY = "선택하세요";
 const DEFAULT_DONG = "선택 안 함";
@@ -165,7 +165,7 @@ export default function Home() {
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
       let accumulatedContent = "";
-      let isNormalClose = false; // 🌟 핵심: 정상 종료 여부 체크 스위치
+      let isNormalClose = false;
 
       ws.onmessage = (event) => {
         try {
@@ -181,12 +181,12 @@ export default function Home() {
           } else if (data.type === "status") {
             setAiStatus(data.message);
           } else if (data.type === "done") {
-            isNormalClose = true; // 🌟 정상 종료 마킹
+            isNormalClose = true; 
             ws.close();
             setLoading(false);
             void api.listThreads(userId).then(setThreads);
           } else if (data.type === "error") {
-            isNormalClose = true; // 🌟 에러로 인한 종료 마킹
+            isNormalClose = true; 
             setErrorMessage(data.message);
             ws.close();
             setLoading(false);
@@ -202,14 +202,12 @@ export default function Home() {
       };
 
       ws.onclose = () => {
-        // 🌟 비정상적으로 끊겼을 때만 에러를 띄우고 빈 말풍선을 지움
         if (!isNormalClose) {
           setErrorMessage("서버와의 연결이 끊어졌습니다. 도메인 연결 및 인증서 발급 후 정상 작동합니다.");
           setLoading(false);
           
           setMessages((prev) => {
             const next = [...prev];
-            // 마지막 메시지가 assistant이고 내용이 비어있다면 삭제
             if (next.length > 0 && next[next.length - 1].role === "assistant" && next[next.length - 1].content === "") {
               return next.slice(0, -1);
             }
@@ -264,15 +262,23 @@ export default function Home() {
       </aside>
 
       <main className="relative flex h-full flex-1 flex-col w-full">
-        <div className="absolute top-4 right-4 z-50 hidden md:block">
+        {/* 🌟 데스크톱 우측 상단 (인스타그램 추가) */}
+        <div className="absolute top-4 right-4 z-50 hidden md:flex items-center gap-3">
+          <a href="https://www.instagram.com/policyai.kr/" target="_blank" rel="noopener noreferrer" className="p-2.5 rounded-full bg-white dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] text-gray-600 dark:text-gray-300 shadow-sm hover:scale-105 transition-transform hover:text-pink-500 dark:hover:text-pink-400">
+            <Instagram size={20} />
+          </a>
           <button onClick={toggleTheme} className="p-2.5 rounded-full bg-white dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] text-gray-600 dark:text-gray-300 shadow-sm hover:scale-105 transition-transform">
             {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
           </button>
         </div>
 
+        {/* 🌟 모바일 우측 상단 (인스타그램 추가) */}
         <div className="flex items-center justify-between bg-white dark:bg-[#1a1a1a] p-4 border-b border-gray-200 dark:border-[#333] md:hidden shrink-0">
           <div className="font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>맞춤 혜택 찾기</div>
-          <div className="flex gap-3">
+          <div className="flex items-center gap-3">
+            <a href="https://www.instagram.com/policyai.kr/" target="_blank" rel="noopener noreferrer" className="text-gray-500 dark:text-gray-300 hover:text-pink-500 dark:hover:text-pink-400 transition-colors">
+              <Instagram size={24} />
+            </a>
             <button onClick={toggleTheme} className="text-gray-500 dark:text-gray-300"><Sun size={24} className="block dark:hidden"/><Moon size={24} className="hidden dark:block"/></button>
             <button onClick={() => setIsSidebarOpen(true)} className="text-gray-500 dark:text-gray-300"><Menu size={24} /></button>
           </div>
