@@ -5,11 +5,21 @@ import { v4 as uuidv4 } from "uuid";
 import { api, ChatMessage, extractApiErrorMessage, ThreadInputs, ThreadItem } from "@/lib/api";
 import { CITY_TO_DISTRICTS, DONG_MAP } from "@/lib/regionData";
 import MarkdownMessage from "@/components/MarkdownMessage";
-import { MessageSquare, Plus, Send, Loader2, MapPin, Search, AlertCircle, Menu, X, Trash2, Sun, Moon, Coffee, ChevronUp, ChevronDown, Instagram } from "lucide-react";
+// 🚨 여기서 Instagram을 지웠어! (버전 충돌 방지)
+import { MessageSquare, Plus, Send, Loader2, MapPin, Search, AlertCircle, Menu, X, Trash2, Sun, Moon, Coffee, ChevronUp, ChevronDown } from "lucide-react";
 
 const DEFAULT_CITY = "선택하세요";
 const DEFAULT_DONG = "선택 안 함";
 const EMPTY_INPUTS: ThreadInputs = { selected_city: DEFAULT_CITY, selected_district: DEFAULT_CITY, selected_dong: DEFAULT_DONG, birth_year: "", extra_info: "" };
+
+// 🌟 [추가] lucide-react 버전에 상관없이 무조건 작동하도록 직접 만든 인스타그램 아이콘!
+const InstagramIcon = ({ size = 24 }: { size?: number }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect width="20" height="20" x="2" y="2" rx="5" ry="5" />
+    <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z" />
+    <line x1="17.5" x2="17.51" y1="6.5" y2="6.5" />
+  </svg>
+);
 
 export default function Home() {
   const [userId, setUserId] = useState("");
@@ -262,22 +272,22 @@ export default function Home() {
       </aside>
 
       <main className="relative flex h-full flex-1 flex-col w-full">
-        {/* 🌟 데스크톱 우측 상단 (인스타그램 추가) */}
+        {/* 🌟 데스크톱 우측 상단 (직접 만든 인스타그램 아이콘 사용) */}
         <div className="absolute top-4 right-4 z-50 hidden md:flex items-center gap-3">
           <a href="https://www.instagram.com/policyai.kr/" target="_blank" rel="noopener noreferrer" className="p-2.5 rounded-full bg-white dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] text-gray-600 dark:text-gray-300 shadow-sm hover:scale-105 transition-transform hover:text-pink-500 dark:hover:text-pink-400">
-            <Instagram size={20} />
+            <InstagramIcon size={20} />
           </a>
           <button onClick={toggleTheme} className="p-2.5 rounded-full bg-white dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] text-gray-600 dark:text-gray-300 shadow-sm hover:scale-105 transition-transform">
             {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
           </button>
         </div>
 
-        {/* 🌟 모바일 우측 상단 (인스타그램 추가) */}
+        {/* 🌟 모바일 우측 상단 (직접 만든 인스타그램 아이콘 사용) */}
         <div className="flex items-center justify-between bg-white dark:bg-[#1a1a1a] p-4 border-b border-gray-200 dark:border-[#333] md:hidden shrink-0">
           <div className="font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>맞춤 혜택 찾기</div>
           <div className="flex items-center gap-3">
             <a href="https://www.instagram.com/policyai.kr/" target="_blank" rel="noopener noreferrer" className="text-gray-500 dark:text-gray-300 hover:text-pink-500 dark:hover:text-pink-400 transition-colors">
-              <Instagram size={24} />
+              <InstagramIcon size={24} />
             </a>
             <button onClick={toggleTheme} className="text-gray-500 dark:text-gray-300"><Sun size={24} className="block dark:hidden"/><Moon size={24} className="hidden dark:block"/></button>
             <button onClick={() => setIsSidebarOpen(true)} className="text-gray-500 dark:text-gray-300"><Menu size={24} /></button>
