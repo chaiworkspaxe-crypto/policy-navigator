@@ -63,7 +63,7 @@ async def run_agent_and_publish(thread_id: str, user_id: str, agent_messages: li
         
         await async_redis.publish(
             channel_name, 
-            json.dumps({'type': 'status', 'message': '🔍 조건에 맞는 맞춤형 혜택을 DB에서 선별 중입니다...'}, ensure_ascii=False)
+            json.dumps({'type': 'status', 'message': '🔍 받을 수 있는 모든 혜택을 싹 다 털어오느라 AI가 땀 뻘뻘 흘리는 중입니다! 💦 시간이 쪼~금 걸려도 양해 부탁드려요!'}, ensure_ascii=False)
         )
         
         agent_executor = create_agent_executor()
