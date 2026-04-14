@@ -32,17 +32,22 @@ def search_internal_db(query: str) -> str:
     """우리가 직접 수집한 100% 검증된 대한민국 정책 DB에서 정보를 찾습니다. 인터넷 검색보다 이 도구를 가장 먼저 사용하세요."""
     try:
         client = OpenAI()
+        # 1. 쿼리를 벡터로 변환
         resp = client.embeddings.create(input=query, model="text-embedding-3-small")
         query_vector = resp.data[0].embedding
         
+        # 2. 벡터 유사도 검색 수행 (chat_db.py의 search_policies 호출)
+        # 🌟 중요: search_policies 함수 내부에서 'policy_id' 대신 'id'를 사용하도록 매핑을 맞춥니다.
         results = search_policies(query_vector, limit=5)
         
         if not results:
             return "내부 DB에 해당 정보가 없습니다. naver_web_search를 이용해 최신 정보를 찾으세요."
             
+        # 3. 에이전트가 이해하기 쉬운 JSON 형태로 반환
         return json.dumps(results, ensure_ascii=False)
     except Exception as e:
-        return f"내부 DB 검색 중 오류: {str(e)}"
+        # 에러 발생 시 로그를 남기고 에이전트에게 상황 전달
+        return f"내부 DB 검색 중 오류 (컬럼명 불일치 가능성): {str(e)}"
 
 # 🟢 1순위 무기: 네이버 검색 API
 @tool
@@ -107,7 +112,7 @@ def verify_official_page(url: str) -> str:
     except Exception as e:
         return f"페이지 접속 실패. 검색 엔진의 요약 정보를 활용하세요. 에러: {str(e)}"
 
-# 🌟 [수정] 도구 사용 규칙 변경: 동시(병렬) 검색 허용으로 속도 극대화
+# 🌟 시스템 프롬프트 설정
 SYSTEM_PROMPT = """
 당신은 대한민국 국민 모두의 '정보 비대칭'을 완벽하게 해소해 주는 최고의 '전국민 맞춤형 복지/지원금 내비게이터(Universal Policy Navigator)'입니다.
 청년, 중장년, 노년층, 신혼부부, 육아 가구 등 어떤 사용자가 오더라도 그 사람의 조건에 딱 맞는 혜택을 찾아주어야 합니다.
@@ -122,7 +127,6 @@ SYSTEM_PROMPT = """
    - 정책을 검색하기 전, 사용자의 '나이', '거주지(시/도 및 기초지자체 단위)', '직업 및 가구 상태'가 모두 파악되었는지 확인하세요.
    - 정보가 부족하다면 검색을 보류하고 추가 정보를 먼저 친절하게 질문하세요.
 
-# SYSTEM_PROMPT 내의 2번 규칙을 아래처럼 변경!
 2. 🚦 도구 사용 순서 (반드시 지킬 것 - 무한 로딩 방지 핵심 규칙):
    - 1순위: `search_internal_db` (가장 빠르고 정확한 자체 DB 우선 확인)
    - 2순위: `naver_web_search` (내부 DB에 없을 경우 한국 특화 네이버 검색 사용)
@@ -165,11 +169,10 @@ def create_agent_executor():
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY 환경변수가 비어 있습니다.")
 
-    model_name = os.getenv("OPENAI_MODEL", "gpt-5.4").strip() 
+    model_name = os.getenv("OPENAI_MODEL", "gpt-4o").strip() 
     
     tools = [search_internal_db, naver_web_search, global_web_search, verify_official_page, get_current_time]
 
-    # 🌟 [수정] parallel_tool_calls=False 삭제! AI가 툴을 동시에 쏠 수 있도록 자물쇠 해제!
     llm = ChatOpenAI(model=model_name, temperature=0.1, streaming=True).bind_tools(tools)
 
     prompt = ChatPromptTemplate.from_messages([
