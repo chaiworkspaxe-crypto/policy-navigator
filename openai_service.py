@@ -204,15 +204,33 @@ async def get_ai_response_stream(agent_executor, messages: list):
     full_answer = ""
     async for event in agent_executor.astream_events({"messages": messages}, version="v1"):
         kind = event["event"]
+
         if kind == "on_chat_model_stream":
             chunk = event["data"]["chunk"]
             if chunk.content:
                 full_answer += chunk.content
                 yield json.dumps({'type': 'content', 'delta': chunk.content}, ensure_ascii=False)
+
         elif kind == "on_tool_start":
             tool_name = event["name"]
-            # 실시간 상태 메시지 제공
-            yield json.dumps({'type': 'status', 'message': f"🔍 {tool_name} 분석을 통해 숨은 혜택을 찾는 중..."}, ensure_ascii=False)
+            
+            # 🌟 [수정된 부분] AI 도구별 유머러스한 한국어 멘트 적용!
+            if tool_name == "search_internal_db":
+                friendly_msg = "정부 정책 창고 셔터 올리는 중! 먼지가 쫌 날려도(쿨럭) 싹 다 찾아올게요 😷💨"
+            elif tool_name == "naver_web_search":
+                friendly_msg = "동네방네 뿌려진 지자체 혜택 전단지 싹 다 긁어모으는 중! 🏃‍♂️💨🔥"
+            elif tool_name == "global_web_search" or "tavily" in tool_name or "duckduckgo" in tool_name:
+                friendly_msg = "검색 엔진 풀가동! AI가 손가락 안 보일 정도로 폭풍 타자 치고 있어요 ⌨️💦"
+            elif tool_name == "verify_official_page":
+                friendly_msg = "가짜 정보는 선 넘었죠! 공식 홈페이지 들어가서 돋보기로 팩트체크 중 🔎👀"
+            elif tool_name == "get_current_time":
+                friendly_msg = "이미 끝난 공고 주면 혼나니까! 실시간 마감일 깐깐하게 비교 중입니다 🗓️⏳"
+            else:
+                friendly_msg = "하나라도 더 찾아내려고 AI가 풀야근 중입니다! 쪼~금만 더 기다려주세요 😭🌙"
+
+            # 프론트엔드로 친절한 메시지 전송
+            yield json.dumps({'type': 'status', 'message': f"🔍 {friendly_msg}"}, ensure_ascii=False)
+
     yield json.dumps({'type': 'done', 'full_content': full_answer}, ensure_ascii=False)
 
 def get_ai_response(agent_executor, messages: list) -> str:
