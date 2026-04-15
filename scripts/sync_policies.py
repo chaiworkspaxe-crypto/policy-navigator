@@ -1,13 +1,11 @@
 import os
 import time
-import requests
-import urllib3
+import urllib.request
+import urllib.parse
+import ssl
 import xml.etree.ElementTree as ET
 from supabase import create_client, Client
 from dotenv import load_dotenv
-
-# 🌟 파이썬아, 보안 인증서 경고창 띄우지 마!
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # 1. 환경 변수 로드
 load_dotenv()
@@ -59,7 +57,7 @@ def sync_to_supabase(policies):
         return False
 
 def fetch_all_data():
-    print("🚀 [실전 모드] 온라인청년센터 데이터 수집 시작 (강의실/사내 프록시 우회 모드)...")
+    print("🚀 [실전 모드] 청년정책 데이터 수집 시작 (강력한 urllib + SSL 무회 모드)...")
     
     if not YOUTH_API_KEY:
         print("❌ 에러: 환경변수에서 YOUTH_POLICY_API_KEY를 찾을 수 없습니다.")
@@ -69,39 +67,41 @@ def fetch_all_data():
     display = 100  
     total_saved = 0
 
-    # 🌟 [비밀 무기 1] 완벽한 일반 사용자(크롬 브라우저)로 위장하는 신분증
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Connection": "keep-alive"
-    }
-
-    # 🌟 [비밀 무기 2] 대학교/회사 내부망의 8080 포트 납치(프록시)를 무시하는 세션 생성!
-    session = requests.Session()
-    session.trust_env = False  # 환경변수에 있는 HTTP_PROXY, HTTPS_PROXY를 강제로 무시함
+    # 🌟 [비밀 무기 1] 강력한 SSL 검사 무시 컨텍스트 생성 (정부 사이트 필수)
+    ssl_context = ssl.create_default_context()
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl.CERT_NONE
 
     while True:
         print(f"🔄 {page}페이지 (총 {display}개씩) 수집 요청 중...")
         
+        # URL 파라미터 조립
         params = {
             "openApiVcyKey": YOUTH_API_KEY,
             "display": display,
             "pageIndex": page
         }
+        query_string = urllib.parse.urlencode(params)
+        full_url = f"{YOUTH_CENTER_URL}?{query_string}"
+
+        # 🌟 [비밀 무기 2] requests를 버리고 순정 urllib 사용 + 크롬 위장
+        req = urllib.request.Request(
+            full_url, 
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            }
+        )
 
         try:
-            # 🌟 session 객체로 요청을 보내서 방화벽 우회!
-            response = session.get(
-                YOUTH_CENTER_URL, 
-                params=params, 
-                headers=headers, 
-                timeout=30, 
-                verify=False
-            )
-            response.raise_for_status()
+            # 타임아웃 30초, SSL 검사 무시 옵션 장착
+            response = urllib.request.urlopen(req, context=ssl_context, timeout=30)
             
-            root = ET.fromstring(response.content)
+            if response.getcode() != 200:
+                print(f"❌ 통신 실패 (상태 코드: {response.getcode()})")
+                break
+                
+            xml_data = response.read().decode('utf-8')
+            root = ET.fromstring(xml_data)
             
             error_node = root.find("error")
             if error_node is not None:
@@ -152,8 +152,11 @@ def fetch_all_data():
             time.sleep(1.5)
             page += 1
 
+        except urllib.error.URLError as e:
+            print(f"❌ 통신 오류 발생 (URL 또는 방화벽 문제): {e}")
+            break
         except Exception as e:
-            print(f"❌ 통신 또는 XML 파싱 중 오류 발생: {e}")
+            print(f"❌ 알 수 없는 오류: {e}")
             break
 
     print(f"\n🎉 [최종 결과] 총 {total_saved}개의 청년정책 공식 데이터가 DB에 완벽 동기화되었습니다!")
