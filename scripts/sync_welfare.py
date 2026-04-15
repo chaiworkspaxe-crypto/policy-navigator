@@ -9,7 +9,7 @@ load_dotenv()
 
 # 2. 인증키 및 DB 설정
 # (보조금24/공공데이터포털 API 키가 있다면 .env에 PUBLIC_DATA_API_KEY 로 저장해두세요)
-PUBLIC_API_KEY = os.getenv("PUBLIC_DATA_API_KEY")
+PUBLIC_API_KEY = os.getenv("PUBLIC_DATA_PORTAL_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
