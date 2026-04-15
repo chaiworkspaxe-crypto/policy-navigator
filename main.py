@@ -299,8 +299,16 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                     ans_type = "followup_answer" if request.query else "search_result"
                     save_chat_message(user_id, thread_id, "assistant", full_assistant_message, ans_type)
 
-        # 5. 파이프라인을 열어서 반환 (SSE 방식)
-        return StreamingResponse(event_generator(), media_type="text/event-stream")
+        # 🌟 5. 파이프라인을 열어서 반환 (SSE 방식) - 서버 버퍼링 방지 헤더 장착 완료!
+        return StreamingResponse(
+            event_generator(), 
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"
+            }
+        )
 
     except HTTPException: raise
     except Exception as e: 
