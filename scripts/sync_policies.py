@@ -1,9 +1,13 @@
 import os
 import time
 import requests
+import urllib3 # 🌟 [추가] 보안 경고 제어용
 import xml.etree.ElementTree as ET
 from supabase import create_client, Client
 from dotenv import load_dotenv
+
+# 🌟 [추가] 파이썬아, 보안 인증서가 조금 이상해도 일단 믿고 진행해! (SSL 경고 끄기)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # 1. 환경 변수 로드
 load_dotenv()
@@ -30,15 +34,14 @@ def sync_to_supabase(policies):
     formatted_data = []
     for p in policies:
         # 🌟 중요: DB 컬럼명과 청년센터 API 필드명을 1:1로 매핑
-        # 청년센터 API 상세 명세서를 기준으로 데이터를 가공합니다.
         formatted_data.append({
             "id": p.get("bizId", ""),                       # 정책 고유 ID (PK)
             "title": p.get("polyBizSjnm", "이름 없음"),      # 정책명
             "provider": p.get("cnsgNmor", "주관기관 없음"),  # 주관기관 (없으면 빈값)
-            "category": p.get("plcyTpNm", "기타"),          # 정책유형 (예: 취업지원, 주거지원)
+            "category": p.get("plcyTpNm", "기타"),          # 정책유형
             "target_audience": (p.get("empmSttsCn", "") + " / " + p.get("accrRqisCn", "")).strip(" /"), # 취업상태 및 학력요건
             "age_req": p.get("ageInfo", ""),                # 연령 요건
-            "income_req": "",                               # 소득 요건 (보통 prcpCn에 통합되어 있음)
+            "income_req": "",                               # 소득 요건
             "region_req": p.get("prcpCn", ""),              # 거주지 및 소득 등 참여요건
             "summary": p.get("polyItcnCn", "") + "\n\n[지원내용]\n" + p.get("sporCn", ""), # 정책소개 + 지원내용
             "url": p.get("rqutUrla", ""),                   # 온라인 신청 URL
@@ -48,7 +51,7 @@ def sync_to_supabase(policies):
         })
 
     try:
-        # Upsert: id가 같으면 덮어쓰고, 없으면 새로 생성 (중복 방지)
+        # Upsert: id가 같으면 덮어쓰고, 없으면 새로 생성
         supabase.table("policies").upsert(
             formatted_data, 
             on_conflict="id"
@@ -66,13 +69,12 @@ def fetch_all_data():
         return
 
     page = 1
-    display = 100  # 한 번에 100개씩 효율적으로 수집 (청년센터 최대 권장치)
+    display = 100  # 한 번에 100개씩 수집
     total_saved = 0
 
     while True:
         print(f"🔄 {page}페이지 (총 {display}개씩) 수집 요청 중...")
         
-        # 청년센터 API 파라미터 규격
         params = {
             "openApiVcyKey": YOUTH_API_KEY,
             "display": display,
@@ -80,8 +82,8 @@ def fetch_all_data():
         }
 
         try:
-            # 타임아웃 15초 설정으로 무한 대기 방지
-            response = requests.get(YOUTH_CENTER_URL, params=params, timeout=15)
+            # 🌟 [수정] verify=False 를 추가하여 정부 서버 보안 인증서 체크를 건너뜁니다.
+            response = requests.get(YOUTH_CENTER_URL, params=params, timeout=15, verify=False)
             response.raise_for_status()
             
             # XML 데이터 파싱
@@ -93,7 +95,7 @@ def fetch_all_data():
                 print(f"⚠️ API 에러 발생: {error_node.findtext('message')}")
                 break
 
-            # 'emp' 노드(각 정책 데이터 뭉치) 리스트 가져오기
+            # 'emp' 노드 리스트 가져오기
             emp_list = root.findall("emp")
             
             if not emp_list:
@@ -102,33 +104,31 @@ def fetch_all_data():
             
             policies = []
             for emp in emp_list:
-                # XML 노드에서 텍스트를 안전하게 추출하는 내부 헬퍼 함수
                 def get_text(tag):
                     node = emp.find(tag)
                     return node.text if node is not None and node.text else ""
 
                 policy = {
-                    "bizId": get_text("bizId"),               # 정책 ID
-                    "polyBizSjnm": get_text("polyBizSjnm"),   # 정책명
-                    "cnsgNmor": get_text("cnsgNmor") or get_text("mngtMrof"), # 주관/운영기관
-                    "plcyTpNm": get_text("plcyTpNm"),         # 정책유형
-                    "empmSttsCn": get_text("empmSttsCn"),     # 참여요건 - 취업상태
-                    "accrRqisCn": get_text("accrRqisCn"),     # 참여요건 - 학력
-                    "ageInfo": get_text("ageInfo"),           # 참여요건 - 연령
-                    "prcpCn": get_text("prcpCn"),             # 참여요건 - 거주지/소득
-                    "polyItcnCn": get_text("polyItcnCn"),     # 정책소개
-                    "sporCn": get_text("sporCn"),             # 지원내용
-                    "rqutUrla": get_text("rqutUrla"),         # 신청 URL
-                    "rqutPrdCn": get_text("rqutPrdCn")        # 신청 기간
+                    "bizId": get_text("bizId"),               
+                    "polyBizSjnm": get_text("polyBizSjnm"),   
+                    "cnsgNmor": get_text("cnsgNmor") or get_text("mngtMrof"), 
+                    "plcyTpNm": get_text("plcyTpNm"),         
+                    "empmSttsCn": get_text("empmSttsCn"),     
+                    "accrRqisCn": get_text("accrRqisCn"),     
+                    "ageInfo": get_text("ageInfo"),           
+                    "prcpCn": get_text("prcpCn"),             
+                    "polyItcnCn": get_text("polyItcnCn"),     
+                    "sporCn": get_text("sporCn"),             
+                    "rqutUrla": get_text("rqutUrla"),         
+                    "rqutPrdCn": get_text("rqutPrdCn")        
                 }
                 
-                # ID가 없는 비정상 데이터는 건너뜀
                 if policy["bizId"]:
                     policies.append(policy)
 
             print(f"✅ {page}페이지에서 {len(policies)}개의 데이터를 찾았습니다. DB로 전송 중...")
             
-            # Supabase에 저장 실행
+            # Supabase에 저장
             is_success = sync_to_supabase(policies)
             
             if is_success:
@@ -138,8 +138,8 @@ def fetch_all_data():
                 print("⚠️ DB 저장 단계에서 실패했습니다. 작업을 중단합니다.")
                 break
 
-            # 💡 서버 부하 방지 및 API 호출 제한(Rate Limit)을 피하기 위한 휴식 (필수!)
-            time.sleep(1.5)
+            # API 호출 제한 방지를 위한 짧은 휴식
+            time.sleep(1.2)
             page += 1
 
         except Exception as e:
