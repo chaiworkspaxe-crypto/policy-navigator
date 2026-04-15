@@ -249,10 +249,11 @@ def create_agent_executor():
 
     # GPT-5.4의 지능을 활용하여 병렬 도구 사용 활성화
     # GPT-5.4의 지능을 활용하여 병렬 도구 사용 활성화
+    # GPT-5.4의 지능을 활용하여 병렬 도구 사용 활성화
     llm = ChatOpenAI(
         model=model_name, 
         temperature=0.1, 
-        max_tokens=8192,  # 🌟 [핵심] 답변이 중간에 잘리지 않도록 최대 글자 수 대폭 상향!
+        max_completion_tokens=8192,  # 🌟 여기 이름만 바뀌었어!
         streaming=True
     ).bind_tools(tools)
     
