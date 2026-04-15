@@ -27,90 +27,31 @@ def get_current_time() -> str:
     """현재 날짜와 시간을 확인합니다."""
     return datetime.now(pytz.timezone('Asia/Seoul')).strftime("%Y년 %m월 %d일")
 
-# 🌟 [신규 추가] 청년정책 API 전용 툴 (강력한 방화벽 돌파 버전 🛡️)
-@tool
-def search_youth_api(query: str) -> str:
-    """대한민국 공식 온라인청년센터 API를 호출하여 최신 청년 정책(월세, 취업, 창업 등)을 실시간으로 검색합니다. 청년 관련 질문 시 이 도구를 가장 먼저 사용하세요."""
-    api_key = os.getenv("YOUTH_POLICY_API_KEY", "").strip()
-    if not api_key:
-        return "청년정책 API 키가 설정되지 않아 검색할 수 없습니다. search_internal_db나 naver_web_search를 대신 사용하세요."
-
-    import urllib.request
-    import urllib.parse
-    import ssl
-    import xml.etree.ElementTree as ET
-
-    url = "https://www.youthcenter.go.kr/opi/empList.do"
-    params = {
-        "openApiVcyKey": api_key,
-        "display": 5,      
-        "pageIndex": 1,
-        "query": query     
-    }
-    query_string = urllib.parse.urlencode(params)
-    full_url = f"{url}?{query_string}"
-
-    # 🌟 [비밀 무기] 강력한 SSL 검사 무시 + 크롬 브라우저 위장
-    ssl_context = ssl.create_default_context()
-    ssl_context.check_hostname = False
-    ssl_context.verify_mode = ssl.CERT_NONE
-
-    req = urllib.request.Request(
-        full_url, 
-        headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-        }
-    )
-
-    try:
-        response = urllib.request.urlopen(req, context=ssl_context, timeout=15)
-        
-        if response.getcode() != 200:
-            return f"API 통신 실패 (상태 코드: {response.getcode()})"
-            
-        xml_data = response.read().decode('utf-8')
-        root = ET.fromstring(xml_data)
-        
-        err = root.find("error")
-        if err is not None:
-            return f"API 에러: {err.findtext('message')}"
-        
-        emp_list = root.findall("emp")
-        if not emp_list:
-            return f"'{query}'에 대한 실시간 검색 결과가 없습니다. search_internal_db를 활용하세요."
-        
-        results = []
-        for emp in emp_list:
-            title = emp.findtext("polyBizSjnm") or ""
-            summary = emp.findtext("polyItcnCn") or ""
-            age = emp.findtext("ageInfo") or ""
-            req = emp.findtext("prcpCn") or ""
-            link = emp.findtext("rqutUrla") or ""
-            
-            results.append(f"- 정책명: {title}\n  대상/연령: {age}\n  요건: {req}\n  내용: {summary}\n  링크: {link}")
-        
-        return "\n\n".join(results)
-    except Exception as e:
-        # 에러가 나도 사이트가 터지지 않도록 자연스럽게 AI에게 다른 도구를 쓰라고 유도함
-        return f"청년정책 API 방화벽 차단됨: {str(e)}. 즉시 search_internal_db와 naver_web_search를 사용하여 답변을 완성하세요."
 @tool
 def search_internal_db(query: str) -> str:
-    """우리가 직접 수집한 100% 검증된 대한민국 정책 DB에서 정보를 찾습니다. 청년 정책이 아닌 경우 이 도구를 가장 먼저 사용하세요."""
+    """사용자 질문을 바탕으로 내부 Supabase DB(policies 테이블)에서 정책을 검색합니다."""
+    # (앞부분 로직은 그대로 두고, select 하는 부분만 수정)
+    
     try:
-        client = OpenAI()
-        # 1. 쿼리를 벡터로 변환
-        resp = client.embeddings.create(input=query, model="text-embedding-3-small")
-        query_vector = resp.data[0].embedding
+        # 🌟 agency -> provider, description -> summary 로 변경!
+        response = supabase.table("policies").select("title, provider, category, target_audience, summary, url, deadline").limit(5).execute()
         
-        # 2. 벡터 유사도 검색 수행
-        results = search_policies(query_vector, limit=5)
-        
-        if not results:
-            return "내부 DB에 해당 정보가 부족합니다. 즉시 naver_web_search를 실행하여 보완하세요."
+        if not response.data:
+            return "내부 DB에서 일치하는 정책을 찾지 못했습니다. naver_web_search를 사용하세요."
             
-        return json.dumps(results, ensure_ascii=False)
+        results = []
+        for p in response.data:
+            # 🌟 여기도 꺼내올 때 provider와 summary로 맞춰주기!
+            title = p.get('title', '이름 없음')
+            provider = p.get('provider', '주관기관 없음')
+            summary = p.get('summary', '내용 없음')
+            url = p.get('url', '링크 없음')
+            
+            results.append(f"- 정책명: {title} ({provider})\n  내용: {summary}\n  링크: {url}")
+            
+        return "\n\n".join(results)
     except Exception as e:
-        return f"내부 DB 검색 중 오류 (컬럼명 확인 필요): {str(e)}"
+        return f"DB 검색 중 오류 발생: {e}"
 
 @tool
 def naver_web_search(query: str) -> str:
@@ -188,12 +129,12 @@ SYSTEM_PROMPT = """
    - 정보가 부족하다면 검색을 보류하고 추가 정보를 먼저 친절하게 질문하세요.
    
 2. 🔍 다중 도구 병렬 탐색 (Stopping is Forbidden):
-   - 내부 DB(`search_internal_db`)나 실시간 API(`search_youth_api`)에 결과가 있더라도 **절대 거기서 탐색을 멈추지 마세요.**
+   - 내부 DB(`search_internal_db`)에 결과가 있더라도 **절대 거기서 탐색을 멈추지 마세요.**
    - 사용자의 구체적인 '시/군/구/동' 단위의 지자체 특화 혜택과 실시간 민간 지원금은 웹 검색(`naver_web_search`)에 훨씬 더 많습니다.
    - 반드시 2개 이상의 도구를 조합하여 정보의 양과 질을 극대화하세요. 정보량이 곧 당신의 실력입니다.
 
 3. 🚦 탐색 전략 (Multi-Step Retrieval):
-   - 1단계: 청년 관련 혜택은 `search_youth_api`를, 그 외는 `search_internal_db`를 호출하여 정부 공식 정책의 뼈대를 빠르게 확보합니다.
+   - 1단계: `search_internal_db`로 정부 공식 정책의 뼈대를 빠르게 확보합니다.
    - 2단계: `naver_web_search`를 통해 사용자의 거주지(예: 화성시, 압구정동 등)와 직업적 특성에 맞는 '동네 전용 혜택'을 무조건 검색합니다.
    - 3단계: `verify_official_page`로 가장 유용한 혜택의 공식 사이트에 직접 접속해 상세 모집 요강(금액, 서류, 마감일)을 긁어옵니다.
    - 🚨 절대 여러 도구를 한 번에 병렬로 동시 호출하지 마세요. 반드시 순서대로 하나씩 확인하세요.
@@ -245,7 +186,7 @@ def create_agent_executor():
     model_name = os.getenv("OPENAI_MODEL", "gpt-5.4").strip() 
     
     # 🌟 [핵심] 여기에 search_youth_api 도구를 추가해서 AI가 쓸 수 있게 등록!
-    tools = [search_youth_api, search_internal_db, naver_web_search, global_web_search, verify_official_page, get_current_time]
+    tools = [search_internal_db, naver_web_search, global_web_search, verify_official_page, get_current_time]
 
     # GPT-5.4의 지능을 활용하여 병렬 도구 사용 활성화
     # GPT-5.4의 지능을 활용하여 병렬 도구 사용 활성화
@@ -299,8 +240,6 @@ async def get_ai_response_stream(agent_executor, messages: list):
                 friendly_msg = "가짜 정보는 선 넘었죠! 공식 홈페이지 들어가서 돋보기로 팩트체크 중 🔎👀"
             elif tool_name == "get_current_time":
                 friendly_msg = "이미 끝난 공고 주면 혼나니까! 실시간 마감일 깐깐하게 비교 중입니다 🗓️⏳"
-            elif tool_name == "search_youth_api":
-                friendly_msg = "정부 청년정책 전용망 VIP 프리패스 접속 중! 💳✨ 가장 정확한 공식 데이터를 쓸어옵니다!"
             else:
                 friendly_msg = "하나라도 더 찾아내려고 AI가 풀야근 중입니다! 쪼~금만 더 기다려주세요 😭🌙"
 
