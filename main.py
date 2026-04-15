@@ -19,6 +19,7 @@ import sentry_sdk
 
 from chat_db import (
     init_db, db_session, create_thread, rename_thread, delete_thread,
+    delete_all_threads, # 🌟 [추가] 전체 삭제 함수 import!
     list_user_threads, load_chat_messages, save_chat_message,
     save_thread_inputs, load_thread_inputs,
     consume_daily_request_quota,
@@ -280,15 +281,27 @@ async def websocket_endpoint(websocket: WebSocket, thread_id: str):
 
 @app.get("/threads")
 def get_threads(user_id: str = Query(...)): return {"ok": True, "threads": list_user_threads(user_id.strip())}
+
 @app.post("/threads")
 def create_thread_api(req: CreateThreadRequest): return {"ok": True, "thread_id": create_thread(req.user_id.strip(), set_active=True)}
+
 @app.get("/threads/{thread_id}/messages")
 def get_thread_messages(thread_id: str, user_id: str = Query(...)): return {"ok": True, "thread_id": thread_id, "messages": load_chat_messages(user_id.strip(), thread_id.strip())}
+
 @app.get("/threads/{thread_id}/inputs")
 def get_thread_inputs_api(thread_id: str, user_id: str = Query(...)): return {"ok": True, "thread_id": thread_id, "inputs": load_thread_inputs(user_id.strip(), thread_id.strip())}
+
 @app.patch("/threads/{thread_id}")
 def rename_thread_api(thread_id: str, req: RenameRequest): rename_thread(req.user_id.strip(), thread_id, req.title.strip()); return {"ok": True}
+
+# 🌟 [추가] 전체 삭제 API! (반드시 특정 id 삭제보다 위에 있어야 함!)
+@app.delete("/threads/all")
+def delete_all_threads_api(user_id: str = Query(...)): 
+    delete_all_threads(user_id.strip())
+    return {"ok": True, "message": "모든 대화가 시원하게 날아갔습니다! 🌪️"}
+
 @app.delete("/threads/{thread_id}")
 def delete_thread_api(thread_id: str, user_id: str = Query(...)): delete_thread(user_id.strip(), thread_id); return {"ok": True}
+
 @app.post("/threads/{thread_id}/inputs")
 def save_inputs_api(thread_id: str, req: SaveInputsRequest): save_thread_inputs(req.user_id.strip(), thread_id, req.selected_city or "선택하세요", req.selected_district or "선택하세요", req.selected_dong or "선택 안 함", req.birth_year or "", req.extra_info or ""); return {"ok": True}
