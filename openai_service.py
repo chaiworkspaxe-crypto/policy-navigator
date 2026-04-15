@@ -5,9 +5,9 @@ import urllib.parse
 from functools import lru_cache
 import pytz
 from datetime import datetime
-import requests
-from bs4 import BeautifulSoup
 from openai import OpenAI 
+
+# 🌟 불필요해진 requests와 BeautifulSoup(bs4) 임포트 삭제로 파일 경량화!
 
 try:
     import truststore
@@ -20,7 +20,8 @@ from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import tool
 
-from chat_db import search_policies 
+# (DB 검색 관련 설정이 있다면 유지하세요)
+# from chat_db import search_policies 
 
 @tool
 def get_current_time() -> str:
@@ -30,10 +31,8 @@ def get_current_time() -> str:
 @tool
 def search_internal_db(query: str) -> str:
     """사용자 질문을 바탕으로 내부 Supabase DB(policies 테이블)에서 정책을 검색합니다."""
-    # (앞부분 로직은 그대로 두고, select 하는 부분만 수정)
-    
     try:
-        # 🌟 agency -> provider, description -> summary 로 변경!
+        # agency -> provider, description -> summary 
         response = supabase.table("policies").select("title, provider, category, target_audience, summary, url, deadline").limit(5).execute()
         
         if not response.data:
@@ -41,7 +40,6 @@ def search_internal_db(query: str) -> str:
             
         results = []
         for p in response.data:
-            # 🌟 여기도 꺼내올 때 provider와 summary로 맞춰주기!
             title = p.get('title', '이름 없음')
             provider = p.get('provider', '주관기관 없음')
             summary = p.get('summary', '내용 없음')
@@ -83,37 +81,28 @@ def naver_web_search(query: str) -> str:
 
 @tool
 def global_web_search(query: str) -> str:
-    """공식 관공서 문서나 더 넓은 범위의 정책 정보를 교차 검증할 때 사용합니다."""
+    """네이버 검색에서 찾지 못한 대한민국 정부 공식 문서나 심층 정책 정보를 교차 검증할 때 사용합니다."""
+    
+    # 🌟 [개조 완료] 검색어에 강제로 '대한민국'과 한국 도메인(.go.kr, .kr)을 붙여 해외 정책(환각) 원천 차단!
+    localized_query = f"대한민국 {query} (site:go.kr OR site:kr)"
+    
     try:
+        # 🌟 DuckDuckGo에 한국 지역(kr-kr) 강제 설정
         from langchain_community.tools import DuckDuckGoSearchResults
-        search = DuckDuckGoSearchResults(max_results=5)
-        return search.invoke(query)
+        search = DuckDuckGoSearchResults(backend="web", region="kr-kr", max_results=5)
+        return search.invoke(localized_query)
     except Exception:
         try:
             from langchain_community.tools.tavily_search import TavilySearchResults
             tavily_search = TavilySearchResults(max_results=3)
-            return tavily_search.invoke(query)
+            return tavily_search.invoke(localized_query)
         except Exception:
-            return "외부 검색 엔진 차단됨. 현재 지식과 수집된 정보로 최선을 다해 답변하세요."
+            return "글로벌 검색 엔진 차단됨. 현재 지식과 수집된 정보로 최선을 다해 답변하세요."
 
-@tool
-def verify_official_page(url: str) -> str:
-    """공식 홈페이지 URL에 직접 접속하여 상세 모집 요강을 팩트체크합니다."""
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(url, headers=headers, timeout=10) 
-        response.raise_for_status()
-        
-        soup = BeautifulSoup(response.text, 'html.parser')
-        for script in soup(["script", "style"]):
-            script.extract()
-            
-        text = soup.get_text(separator=' ', strip=True)
-        return f"[공식 페이지 스크래핑 결과 요약]\n{text[:1500]}"
-    except Exception as e:
-        return f"페이지 접속 실패. 검색 엔진 정보를 활용하세요. 에러: {str(e)}"
 
-# 🌟 [개조] 에이전트의 '정보 수집 본능'을 극대화하는 시스템 프롬프트
+# 🌟 불필요한 verify_official_page 함수 삭제 완료!
+
+
 SYSTEM_PROMPT = """
 당신은 대한민국 국민 모두의 '정보 비대칭'을 완벽하게 해소해 주는 최고의 '전국민 맞춤형 복지/지원금 내비게이터(Universal Policy Navigator)'입니다.
 청년, 중장년, 노년층, 신혼부부, 육아 가구 등 어떤 사용자가 오더라도 그 사람의 조건에 딱 맞는 혜택을 찾아주어야 합니다.
@@ -129,14 +118,14 @@ SYSTEM_PROMPT = """
    - 정보가 부족하다면 검색을 보류하고 추가 정보를 먼저 친절하게 질문하세요.
    
 2. 🔍 다중 도구 병렬 탐색 (Stopping is Forbidden):
-   - 내부 DB(`search_internal_db`)에 결과가 있더라도 **절대 거기서 탐색을 멈추지 마세요.**
+   - 내부 DB(`search_internal_db`)에 결과가 있더라도 절대 거기서 탐색을 멈추지 마세요.
    - 사용자의 구체적인 '시/군/구/동' 단위의 지자체 특화 혜택과 실시간 민간 지원금은 웹 검색(`naver_web_search`)에 훨씬 더 많습니다.
    - 반드시 2개 이상의 도구를 조합하여 정보의 양과 질을 극대화하세요. 정보량이 곧 당신의 실력입니다.
 
 3. 🚦 탐색 전략 (Multi-Step Retrieval):
    - 1단계: `search_internal_db`로 정부 공식 정책의 뼈대를 빠르게 확보합니다.
    - 2단계: `naver_web_search`를 통해 사용자의 거주지(예: 화성시, 압구정동 등)와 직업적 특성에 맞는 '동네 전용 혜택'을 무조건 검색합니다.
-   - 3단계: `verify_official_page`로 가장 유용한 혜택의 공식 사이트에 직접 접속해 상세 모집 요강(금액, 서류, 마감일)을 긁어옵니다.
+   - 3단계: 1, 2단계에서 정보가 부족할 경우에만 `global_web_search`를 활용하여 정부 공식 문서를 교차 검증합니다.
    - 🚨 절대 여러 도구를 한 번에 병렬로 동시 호출하지 마세요. 반드시 순서대로 하나씩 확인하세요.
 
 4. 탐색 및 팩트 체크:
@@ -150,7 +139,7 @@ SYSTEM_PROMPT = """
 5. ✍️ 답변 구성 지침 및 전방위(분야별) 탐색:
    - "DB 오류"나 "검색 제한" 같은 시스템 내부 사정을 유저에게 변명으로 노출하지 마세요. 도구를 섞어서라도 어떻게든 정보를 찾아 답변을 완성하세요.
    - 정보량을 아끼지 마세요. 사용자가 받을 수 있는 돈, 혜택 규모, 준비물 등을 매우 디테일하게 나열하세요.
-   - 필수 탐색 분야]: 일자리, 취업/진로, 창업, 주거, 금융, 교육, 복지, 청년정책, 마음건강, 신체건강, 생활지원, 문화/예술, 대외활동, 공간, 사회참여, 커뮤니티 등 가능한 모든 분야를 키워드로 검색하세요.
+   - 필수 탐색 분야: 일자리, 취업/진로, 창업, 주거, 금융, 교육, 복지, 청년정책, 마음건강, 신체건강, 생활지원, 문화/예술, 대외활동, 공간, 사회참여, 커뮤니티 등 가능한 모든 분야를 키워드로 검색하세요.
    - [계층]: 검색 시 중앙정부 / 광역지자체 / 기초지자체 / 공공기관 / 공공재단 정책이 모두 포함되도록 교차 검색하세요.
    - 따뜻하고 친절한 어조를 유지하되, 관공서 수준으로 엄격하게 검증된 정보만 제공하세요.
 
@@ -182,19 +171,15 @@ def create_agent_executor():
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY 환경변수가 비어 있습니다.")
 
-    # 🌟 [수정] 창현이가 요청한 최신 GPT-5.4 모델 적용
     model_name = os.getenv("OPENAI_MODEL", "gpt-5.4").strip() 
     
-    # 🌟 [핵심] 여기에 search_youth_api 도구를 추가해서 AI가 쓸 수 있게 등록!
-    tools = [search_internal_db, naver_web_search, global_web_search, verify_official_page, get_current_time]
+    # 🌟 깔끔하게 정리된 4개의 도구!
+    tools = [search_internal_db, naver_web_search, global_web_search, get_current_time]
 
-    # GPT-5.4의 지능을 활용하여 병렬 도구 사용 활성화
-    # GPT-5.4의 지능을 활용하여 병렬 도구 사용 활성화
-    # GPT-5.4의 지능을 활용하여 병렬 도구 사용 활성화
     llm = ChatOpenAI(
         model=model_name, 
         temperature=0.1, 
-        max_completion_tokens=8192,  # 🌟 여기 이름만 바뀌었어!
+        max_completion_tokens=8192, 
         streaming=True
     ).bind_tools(tools)
     
@@ -210,8 +195,8 @@ def create_agent_executor():
         agent=agent,
         tools=tools,
         verbose=True,
-        max_iterations=12,       # 🌟 [상향] 더 집요하게 검색하도록 반복 횟수 증가
-        max_execution_time=400,    # 🌟 [상향] 정보 수집량이 많아지므로 실행 시간 보장
+        max_iterations=12, 
+        max_execution_time=400,
         early_stopping_method="force"
     )
 
@@ -229,21 +214,17 @@ async def get_ai_response_stream(agent_executor, messages: list):
         elif kind == "on_tool_start":
             tool_name = event["name"]
             
-            # 🌟 [수정된 부분] AI 도구별 유머러스한 한국어 멘트 적용!
             if tool_name == "search_internal_db":
                 friendly_msg = "정부 정책 창고 셔터 올리는 중! 먼지가 쫌 날려도(쿨럭) 싹 다 찾아올게요 😷💨"
             elif tool_name == "naver_web_search":
                 friendly_msg = "동네방네 뿌려진 지자체 혜택 전단지 싹 다 긁어모으는 중! 🏃‍♂️💨🔥"
             elif tool_name == "global_web_search" or "tavily" in tool_name or "duckduckgo" in tool_name:
-                friendly_msg = "검색 엔진 풀가동! AI가 손가락 안 보일 정도로 폭풍 타자 치고 있어요 ⌨️💦"
-            elif tool_name == "verify_official_page":
-                friendly_msg = "가짜 정보는 선 넘었죠! 공식 홈페이지 들어가서 돋보기로 팩트체크 중 🔎👀"
+                friendly_msg = "국내 공식 정부 문서 풀스캔 중! 하나도 안 놓칠게요 🔎💻"
             elif tool_name == "get_current_time":
                 friendly_msg = "이미 끝난 공고 주면 혼나니까! 실시간 마감일 깐깐하게 비교 중입니다 🗓️⏳"
             else:
                 friendly_msg = "하나라도 더 찾아내려고 AI가 풀야근 중입니다! 쪼~금만 더 기다려주세요 😭🌙"
 
-            # 프론트엔드로 친절한 메시지 전송
             yield json.dumps({'type': 'status', 'message': f"🔍 {friendly_msg}"}, ensure_ascii=False)
 
     yield json.dumps({'type': 'done', 'full_content': full_answer}, ensure_ascii=False)
