@@ -19,13 +19,16 @@ import sentry_sdk
 
 from chat_db import (
     init_db, db_session, create_thread, rename_thread, delete_thread,
-    delete_all_threads, # 🌟 [추가] 전체 삭제 함수 import!
+    delete_all_threads, 
     list_user_threads, load_chat_messages, save_chat_message,
     save_thread_inputs, load_thread_inputs,
     consume_daily_request_quota,
     get_admin_dashboard_stats
 )
 from worker import process_chat_task
+
+# 🌟 [신규 추가] AI 스트리밍 모듈 임포트!
+from openai_service import create_agent_executor, get_ai_response_stream
 
 load_dotenv()
 
@@ -187,6 +190,7 @@ def admin_stats():
 
 @app.post("/chat")
 async def chat(request: ChatRequest, http_request: Request):
+    """기존의 비동기 웹소켓/워커용 엔드포인트 (유지)"""
     try:
         user_id, thread_id = (request.user_id or "").strip(), (request.thread_id or "").strip()
         if not user_id: raise HTTPException(status_code=400, detail="user_id는 필수입니다.")
@@ -235,6 +239,72 @@ async def chat(request: ChatRequest, http_request: Request):
     except HTTPException: raise
     except Exception as e: 
         logger.error(f"❌ [서버 에러 발생]: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# 🌟 [신규 추가] Streamlit을 위한 HTTP 기반 실시간 스트리밍 엔드포인트!
+@app.post("/chat/stream")
+async def chat_stream(request: ChatRequest, http_request: Request):
+    """Streamlit과 직접 연결되어 타자 치듯 실시간으로 데이터를 내려주는 엔드포인트"""
+    try:
+        user_id, thread_id = (request.user_id or "").strip(), (request.thread_id or "").strip()
+        if not user_id: raise HTTPException(status_code=400, detail="user_id는 필수입니다.")
+
+        # 1. 일일 사용량 체크
+        is_admin = (user_id == ADMIN_PASS_KEY)
+        if not is_admin:
+            fingerprint = get_client_fingerprint(http_request)
+            quota = consume_daily_request_quota(fingerprint, daily_limit=4)
+            if not quota["allowed"]:
+                raise HTTPException(status_code=403, detail="오늘의 검색 횟수를 모두 사용하셨습니다.")
+
+        # 2. 메시지 준비 및 DB 저장 (유저 메시지)
+        user_message, message_type = normalize_request(
+            request.city, request.district, request.dong,
+            request.birth_year, request.extra_info, request.query
+        )
+
+        if not thread_id: thread_id = create_thread(user_id=user_id, set_active=False)
+
+        persist_thread_inputs_if_present(
+            user_id, thread_id, request.city, request.district, request.dong,
+            request.birth_year, request.extra_info
+        )
+
+        previous_messages = load_chat_messages(user_id, thread_id)
+        save_chat_message(user_id, thread_id, "user", user_message, message_type)
+        
+        agent_messages = build_agent_messages(previous_messages, user_message)
+
+        # 3. 실시간 스트리밍 제너레이터
+        async def event_generator():
+            agent_executor = create_agent_executor()
+            full_assistant_message = ""
+            
+            try:
+                # AI가 생각하는 족족 한 줄씩 받아서 프론트엔드로 쏨
+                async for chunk in get_ai_response_stream(agent_executor, agent_messages):
+                    yield f"data: {chunk}\n\n"
+                    
+                    # DB에 저장하기 위해 백그라운드에서 글자를 조립함
+                    try:
+                        data = json.loads(chunk)
+                        if data.get("type") == "content":
+                            full_assistant_message += data.get("delta", "")
+                    except Exception:
+                        pass
+            finally:
+                # 4. 스트리밍 종료 시 완성된 답변을 DB에 최종 저장
+                if full_assistant_message:
+                    ans_type = "followup_answer" if request.query else "search_result"
+                    save_chat_message(user_id, thread_id, "assistant", full_assistant_message, ans_type)
+
+        # 5. 파이프라인을 열어서 반환 (SSE 방식)
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+    except HTTPException: raise
+    except Exception as e: 
+        logger.error(f"❌ [스트리밍 API 에러]: {str(e)}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
