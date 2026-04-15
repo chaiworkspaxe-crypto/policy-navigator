@@ -137,8 +137,8 @@ def process_chat_task(thread_id: str, user_id: str, agent_messages: list, messag
     db_context = "현재 DB에서 데이터를 불러올 수 없습니다."
     if supabase:
         try:
-            # 🌟 [동기화] DB 컬럼명에 맞춰 select 수행
-            query = supabase.table("policies").select("title, agency, description")
+            # 🌟 [수정 완료] agency -> provider, description -> summary 로 컬럼명 맞춤!
+            query = supabase.table("policies").select("title, provider, summary")
             filters = []
 
             # (1) 나이 기반 키워드 추가
@@ -146,7 +146,7 @@ def process_chat_task(thread_id: str, user_id: str, agent_messages: list, messag
                 age = datetime.now().year - int(birth_year)
                 if 19 <= age <= 39: # 청년 범위를 넉넉하게 설정
                     filters.append("title.ilike.%청년%")
-                    filters.append("description.ilike.%청년%")
+                    filters.append("summary.ilike.%청년%") # 🌟 description -> summary
 
             # (2) 추가정보 기반 핵심 키워드 매칭
             if extra_info:
@@ -154,7 +154,7 @@ def process_chat_task(thread_id: str, user_id: str, agent_messages: list, messag
                 for kw in target_keywords:
                     if kw in extra_info:
                         filters.append(f"title.ilike.%{kw}%")
-                        filters.append(f"description.ilike.%{kw}%")
+                        filters.append(f"summary.ilike.%{kw}%") # 🌟 description -> summary
 
             if filters:
                 or_condition = ",".join(filters)
@@ -163,7 +163,8 @@ def process_chat_task(thread_id: str, user_id: str, agent_messages: list, messag
             response = query.limit(20).execute()
 
             if response.data:
-                db_context = "\n".join([f"[{p.get('agency', '기관')}] {p.get('title', '제목')}: {p.get('description', '')[:100]}..." for p in response.data])
+                # 🌟 [수정 완료] agency -> provider, description -> summary
+                db_context = "\n".join([f"[{p.get('provider', '기관')}] {p.get('title', '제목')}: {p.get('summary', '')[:100]}..." for p in response.data])
             else:
                 db_context = "일치하는 내부 DB 데이터가 없습니다. 외부 검색 도구를 활용하세요."
 
@@ -190,26 +191,26 @@ def process_chat_task(thread_id: str, user_id: str, agent_messages: list, messag
     asyncio.run(run_agent_and_publish(thread_id, user_id, enhanced_messages, message_type))
 
 # ==============================================================================
-# 🚀 [ETL Pipeline] 데이터 수집 봇 (컬럼명 'id'로 동기화 완료)
+# 🚀 [ETL Pipeline] 데이터 수집 봇 (컬럼명 완벽 동기화 완료)
 # ==============================================================================
 @celery_app.task(name="worker.collect_policies_task")
 def collect_policies_task():
     logger.info("🚀 [ETL Pipeline] 데이터 수집 및 벡터화 시작...")
     try:
         sample_policy = {
-            "id": "GOV_YOUTH_RENT_001", # 🌟 policy_id 대신 id로 수정
+            "id": "GOV_YOUTH_RENT_001",
             "title": "청년 월세 특별지원 (2차)",
-            "agency": "국토교통부",      # 🌟 provider 대신 agency로 수정
+            "provider": "국토교통부",      # 🌟 agency -> provider 로 수정
             "category": "주거/금융",
-            "description": "만 19~34세 독립 거주 무주택 청년 대상 월세 지원", # 🌟 target_audience 등 통합
-            "link": "https://www.bokjiro.go.kr" # 🌟 url 대신 link로 수정
+            "summary": "만 19~34세 독립 거주 무주택 청년 대상 월세 지원", # 🌟 description -> summary 로 수정
+            "url": "https://www.bokjiro.go.kr" # 🌟 link -> url 로 수정
         }
         
-        text_to_embed = f"{sample_policy['title']} {sample_policy['description']}"
+        # 🌟 description -> summary 변경 적용
+        text_to_embed = f"{sample_policy['title']} {sample_policy['summary']}"
         response = client.embeddings.create(input=text_to_embed, model="text-embedding-3-small")
         sample_policy['embedding'] = response.data[0].embedding
 
-        # chat_db.py의 upsert_policy 함수가 이 필드명들을 잘 처리하는지 확인 필요
         upsert_policy(sample_policy)
         logger.info(f"✅ [ETL Pipeline] '{sample_policy['title']}' 동기화 완료!")
     except Exception as e:
