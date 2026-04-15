@@ -27,9 +27,54 @@ def get_current_time() -> str:
     """현재 날짜와 시간을 확인합니다."""
     return datetime.now(pytz.timezone('Asia/Seoul')).strftime("%Y년 %m월 %d일")
 
+# 🌟 [신규 추가] 청년정책 API 전용 툴 (AI의 실시간 무기!)
+@tool
+def search_youth_api(query: str) -> str:
+    """대한민국 공식 온라인청년센터 API를 호출하여 최신 청년 정책(월세, 취업, 창업 등)을 실시간으로 검색합니다. 청년 관련 질문 시 이 도구를 가장 먼저 사용하세요."""
+    api_key = os.getenv("YOUTH_POLICY_API_KEY", "").strip()
+    if not api_key:
+        return "청년정책 API 키가 설정되지 않아 검색할 수 없습니다. search_internal_db나 naver_web_search를 대신 사용하세요."
+
+    url = "https://www.youthcenter.go.kr/opi/empList.do"
+    params = {
+        "openApiVcyKey": api_key,
+        "display": 5,      # AI가 너무 많은 정보를 한 번에 읽으면 헷갈릴 수 있어 상위 5개만 추출
+        "pageIndex": 1,
+        "query": query     # AI가 판단한 검색 키워드
+    }
+    
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(response.content)
+        
+        err = root.find("error")
+        if err is not None:
+            return f"API 에러: {err.findtext('message')}"
+        
+        emp_list = root.findall("emp")
+        if not emp_list:
+            return f"'{query}'에 대한 청년센터 API 실시간 검색 결과가 없습니다. 다른 키워드나 search_internal_db, naver_web_search를 활용하세요."
+        
+        results = []
+        for emp in emp_list:
+            title = emp.findtext("polyBizSjnm") or ""
+            summary = emp.findtext("polyItcnCn") or ""
+            age = emp.findtext("ageInfo") or ""
+            req = emp.findtext("prcpCn") or ""
+            link = emp.findtext("rqutUrla") or ""
+            
+            results.append(f"- 정책명: {title}\n  대상/연령: {age}\n  요건: {req}\n  내용: {summary}\n  링크: {link}")
+        
+        return "\n\n".join(results)
+    except Exception as e:
+        return f"청년정책 API 검색 중 오류 발생: {str(e)}"
+
 @tool
 def search_internal_db(query: str) -> str:
-    """우리가 직접 수집한 100% 검증된 대한민국 정책 DB에서 정보를 찾습니다. 인터넷 검색보다 이 도구를 가장 먼저 사용하세요."""
+    """우리가 직접 수집한 100% 검증된 대한민국 정책 DB에서 정보를 찾습니다. 청년 정책이 아닌 경우 이 도구를 가장 먼저 사용하세요."""
     try:
         client = OpenAI()
         # 1. 쿼리를 벡터로 변환
@@ -122,12 +167,12 @@ SYSTEM_PROMPT = """
    - 정보가 부족하다면 검색을 보류하고 추가 정보를 먼저 친절하게 질문하세요.
    
 2. 🔍 다중 도구 병렬 탐색 (Stopping is Forbidden):
-   - 내부 DB(`search_internal_db`)에 결과가 있더라도 **절대 거기서 탐색을 멈추지 마세요.**
+   - 내부 DB(`search_internal_db`)나 실시간 API(`search_youth_api`)에 결과가 있더라도 **절대 거기서 탐색을 멈추지 마세요.**
    - 사용자의 구체적인 '시/군/구/동' 단위의 지자체 특화 혜택과 실시간 민간 지원금은 웹 검색(`naver_web_search`)에 훨씬 더 많습니다.
    - 반드시 2개 이상의 도구를 조합하여 정보의 양과 질을 극대화하세요. 정보량이 곧 당신의 실력입니다.
 
 3. 🚦 탐색 전략 (Multi-Step Retrieval):
-   - 1단계: `search_internal_db`로 정부 공식 정책의 뼈대를 빠르게 확보합니다.
+   - 1단계: 청년 관련 혜택은 `search_youth_api`를, 그 외는 `search_internal_db`를 호출하여 정부 공식 정책의 뼈대를 빠르게 확보합니다.
    - 2단계: `naver_web_search`를 통해 사용자의 거주지(예: 화성시, 압구정동 등)와 직업적 특성에 맞는 '동네 전용 혜택'을 무조건 검색합니다.
    - 3단계: `verify_official_page`로 가장 유용한 혜택의 공식 사이트에 직접 접속해 상세 모집 요강(금액, 서류, 마감일)을 긁어옵니다.
    - 🚨 절대 여러 도구를 한 번에 병렬로 동시 호출하지 마세요. 반드시 순서대로 하나씩 확인하세요.
@@ -178,7 +223,8 @@ def create_agent_executor():
     # 🌟 [수정] 창현이가 요청한 최신 GPT-5.4 모델 적용
     model_name = os.getenv("OPENAI_MODEL", "gpt-5.4").strip() 
     
-    tools = [search_internal_db, naver_web_search, global_web_search, verify_official_page, get_current_time]
+    # 🌟 [핵심] 여기에 search_youth_api 도구를 추가해서 AI가 쓸 수 있게 등록!
+    tools = [search_youth_api, search_internal_db, naver_web_search, global_web_search, verify_official_page, get_current_time]
 
     # GPT-5.4의 지능을 활용하여 병렬 도구 사용 활성화
     llm = ChatOpenAI(model=model_name, temperature=0.1, streaming=True).bind_tools(tools)
