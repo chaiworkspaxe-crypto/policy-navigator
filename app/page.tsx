@@ -24,6 +24,10 @@ export default function Home() {
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [isFormExpanded, setIsFormExpanded] = useState(true);
 
+  // 🌟 [추가] 전체 삭제 버튼 상태 관리
+  const [isConfirmingDeleteAll, setIsConfirmingDeleteAll] = useState(false);
+  const deleteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const [city, setCity] = useState(EMPTY_INPUTS.selected_city);
   const [district, setDistrict] = useState(EMPTY_INPUTS.selected_district);
   const [dong, setDong] = useState(EMPTY_INPUTS.selected_dong);
@@ -64,6 +68,30 @@ export default function Home() {
         }
       } else alert("삭제에 실패했습니다.");
     } catch (err) { console.error("삭제 에러:", err); }
+  };
+
+  // 🌟 [추가] 전체 대화 삭제 실행 함수 (안전핀 로직 포함)
+  const handleDeleteAll = async () => {
+    if (!isConfirmingDeleteAll) {
+      // 1단계: 확인 모드로 진입 (3초 뒤 원상복구)
+      setIsConfirmingDeleteAll(true);
+      deleteTimeoutRef.current = setTimeout(() => {
+        setIsConfirmingDeleteAll(false);
+      }, 3000);
+    } else {
+      // 2단계: 진짜 삭제 실행
+      if (deleteTimeoutRef.current) clearTimeout(deleteTimeoutRef.current);
+      try {
+        await api.deleteAllThreads(userId);
+        alert("그동안의 혜택 탐색 기록이 깔끔하게 지워졌습니다! ✨");
+        window.location.reload(); // 성공 시 새로고침
+      } catch (error) {
+        console.error(error);
+        alert("삭제 중 오류가 발생했습니다. 다시 시도해주세요.");
+      } finally {
+        setIsConfirmingDeleteAll(false);
+      }
+    }
   };
 
   const applyInputs = (inputs?: Partial<ThreadInputs> | null) => {
@@ -254,7 +282,25 @@ export default function Home() {
           ))}
         </div>
 
-        <div className="p-4 border-t border-gray-200 dark:border-[#333]">
+        {/* 🌟 [추가] 사이드바 하단: 전체 삭제 & 후원 버튼 묶음 */}
+        <div className="p-4 border-t border-gray-200 dark:border-[#333] flex flex-col gap-2">
+          {/* 전체 대화 삭제 버튼 */}
+          <button 
+            onClick={handleDeleteAll} 
+            className={`w-full flex items-center justify-center gap-2 py-3 font-bold rounded-xl transition-colors shadow-sm ${
+              isConfirmingDeleteAll 
+                ? 'bg-red-500 hover:bg-red-600 text-white' 
+                : 'bg-gray-100 hover:bg-gray-200 text-gray-700 dark:bg-[#2d2d2d] dark:hover:bg-[#3d3d3d] dark:text-gray-300'
+            }`}
+          >
+            {isConfirmingDeleteAll ? (
+              <>🚨 찐으로 전체 삭제 (클릭)</>
+            ) : (
+              <><Trash2 size={18} /> 전체 대화 삭제</>
+            )}
+          </button>
+          
+          {/* 기존 후원 버튼 */}
           <button onClick={() => setShowDonation(true)} className="w-full flex items-center justify-center gap-2 py-3 bg-yellow-400 hover:bg-yellow-500 text-yellow-900 font-bold rounded-xl transition-colors shadow-sm">
             <Coffee size={18} /> 서버 운영 후원하기
           </button>
