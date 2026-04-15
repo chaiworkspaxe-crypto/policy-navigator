@@ -36,7 +36,7 @@ def today_text() -> str:
     return datetime.now(KST).strftime("%Y-%m-%d")
 
 
-# 🌟 [최적화 2] 공통 DB 세션 관리자 (보일러플레이트 코드 제거)
+# 🌟 [최적화 2] 공통 DB 세션 관리자
 @contextmanager
 def db_session():
     """
@@ -115,9 +115,10 @@ def init_db():
             """)
 
             # 2. 정책 데이터 웨어하우스 테이블 생성 (AI 벡터 검색용)
+            # 🌟 [수정] policy_id -> id 로 변경
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS policies (
-                    policy_id TEXT PRIMARY KEY,
+                    id TEXT PRIMARY KEY,
                     title TEXT NOT NULL,
                     provider TEXT NOT NULL,
                     category TEXT,
@@ -149,17 +150,20 @@ def init_db():
 
 def upsert_policy(policy_data: dict):
     now = now_text()
+    # 🌟 [방어 로직] 딕셔너리에 policy_id로 들어와도 id로 인식하도록 처리
+    policy_id_val = policy_data.get('id', policy_data.get('policy_id'))
+    
     with db_session() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO policies (
-                    policy_id, title, provider, category, target_audience,
+                    id, title, provider, category, target_audience,
                     age_req, income_req, region_req, summary, url, deadline,
                     embedding, created_at, updated_at
                 )
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (policy_id) DO UPDATE SET
+                ON CONFLICT (id) DO UPDATE SET
                     title = EXCLUDED.title,
                     provider = EXCLUDED.provider,
                     category = EXCLUDED.category,
@@ -175,10 +179,10 @@ def upsert_policy(policy_data: dict):
                     is_active = TRUE
                 """,
                 (
-                    policy_data['policy_id'], policy_data['title'], policy_data['provider'], 
+                    policy_id_val, policy_data.get('title', ''), policy_data.get('provider', ''), 
                     policy_data.get('category', ''), policy_data.get('target_audience', ''),
                     policy_data.get('age_req', ''), policy_data.get('income_req', ''),
-                    policy_data.get('region_req', ''), policy_data['summary'], 
+                    policy_data.get('region_req', ''), policy_data.get('summary', ''), 
                     policy_data.get('url', ''), policy_data.get('deadline', ''),
                     policy_data.get('embedding'), now, now
                 )
@@ -188,9 +192,10 @@ def search_policies(query_embedding: list, limit: int = 10):
     with db_session() as conn:
         register_vector(conn)
         with conn.cursor(cursor_factory=DictCursor) as cur:
+            # 🌟 [수정] SELECT policy_id -> SELECT id 로 변경
             cur.execute(
                 """
-                SELECT policy_id, title, provider, category, target_audience, 
+                SELECT id, title, provider, category, target_audience, 
                        age_req, income_req, region_req, summary, url, deadline
                 FROM policies
                 WHERE is_active = TRUE
