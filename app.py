@@ -16,13 +16,13 @@ st.set_page_config(page_title="💵 전국민 맞춤형 정책 내비게이터")
 from api_client import (
     api_create_thread,
     api_delete_thread,
-    api_get_ai_response,
     api_list_threads,
     api_load_inputs,
     api_load_messages,
     api_rename_thread,
     api_save_inputs,
     get_api_base_url,
+    api_get_ai_response_stream, # 🌟 스트리밍 함수 임포트 (확인 필수!)
 )
 
 API_BASE_URL = get_api_base_url()
@@ -2112,45 +2112,8 @@ render_examples_box()
 # 입력 폼 렌더링
 render_input_form(CITY_TO_DISTRICTS, DONG_MAP)
 
-# 🚀 AI 검색 로직 (Fragment 밖에서 실행되어야 메인 대화창 렌더링이 깔끔하게 이루어짐)
-if st.session_state.get("trigger_search", False):
-    st.session_state["trigger_search"] = False
-    
-    region_text = build_region_text(
-        st.session_state["selected_city"],
-        st.session_state["selected_district"],
-        st.session_state["selected_dong"]
-    )
-
-    user_display_text = build_user_display_text(
-        region_text,
-        st.session_state["birth_year"],
-        st.session_state["extra_info"]
-    )
-
-    append_message("user", user_display_text, "structured_search")
-
-    try:
-        with st.spinner("💆‍♂️ 클라우드 AI가 영혼까지 끌어모아 검색 및 분석 중입니다..."):
-            assistant_text = api_get_ai_response(
-                user_id=st.session_state["browser_user_id"],
-                thread_id=st.session_state["thread_id"],
-                city=st.session_state["selected_city"],
-                district=st.session_state["selected_district"],
-                dong=st.session_state["selected_dong"],
-                birth_year=st.session_state["birth_year"],
-                extra_info=st.session_state["extra_info"]
-            )
-
-        append_message("assistant", assistant_text, "search_result")
-        ensure_valid_active_thread(show_error=False, show_notice=False)
-        st.rerun()
-
-    except Exception as e:
-        st.error(f"클라우드 통신 오류: {e}")
-
 # --------------------------------------------------
-# 대화 출력
+# 대화 출력 로직 (위로 이동)
 # --------------------------------------------------
 if st.session_state["messages"]:
     st.subheader("💬 대화 및 검색 결과")
@@ -2223,8 +2186,63 @@ for i, msg in enumerate(st.session_state["messages"]):
                     unsafe_allow_html=True
                 )
 
+
 # --------------------------------------------------
-# 추가 질문 입력창 (API 연동)
+# 🚀 AI 검색 로직 (스트리밍 완벽 적용)
+# --------------------------------------------------
+if st.session_state.get("trigger_search", False):
+    st.session_state["trigger_search"] = False
+    
+    region_text = build_region_text(
+        st.session_state["selected_city"],
+        st.session_state["selected_district"],
+        st.session_state["selected_dong"]
+    )
+
+    user_display_text = build_user_display_text(
+        region_text,
+        st.session_state["birth_year"],
+        st.session_state["extra_info"]
+    )
+
+    # 유저 메시지 화면에 바로 추가
+    append_message("user", user_display_text, "structured_search")
+    
+    with st.chat_message("user"):
+        label_text, label_type = get_user_message_label("structured_search")
+        if label_text:
+            render_message_label(label_text, label_type=label_type)
+        st.markdown(user_display_text)
+
+    try:
+        # 🌟 핵심 수정: spinner 제거하고 채팅창을 바로 염!
+        with st.chat_message("assistant"):
+            st.markdown("💆‍♂️ 클라우드 AI가 정책을 탐색하고 있습니다... (실시간 출력 중)")
+            
+            # 스트리밍 발전기(generator) 호출
+            stream_generator = api_get_ai_response_stream(
+                user_id=st.session_state["browser_user_id"],
+                thread_id=st.session_state["thread_id"],
+                city=st.session_state["selected_city"],
+                district=st.session_state["selected_district"],
+                dong=st.session_state["selected_dong"],
+                birth_year=st.session_state["birth_year"],
+                extra_info=st.session_state["extra_info"]
+            )
+            
+            # 🌟 st.write_stream이 제너레이터를 받아서 타자 치듯 화면에 뿌려줌
+            assistant_text = st.write_stream(stream_generator)
+
+        # 다 끝나면 세션에 저장
+        append_message("assistant", assistant_text, "search_result")
+        ensure_valid_active_thread(show_error=False, show_notice=False)
+        st.rerun()
+
+    except Exception as e:
+        st.error(f"클라우드 통신 오류: {e}")
+
+# --------------------------------------------------
+# 추가 질문 입력창 (스트리밍 적용)
 # --------------------------------------------------
 followup_disabled = len(st.session_state["messages"]) == 0
 
@@ -2248,10 +2266,19 @@ if followup_prompt:
 
     clear_delete_confirm()
     append_message("user", followup_prompt, "followup_question")
+    
+    with st.chat_message("user"):
+        label_text, label_type = get_user_message_label("followup_question")
+        if label_text:
+            render_message_label(label_text, label_type=label_type)
+        st.markdown(followup_prompt)
 
     try:
-        with st.spinner("클라우드 AI가 추가 질문을 분석 중입니다..."):
-            assistant_text = api_get_ai_response(
+        # 🌟 핵심 수정: 여기서도 spinner 대신 스트리밍 적용!
+        with st.chat_message("assistant"):
+            st.markdown("💬 답변을 작성하고 있습니다... (실시간 출력 중)")
+            
+            stream_generator = api_get_ai_response_stream(
                 user_id=st.session_state["browser_user_id"],
                 thread_id=st.session_state["thread_id"],
                 city=st.session_state["selected_city"],
@@ -2261,6 +2288,8 @@ if followup_prompt:
                 extra_info=st.session_state["extra_info"],
                 query=followup_prompt
             )
+            
+            assistant_text = st.write_stream(stream_generator)
 
         append_message("assistant", assistant_text, "followup_answer")
         ensure_valid_active_thread(show_error=False, show_notice=False)
