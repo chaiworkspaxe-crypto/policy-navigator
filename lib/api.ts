@@ -75,6 +75,11 @@ export const api = {
     await apiClient.delete(`/threads/${threadId}`, { params: { user_id: userId } });
   },
 
+  // 🌟 [추가] 전체 대화 삭제 API
+  deleteAllThreads: async (userId: string): Promise<void> => {
+    await apiClient.delete(`/threads/all`, { params: { user_id: userId } });
+  },
+
   getAdminStats: async (): Promise<{ total_users: number; total_threads: number; blocked_today: number; today_date: string }> => {
     const res = await apiClient.get("/admin/stats");
     return res.data.data;
