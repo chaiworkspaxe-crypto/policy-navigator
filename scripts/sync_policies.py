@@ -1,12 +1,12 @@
 import os
 import time
 import requests
-import urllib3 # 🌟 [추가] 보안 경고 제어용
+import urllib3
 import xml.etree.ElementTree as ET
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
-# 🌟 [추가] 파이썬아, 보안 인증서가 조금 이상해도 일단 믿고 진행해! (SSL 경고 끄기)
+# 🌟 파이썬아, 보안 인증서 경고창 띄우지 마!
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # 1. 환경 변수 로드
@@ -33,25 +33,23 @@ def sync_to_supabase(policies):
 
     formatted_data = []
     for p in policies:
-        # 🌟 중요: DB 컬럼명과 청년센터 API 필드명을 1:1로 매핑
         formatted_data.append({
-            "id": p.get("bizId", ""),                       # 정책 고유 ID (PK)
-            "title": p.get("polyBizSjnm", "이름 없음"),      # 정책명
-            "provider": p.get("cnsgNmor", "주관기관 없음"),  # 주관기관 (없으면 빈값)
-            "category": p.get("plcyTpNm", "기타"),          # 정책유형
-            "target_audience": (p.get("empmSttsCn", "") + " / " + p.get("accrRqisCn", "")).strip(" /"), # 취업상태 및 학력요건
-            "age_req": p.get("ageInfo", ""),                # 연령 요건
-            "income_req": "",                               # 소득 요건
-            "region_req": p.get("prcpCn", ""),              # 거주지 및 소득 등 참여요건
-            "summary": p.get("polyItcnCn", "") + "\n\n[지원내용]\n" + p.get("sporCn", ""), # 정책소개 + 지원내용
-            "url": p.get("rqutUrla", ""),                   # 온라인 신청 URL
-            "deadline": p.get("rqutPrdCn", ""),             # 신청 기간
-            "is_active": True,                              # 활성화 상태
-            "updated_at": "now()"                           # 업데이트 시간
+            "id": p.get("bizId", ""),                       
+            "title": p.get("polyBizSjnm", "이름 없음"),      
+            "provider": p.get("cnsgNmor", "주관기관 없음"),  
+            "category": p.get("plcyTpNm", "기타"),          
+            "target_audience": (p.get("empmSttsCn", "") + " / " + p.get("accrRqisCn", "")).strip(" /"), 
+            "age_req": p.get("ageInfo", ""),                
+            "income_req": "",                               
+            "region_req": p.get("prcpCn", ""),              
+            "summary": p.get("polyItcnCn", "") + "\n\n[지원내용]\n" + p.get("sporCn", ""), 
+            "url": p.get("rqutUrla", ""),                   
+            "deadline": p.get("rqutPrdCn", ""),             
+            "is_active": True,                              
+            "updated_at": "now()"                           
         })
 
     try:
-        # Upsert: id가 같으면 덮어쓰고, 없으면 새로 생성
         supabase.table("policies").upsert(
             formatted_data, 
             on_conflict="id"
@@ -69,8 +67,13 @@ def fetch_all_data():
         return
 
     page = 1
-    display = 100  # 한 번에 100개씩 수집
+    display = 100  
     total_saved = 0
+
+    # 🌟 [비밀 무기] 파이썬 봇이 아니라 윈도우 크롬 브라우저인 척 위장하는 신분증!
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
 
     while True:
         print(f"🔄 {page}페이지 (총 {display}개씩) 수집 요청 중...")
@@ -82,20 +85,23 @@ def fetch_all_data():
         }
 
         try:
-            # 🌟 [수정] verify=False 를 추가하여 정부 서버 보안 인증서 체크를 건너뜁니다.
-            response = requests.get(YOUTH_CENTER_URL, params=params, timeout=15, verify=False)
+            # 🌟 headers 장착! timeout 30초 넉넉하게! 인증서 검사 무시! (3단 콤보)
+            response = requests.get(
+                YOUTH_CENTER_URL, 
+                params=params, 
+                headers=headers, 
+                timeout=30, 
+                verify=False
+            )
             response.raise_for_status()
             
-            # XML 데이터 파싱
             root = ET.fromstring(response.content)
             
-            # API 내부 에러 체크
             error_node = root.find("error")
             if error_node is not None:
                 print(f"⚠️ API 에러 발생: {error_node.findtext('message')}")
                 break
 
-            # 'emp' 노드 리스트 가져오기
             emp_list = root.findall("emp")
             
             if not emp_list:
@@ -128,7 +134,6 @@ def fetch_all_data():
 
             print(f"✅ {page}페이지에서 {len(policies)}개의 데이터를 찾았습니다. DB로 전송 중...")
             
-            # Supabase에 저장
             is_success = sync_to_supabase(policies)
             
             if is_success:
@@ -138,8 +143,8 @@ def fetch_all_data():
                 print("⚠️ DB 저장 단계에서 실패했습니다. 작업을 중단합니다.")
                 break
 
-            # API 호출 제한 방지를 위한 짧은 휴식
-            time.sleep(1.2)
+            # API 호출 제한 방지를 위한 짧은 휴식 (중요!)
+            time.sleep(1.5)
             page += 1
 
         except Exception as e:
