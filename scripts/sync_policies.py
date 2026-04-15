@@ -26,7 +26,6 @@ if SUPABASE_URL and SUPABASE_KEY:
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def sync_to_supabase(policies):
-    """가져온 데이터를 Supabase DB(policies 테이블)에 저장하는 함수"""
     if not supabase:
         print("❌ 에러: Supabase 환경변수(URL 또는 KEY)가 설정되지 않았습니다.")
         return False
@@ -60,7 +59,7 @@ def sync_to_supabase(policies):
         return False
 
 def fetch_all_data():
-    print("🚀 [실전 모드] 온라인청년센터 청년정책 데이터 수집 및 DB 동기화 시작...")
+    print("🚀 [실전 모드] 온라인청년센터 데이터 수집 시작 (강의실/사내 프록시 우회 모드)...")
     
     if not YOUTH_API_KEY:
         print("❌ 에러: 환경변수에서 YOUTH_POLICY_API_KEY를 찾을 수 없습니다.")
@@ -70,10 +69,17 @@ def fetch_all_data():
     display = 100  
     total_saved = 0
 
-    # 🌟 [비밀 무기] 파이썬 봇이 아니라 윈도우 크롬 브라우저인 척 위장하는 신분증!
+    # 🌟 [비밀 무기 1] 완벽한 일반 사용자(크롬 브라우저)로 위장하는 신분증
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Connection": "keep-alive"
     }
+
+    # 🌟 [비밀 무기 2] 대학교/회사 내부망의 8080 포트 납치(프록시)를 무시하는 세션 생성!
+    session = requests.Session()
+    session.trust_env = False  # 환경변수에 있는 HTTP_PROXY, HTTPS_PROXY를 강제로 무시함
 
     while True:
         print(f"🔄 {page}페이지 (총 {display}개씩) 수집 요청 중...")
@@ -85,8 +91,8 @@ def fetch_all_data():
         }
 
         try:
-            # 🌟 headers 장착! timeout 30초 넉넉하게! 인증서 검사 무시! (3단 콤보)
-            response = requests.get(
+            # 🌟 session 객체로 요청을 보내서 방화벽 우회!
+            response = session.get(
                 YOUTH_CENTER_URL, 
                 params=params, 
                 headers=headers, 
@@ -143,7 +149,6 @@ def fetch_all_data():
                 print("⚠️ DB 저장 단계에서 실패했습니다. 작업을 중단합니다.")
                 break
 
-            # API 호출 제한 방지를 위한 짧은 휴식 (중요!)
             time.sleep(1.5)
             page += 1
 
