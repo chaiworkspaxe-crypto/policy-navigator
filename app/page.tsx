@@ -337,7 +337,7 @@ export default function Home() {
                       {isLastMessage && isAssistant && loading && (
                         <div className="mt-4 flex items-center gap-2 text-sm font-bold text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 px-4 py-2.5 rounded-xl w-fit animate-pulse border border-green-200 dark:border-green-800/30 shadow-sm">
                           <Loader2 size={16} className="animate-spin shrink-0" />
-                          <span>{aiStatus || "정책 데이터를 열심히 분석하고 있습니다..."}</span>
+                          <span>{aiStatus || "좌뇌론 글 쓰고 우뇌론 검색 중! 🧠💥 멀티태스킹에 AI CPU가 울고 있으니 타자가 살짝 버벅여도 봐주세요 🥺💦"}</span>
                         </div>
                       )}
 
