@@ -339,7 +339,7 @@ export default function AdminTestPage() {
           {loading && messages[messages.length - 1]?.content === "" && (
             <div className="mt-4 flex justify-start gap-3 sm:gap-4">
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-600 shadow-sm"><Loader2 size={16} className="animate-spin text-white" /></div>
-              <div className="p-3 text-sm text-gray-500 dark:text-gray-400 font-medium">{aiStatus || "정책 데이터를 분석 중입니다..."}</div>
+              <div className="p-3 text-sm text-gray-500 dark:text-gray-400 font-medium">{aiStatus || "좌뇌론 글 쓰고 우뇌론 검색 중! 🧠💥 멀티태스킹에 AI CPU가 울고 있으니 타자가 살짝 버벅여도 봐주세요 🥺💦"}</div>
             </div>
           )}
         </div>
