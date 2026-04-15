@@ -115,7 +115,6 @@ def init_db():
             """)
 
             # 2. 정책 데이터 웨어하우스 테이블 생성 (AI 벡터 검색용)
-            # 🌟 [수정] policy_id -> id 로 변경
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS policies (
                     id TEXT PRIMARY KEY,
@@ -150,7 +149,6 @@ def init_db():
 
 def upsert_policy(policy_data: dict):
     now = now_text()
-    # 🌟 [방어 로직] 딕셔너리에 policy_id로 들어와도 id로 인식하도록 처리
     policy_id_val = policy_data.get('id', policy_data.get('policy_id'))
     
     with db_session() as conn:
@@ -192,7 +190,6 @@ def search_policies(query_embedding: list, limit: int = 10):
     with db_session() as conn:
         register_vector(conn)
         with conn.cursor(cursor_factory=DictCursor) as cur:
-            # 🌟 [수정] SELECT policy_id -> SELECT id 로 변경
             cur.execute(
                 """
                 SELECT id, title, provider, category, target_audience, 
@@ -475,6 +472,18 @@ def delete_thread(user_id: str, thread_id: str):
                 cur.execute("UPDATE chat_sessions SET active_thread_id = %s, updated_at = %s WHERE user_id = %s", (next_thread_id, now, user_id))
             else:
                 cur.execute("UPDATE chat_sessions SET updated_at = %s WHERE user_id = %s", (now, user_id))
+
+
+# 🌟 [신규 추가] 전체 대화 삭제 함수
+def delete_all_threads(user_id: str):
+    """특정 유저의 모든 대화와 관련 데이터를 싹 다 날려버립니다 🌪️"""
+    now = now_text()
+    with db_session() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM chat_messages WHERE user_id = %s", (user_id,))
+            cur.execute("DELETE FROM chat_thread_inputs WHERE user_id = %s", (user_id,))
+            cur.execute("DELETE FROM chat_threads WHERE user_id = %s", (user_id,))
+            cur.execute("UPDATE chat_sessions SET active_thread_id = NULL, updated_at = %s WHERE user_id = %s", (now, user_id))
 
 
 # ==============================================================================
