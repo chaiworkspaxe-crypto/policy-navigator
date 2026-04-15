@@ -30,13 +30,13 @@ def sync_to_supabase(policies):
     for p in policies:
         # 🌟 중요: DB 컬럼명과 API 필드명을 1:1로 정확히 매핑함
         formatted_data.append({
-            "id": p.get("서비스ID"),              # 고유 ID (PK)
+            "id": p.get("서비스ID"),
             "title": p.get("서비스명", "이름 없음"),
-            "agency": p.get("소관기관명", "기관 없음"), # SQL의 agency 컬럼에 매핑
-            "description": p.get("지원대상", ""),     # SQL의 description 컬럼에 매핑
+            "provider": p.get("소관기관명", "기관 없음"), # ✅ DB 컬럼명 일치
+            "summary": p.get("지원대상", ""),           # ✅ DB 컬럼명 일치
             "category": p.get("서비스분야", ""),
-            "link": p.get("상세조회URL", ""),
-            "updated_at": "now()"                 # 현재 시간 기록
+            "url": p.get("상세조회URL", ""),            # 🌟 link도 url로 통일하는 게 좋아!
+            "updated_at": "now()"
         })
 
     try:
