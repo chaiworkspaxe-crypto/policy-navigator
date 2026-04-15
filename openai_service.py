@@ -227,8 +227,14 @@ def create_agent_executor():
     tools = [search_youth_api, search_internal_db, naver_web_search, global_web_search, verify_official_page, get_current_time]
 
     # GPT-5.4의 지능을 활용하여 병렬 도구 사용 활성화
-    llm = ChatOpenAI(model=model_name, temperature=0.1, streaming=True).bind_tools(tools)
-
+    # GPT-5.4의 지능을 활용하여 병렬 도구 사용 활성화
+    llm = ChatOpenAI(
+        model=model_name, 
+        temperature=0.1, 
+        max_tokens=8192,  # 🌟 [핵심] 답변이 중간에 잘리지 않도록 최대 글자 수 대폭 상향!
+        streaming=True
+    ).bind_tools(tools)
+    
     prompt = ChatPromptTemplate.from_messages([
         ("system", SYSTEM_PROMPT),
         MessagesPlaceholder(variable_name="messages"),
