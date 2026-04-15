@@ -225,6 +225,8 @@ async def get_ai_response_stream(agent_executor, messages: list):
                 friendly_msg = "가짜 정보는 선 넘었죠! 공식 홈페이지 들어가서 돋보기로 팩트체크 중 🔎👀"
             elif tool_name == "get_current_time":
                 friendly_msg = "이미 끝난 공고 주면 혼나니까! 실시간 마감일 깐깐하게 비교 중입니다 🗓️⏳"
+            elif tool_name == "search_youth_api":
+                friendly_msg = "정부 청년정책 전용망 VIP 프리패스 접속 중! 💳✨ 가장 정확한 공식 데이터를 쓸어옵니다!"
             else:
                 friendly_msg = "하나라도 더 찾아내려고 AI가 풀야근 중입니다! 쪼~금만 더 기다려주세요 😭🌙"
 
