@@ -1,5 +1,5 @@
 import os
-
+import json
 import requests
 import streamlit as st
 from dotenv import load_dotenv
@@ -134,3 +134,59 @@ def api_get_ai_response(user_id, thread_id, city, district, dong, birth_year, ex
         raise Exception(f"서버 통신 오류: {res.status_code} - {res.text}")
     except Exception as e:
         raise Exception(f"클라우드 API 통신 실패: {e}")
+
+
+# 🌟 [신규 추가] 실시간 타자 효과를 위한 스트리밍 전용 함수
+def api_get_ai_response_stream(user_id, thread_id, city, district, dong, birth_year, extra_info, query=None):
+    payload = {
+        "user_id": user_id,
+        "thread_id": thread_id,
+        "city": city,
+        "district": district,
+        "dong": dong,
+        "birth_year": birth_year,
+        "extra_info": extra_info,
+        "query": query,
+    }
+    
+    base_url = get_api_base_url()
+    # ⚠️ 백엔드 엔드포인트 주의: 백엔드가 스트리밍을 /chat/stream 에서 주는지, /chat 에서 주는지 확인하세요.
+    url = f"{base_url}/chat/stream" 
+
+    try:
+        # stream=True 옵션으로 파이프라인 개방
+        response = requests.post(url, json=payload, stream=True, timeout=90)
+        response.raise_for_status()
+
+        # 데이터가 한 줄씩 날아올 때마다 바로바로 던져줌(yield)
+        for line in response.iter_lines():
+            if line:
+                decoded_line = line.decode('utf-8')
+                
+                # SSE 형식의 'data: ' 접두사 제거
+                if decoded_line.startswith("data: "):
+                    decoded_line = decoded_line[6:]
+
+                try:
+                    data = json.loads(decoded_line)
+                    chunk_type = data.get('type')
+
+                    # 백엔드에서 'content' 타입으로 보낸 글자만 화면에 출력
+                    if chunk_type == 'content':
+                        yield data.get('delta', '')
+                        
+                    # 백엔드에서 'status' 타입으로 보낸 진행 상황 메시지 처리 (옵션)
+                    elif chunk_type == 'status':
+                        # st.write_stream은 yield 받은 문자열을 화면에 합치므로,
+                        # 상태 메시지도 원한다면 아래처럼 보낼 수 있습니다.
+                        # yield f"\n_{data.get('message', '')}_\n"
+                        pass # 지금은 깔끔하게 글자만 출력하도록 패스!
+
+                except json.JSONDecodeError:
+                    continue # JSON 파싱 에러 시 무시하고 다음 진행
+                    
+        # 스트리밍 통신이 완벽하게 종료되면 캐시 초기화
+        st.cache_data.clear()
+        
+    except Exception as e:
+        yield f"\n\n[스트리밍 연결 오류 발생: {e}]"
