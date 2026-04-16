@@ -48,11 +48,9 @@ export default function Home() {
   // 🌟 [모바일 UX 최적화] 유저가 다른 앱(카톡 등)을 보다가 다시 브라우저로 돌아왔을 때를 감지!
   useEffect(() => {
     const handleVisibilityChange = () => {
-      // document.visibilityState가 'visible'이 되면 유저가 화면을 다시 켰다는 뜻!
       if (document.visibilityState === 'visible' && currentThreadId && userId) {
         console.log("유저가 돌아왔습니다! 최신 데이터를 다시 불러옵니다.");
         
-        // 스트리밍이 끊겨서 멈춰있을 수 있으니, DB에 저장된 곳까지만이라도 다시 깔끔하게 불러와서 화면을 정리해줌.
         api.loadMessages(userId, currentThreadId)
           .then((reloadedMessages) => {
             if (reloadedMessages.length > 0) {
@@ -383,16 +381,27 @@ export default function Home() {
 
                       {!loading && isAssistant && message.content.length > 50 && (
                         <div className="mt-4 pt-3 border-t border-gray-200 dark:border-[#444] flex justify-end animate-in fade-in duration-300">
+                          {/* 🌟 PC와 모바일을 완벽하게 구분해서 작동하는 똑똑한 공유 버튼! */}
                           <button onClick={async () => {
-                              const shareData = { title: '나에게 딱 맞는 맞춤형 정부 혜택 🎁', text: '정책 내비게이터가 찾아준 맞춤형 혜택을 확인해보세요!\n\n' + message.content + '\n\n', url: window.location.href };
+                              const shareData = { 
+                                title: '나에게 딱 맞는 맞춤형 정부 혜택 🎁', 
+                                text: '정책 내비게이터가 찾아준 맞춤형 혜택을 확인해보세요!\n\n' + message.content + '\n\n', 
+                                url: window.location.href 
+                              };
                               try { 
-                                if (typeof navigator.share === 'function') { 
+                                const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+                                
+                                if (isMobile && navigator.share) { 
+                                  // 스마트폰: 카카오톡 등 네이티브 앱 선택 창 띄우기
                                   await navigator.share(shareData); 
                                 } else { 
-                                  await navigator.clipboard.writeText(shareData.text + '\n' + shareData.url); 
-                                  alert('결과가 클립보드에 복사되었습니다! 친구에게 붙여넣기 해보세요.'); 
+                                  // PC: 윈도우 공유창 무시하고, 바로 클립보드에 풀 텍스트 복사!
+                                  await navigator.clipboard.writeText(shareData.text + shareData.url); 
+                                  alert('전체 결과가 클립보드에 복사되었습니다! 메모장이나 카톡 PC버전에 붙여넣기 해보세요.'); 
                                 } 
-                              } catch (err) { console.error('공유 실패:', err); }
+                              } catch (err) { 
+                                console.error('공유/복사 실패:', err); 
+                              }
                             }} className="text-xs font-bold bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-3 py-1.5 rounded-lg hover:bg-green-200 dark:hover:bg-green-800/50 transition-colors flex items-center gap-1">🔗 결과 공유하기</button>
                         </div>
                       )}
