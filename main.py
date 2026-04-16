@@ -275,9 +275,13 @@ async def chat_stream(request: ChatRequest, http_request: Request):
         save_chat_message(user_id, thread_id, "user", user_message, message_type)
         
         agent_messages = build_agent_messages(previous_messages, user_message)
-
+        
+        
         # 3. 실시간 스트리밍 제너레이터
+        
         async def event_generator():
+            # 🌟 [아이폰 사파리 참교육 코드] 시작하자마자 의미 없는 주석(:)과 공백 2048개를 쏴서 사파리 버퍼를 강제로 비움!
+            yield f": {' ' * 2048}\n\n"
             agent_executor = create_agent_executor()
             full_assistant_message = ""
             
@@ -285,6 +289,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 # AI가 생각하는 족족 한 줄씩 받아서 프론트엔드로 쏨
                 async for chunk in get_ai_response_stream(agent_executor, agent_messages):
                     yield f"data: {chunk}\n\n"
+                    # ... (이하 동일)
                     
                     # DB에 저장하기 위해 백그라운드에서 글자를 조립함
                     try:
