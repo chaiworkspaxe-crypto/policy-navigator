@@ -25,7 +25,7 @@ from chat_db import (
     consume_daily_request_quota,
     get_admin_dashboard_stats
 )
-from worker import process_chat_task
+# 🌟 [최적화] 더 이상 Celery 워커를 쓰지 않으므로 worker 임포트 삭제 완료!
 
 # 🌟 [신규 추가] AI 스트리밍 모듈 임포트!
 from openai_service import create_agent_executor, get_ai_response_stream
@@ -188,64 +188,14 @@ def health_check(): return {"ok": True, "status": "healthy"}
 def admin_stats():
     return {"ok": True, "data": get_admin_dashboard_stats()}
 
-@app.post("/chat")
-async def chat(request: ChatRequest, http_request: Request):
-    """기존의 비동기 웹소켓/워커용 엔드포인트 (유지)"""
-    try:
-        user_id, thread_id = (request.user_id or "").strip(), (request.thread_id or "").strip()
-        if not user_id: raise HTTPException(status_code=400, detail="user_id는 필수입니다.")
 
-        is_admin = (user_id == ADMIN_PASS_KEY)
+# 🌟 [최적화] 더 이상 사용하지 않는 옛날 POST /chat (워커 연동용) 삭제 완료!
 
-        if not is_admin:
-            fingerprint = get_client_fingerprint(http_request)
-            quota = consume_daily_request_quota(fingerprint, daily_limit=4)
-            
-            if not quota["allowed"]:
-                logger.warning(f"⚠️ [Quota Exceeded] IP 핑거프린트: {fingerprint}")
-                raise HTTPException(
-                    status_code=403, 
-                    detail="오늘의 맞춤 혜택 검색 횟수(4회)를 모두 사용하셨습니다. 서버 유지를 위해 내일 다시 찾아와 주세요! 🙇‍♂️"
-                )
 
-        user_message, message_type = normalize_request(
-            request.city, request.district, request.dong,
-            request.birth_year, request.extra_info, request.query
-        )
-
-        if not thread_id: thread_id = create_thread(user_id=user_id, set_active=False)
-
-        logger.info(f"🚀 [새로운 혜택 검색] User: {user_id[-6:]} | Thread: {thread_id[-6:]}")
-        if request.city:
-            logger.info(f"📍 [조건] {request.city} {request.district} | {request.birth_year}년생")
-        else:
-            logger.info(f"💬 [추가질문] {request.query}")
-
-        persist_thread_inputs_if_present(
-            user_id, thread_id, request.city, request.district, request.dong,
-            request.birth_year, request.extra_info
-        )
-
-        previous_messages = load_chat_messages(user_id, thread_id)
-        save_chat_message(user_id, thread_id, "user", user_message, message_type)
-
-        agent_messages = build_agent_messages(previous_messages, user_message)
-
-        logger.info(f"⚙️ [Worker 전달 완료] 백그라운드 AI 검색 시작...")
-        process_chat_task.delay(thread_id, user_id, agent_messages, message_type)
-
-        return {"ok": True, "thread_id": thread_id, "message": "Task queued successfully"}
-
-    except HTTPException: raise
-    except Exception as e: 
-        logger.error(f"❌ [서버 에러 발생]: {str(e)}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
-
-# 🌟 [신규 추가] Streamlit을 위한 HTTP 기반 실시간 스트리밍 엔드포인트!
+# 🌟 [신규 추가] Streamlit/Next.js를 위한 HTTP 기반 실시간 스트리밍 엔드포인트 (절대 삭제 금지!)
 @app.post("/chat/stream")
 async def chat_stream(request: ChatRequest, http_request: Request):
-    """Streamlit과 직접 연결되어 타자 치듯 실시간으로 데이터를 내려주는 엔드포인트"""
+    """프론트엔드와 직접 연결되어 타자 치듯 실시간으로 데이터를 내려주는 엔드포인트"""
     try:
         user_id, thread_id = (request.user_id or "").strip(), (request.thread_id or "").strip()
         if not user_id: raise HTTPException(status_code=400, detail="user_id는 필수입니다.")
@@ -321,46 +271,9 @@ async def chat_stream(request: ChatRequest, http_request: Request):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.websocket("/ws/chat/{thread_id}")
-async def websocket_endpoint(websocket: WebSocket, thread_id: str):
-    await websocket.accept()
-    
-    # 🌟 [수정] 꼬리표 떼어낸 안전한 redis 클라이언트로 연결!
-    redis_client = get_async_redis_client()
-    pubsub = redis_client.pubsub()
-    channel_name = f"chat_{thread_id}"
-    await pubsub.subscribe(channel_name)
 
-    # 🌟 [핵심 해결책] Render 100초 타임아웃 방어 (20초마다 심장 박동)
-    async def keep_alive():
-        while True:
-            await asyncio.sleep(20)
-            try:
-                await websocket.send_text(json.dumps({"type": "ping"}))
-            except:
-                break
+# 🌟 [최적화] 더 이상 사용하지 않는 옛날 웹소켓 /ws/chat 삭제 완료!
 
-    ping_task = asyncio.create_task(keep_alive())
-
-    try:
-        async for message in pubsub.listen():
-            if message['type'] == 'message':
-                data = message['data'].decode('utf-8')
-                await websocket.send_text(data)
-                
-                if '"type": "done"' in data or '"type": "error"' in data:
-                    break
-    except WebSocketDisconnect:
-        pass 
-    except Exception as e:
-        logger.error(f"🔌 [웹소켓 에러]: {e}")
-    finally:
-        ping_task.cancel()
-        await pubsub.unsubscribe(channel_name)
-        await redis_client.close()
-        try:
-            await websocket.close()
-        except: pass
 
 @app.get("/threads")
 def get_threads(user_id: str = Query(...)): return {"ok": True, "threads": list_user_threads(user_id.strip())}
