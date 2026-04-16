@@ -1,11 +1,21 @@
 import os
+import re
 import json
-import urllib.request
-import urllib.parse
-from functools import lru_cache
-import pytz
+import asyncio 
+import traceback
+import hashlib
+import logging
 from datetime import datetime
-from openai import OpenAI 
+from contextlib import asynccontextmanager
+from typing import Optional
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+import redis.asyncio as aioredis 
+import sentry_sdk 
 
 # 🌟 불필요해진 requests와 BeautifulSoup(bs4) 임포트 삭제로 파일 경량화!
 
@@ -20,8 +30,8 @@ from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import tool
 
-# (DB 검색 관련 설정이 있다면 유지하세요)
-# from chat_db import search_policies 
+# 🌟 [핵심 수정] 주석 해제! 우리가 만든 진짜 DB 검색 함수를 불러옵니다.
+from chat_db import search_policies 
 
 @tool
 def get_current_time() -> str:
@@ -30,24 +40,28 @@ def get_current_time() -> str:
 
 @tool
 def search_internal_db(query: str) -> str:
-    """사용자 질문을 바탕으로 내부 Supabase DB(policies 테이블)에서 정책을 검색합니다."""
+    """사용자 질문을 바탕으로 내부 DB에서 정책을 검색합니다."""
     try:
-        # agency -> provider, description -> summary 
-        response = supabase.table("policies").select("title, provider, category, target_audience, summary, url, deadline").limit(5).execute()
+        # 🌟 [핵심 수정] Supabase 찌꺼기를 완전히 지우고, chat_db의 search_policies를 바로 호출!
+        results = search_policies(query)
         
-        if not response.data:
+        if not results:
             return "내부 DB에서 일치하는 정책을 찾지 못했습니다. naver_web_search를 사용하세요."
             
-        results = []
-        for p in response.data:
-            title = p.get('title', '이름 없음')
-            provider = p.get('provider', '주관기관 없음')
-            summary = p.get('summary', '내용 없음')
-            url = p.get('url', '링크 없음')
+        # 🌟 search_policies가 리스트 딕셔너리를 반환할 경우를 대비한 안전한 포매팅
+        if isinstance(results, list):
+            formatted_results = []
+            for p in results:
+                title = p.get('title', '이름 없음')
+                provider = p.get('provider', '주관기관 없음')
+                summary = p.get('summary', '내용 없음')
+                url = p.get('url', '링크 없음')
+                formatted_results.append(f"- 정책명: {title} ({provider})\n  내용: {summary}\n  링크: {url}")
+            return "\n\n".join(formatted_results)
             
-            results.append(f"- 정책명: {title} ({provider})\n  내용: {summary}\n  링크: {url}")
-            
-        return "\n\n".join(results)
+        # 만약 이미 문자열로 잘 포매팅되어 나온다면 그대로 반환
+        return str(results)
+        
     except Exception as e:
         return f"DB 검색 중 오류 발생: {e}"
 
