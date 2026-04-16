@@ -12,12 +12,7 @@ langgraph
 truststore
 duckduckgo-search
 pytz
-beautifulsoup4
-requests
-celery
 redis
-websockets
 sentry-sdk
 playwright==1.43.0
 lxml==5.2.1
-supabase==2.4.3
