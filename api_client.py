@@ -114,29 +114,7 @@ def api_save_inputs(user_id: str, thread_id: str, inputs: dict):
         st.error(f"API 연결 차단됨 (save_inputs): {e}")
 
 
-def api_get_ai_response(user_id, thread_id, city, district, dong, birth_year, extra_info, query=None) -> str:
-    payload = {
-        "user_id": user_id,
-        "thread_id": thread_id,
-        "city": city,
-        "district": district,
-        "dong": dong,
-        "birth_year": birth_year,
-        "extra_info": extra_info,
-        "query": query,
-    }
-    try:
-        # AI 답변은 타임아웃 90초 유지, 실시간이 중요하므로 캐싱 제외
-        res = _request("POST", "/chat", json=payload, timeout=90)
-        if res.status_code == 200:
-            st.cache_data.clear()  # 메시지 추가 후 대화목록 카운트 갱신을 위해 비움
-            return res.json().get("answer", "응답을 파싱할 수 없습니다.")
-        raise Exception(f"서버 통신 오류: {res.status_code} - {res.text}")
-    except Exception as e:
-        raise Exception(f"클라우드 API 통신 실패: {e}")
-
-
-# 🌟 [신규 추가] 실시간 타자 효과를 위한 스트리밍 전용 함수
+# 🌟 [개조 완료] 이제 모든 AI 요청은 오직 이 '스트리밍' 함수만을 통과합니다! (구형 함수 삭제 완료)
 def api_get_ai_response_stream(user_id, thread_id, city, district, dong, birth_year, extra_info, query=None):
     payload = {
         "user_id": user_id,
@@ -150,12 +128,22 @@ def api_get_ai_response_stream(user_id, thread_id, city, district, dong, birth_y
     }
     
     base_url = get_api_base_url()
-    # ⚠️ 백엔드 엔드포인트 주의: 백엔드가 스트리밍을 /chat/stream 에서 주는지, /chat 에서 주는지 확인하세요.
+    # 🌟 메인 서버의 고속도로(/chat/stream)로 바로 꽂음!
     url = f"{base_url}/chat/stream" 
 
     try:
         # stream=True 옵션으로 파이프라인 개방
         response = requests.post(url, json=payload, stream=True, timeout=90)
+        
+        # 만약 일일 사용량 초과(403) 등의 에러가 발생하면 여기서 잡아냄
+        if response.status_code == 403:
+            try:
+                error_detail = response.json().get("detail", "사용량 초과")
+                yield f"\n\n🚨 **{error_detail}**"
+            except:
+                yield "\n\n🚨 **오늘의 맞춤 혜택 검색 횟수를 모두 사용하셨습니다.**"
+            return
+
         response.raise_for_status()
 
         # 데이터가 한 줄씩 날아올 때마다 바로바로 던져줌(yield)
@@ -175,12 +163,9 @@ def api_get_ai_response_stream(user_id, thread_id, city, district, dong, birth_y
                     if chunk_type == 'content':
                         yield data.get('delta', '')
                         
-                    # 백엔드에서 'status' 타입으로 보낸 진행 상황 메시지 처리 (옵션)
+                    # 상태 메시지는 깔끔하게 패스!
                     elif chunk_type == 'status':
-                        # st.write_stream은 yield 받은 문자열을 화면에 합치므로,
-                        # 상태 메시지도 원한다면 아래처럼 보낼 수 있습니다.
-                        # yield f"\n_{data.get('message', '')}_\n"
-                        pass # 지금은 깔끔하게 글자만 출력하도록 패스!
+                        pass 
 
                 except json.JSONDecodeError:
                     continue # JSON 파싱 에러 시 무시하고 다음 진행
