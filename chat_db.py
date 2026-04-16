@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 
 # .env 환경변수 로드
 load_dotenv()
+
+# 🌟 [자정 리셋의 핵심 1] 기준 시간을 무조건 한국 시간(KST)으로 고정!
 KST = ZoneInfo("Asia/Seoul")
 
 # 🌟 [최적화 1] 글로벌 DB 연결 풀 객체
@@ -32,6 +34,7 @@ def now_text() -> str:
     return datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
 
 
+# 🌟 [자정 리셋의 핵심 2] 매일 밤 00:00시가 되면 이 함수가 반환하는 문자열(예: 2026-04-17)이 바뀜!
 def today_text() -> str:
     return datetime.now(KST).strftime("%Y-%m-%d")
 
@@ -103,6 +106,8 @@ def init_db():
                     updated_at TEXT NOT NULL
                 )
             """)
+            
+            # 🌟 [자정 리셋의 핵심 3] user_id와 usage_date(날짜)를 기준으로 횟수를 따로 저장함
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS daily_request_usage (
                     user_id TEXT NOT NULL,
@@ -510,6 +515,10 @@ def get_daily_request_status(user_id: str, daily_limit: int) -> dict:
     return { "daily_limit": daily_limit, "used": used, "remaining": remaining, "allowed": remaining > 0, "usage_date": today_text() }
 
 
+# 🌟 [자정 리셋 작동 원리]
+# target_date = today_text()를 통해 현재 KST 기준의 '날짜(YYYY-MM-DD)'를 구합니다.
+# 00시 00분이 되면 이 날짜 텍스트가 변경되므로, DB에서 조회(SELECT) 시 기록이 없다고 판단하여 
+# 카운트가 0에서부터 자동으로 다시 시작됩니다! (완벽한 구조 💯)
 def consume_daily_request_quota(user_id: str, daily_limit: int) -> dict:
     if not user_id:
         return { "allowed": False, "daily_limit": daily_limit, "used": 0, "remaining": 0 if daily_limit > 0 else None, "usage_date": today_text() }
