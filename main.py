@@ -227,10 +227,9 @@ async def chat_stream(request: ChatRequest, http_request: Request):
         agent_messages = build_agent_messages(previous_messages, user_message)
         
         
-        # 3. 실시간 스트리밍 제너레이터
-        
+# 3. 실시간 스트리밍 제너레이터
         async def event_generator():
-            # 🌟 [아이폰 사파리 참교육 코드] 시작하자마자 의미 없는 주석(:)과 공백 2048개를 쏴서 사파리 버퍼를 강제로 비움!
+            # [아이폰 사파리 참교육 코드]
             yield f": {' ' * 2048}\n\n"
             agent_executor = create_agent_executor()
             full_assistant_message = ""
@@ -239,21 +238,24 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 # AI가 생각하는 족족 한 줄씩 받아서 프론트엔드로 쏨
                 async for chunk in get_ai_response_stream(agent_executor, agent_messages):
                     yield f"data: {chunk}\n\n"
-                    # ... (이하 동일)
                     
-                    # DB에 저장하기 위해 백그라운드에서 글자를 조립함
                     try:
                         data = json.loads(chunk)
                         if data.get("type") == "content":
                             full_assistant_message += data.get("delta", "")
                     except Exception:
                         pass
+                        
+            # 🌟 [신규 추가] 유저가 도중에 나갔을 때 발생하는 에러를 예쁘게 잡아서 처리!
+            except asyncio.CancelledError:
+                logger.warning(f"⚠️ [연결 끊김] 유저가 스트리밍 도중 이탈했습니다. AI 생성을 중단하여 자원을 절약합니다. (Thread: {thread_id})")
+                raise  # 서버가 연결을 완전히 끊을 수 있도록 다시 던져줌
+                
             finally:
                 # 4. 스트리밍 종료 시 완성된 답변을 DB에 최종 저장
                 if full_assistant_message:
                     ans_type = "followup_answer" if request.query else "search_result"
                     save_chat_message(user_id, thread_id, "assistant", full_assistant_message, ans_type)
-
         # 🌟 5. 파이프라인을 열어서 반환 (SSE 방식) - 서버 버퍼링 방지 헤더 장착 완료!
         return StreamingResponse(
             event_generator(), 
