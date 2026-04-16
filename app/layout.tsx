@@ -40,8 +40,12 @@ export const metadata: Metadata = {
     title: "정책 내비게이터 | 맞춤형 정부 혜택 찾기",
     description: "놓치고 있던 내 몫의 정부 혜택, AI가 10초 만에 찾아드려요! 🎁",
   },
+  // 🌟 [핵심 수정] 16x16, 32x32 두 가지 사이즈의 파비콘을 모두 등록하여 최적화 완료!
   icons: {
-    icon: "/favicon.ico",
+    icon: [
+      { url: '/favicon-16x16.png', sizes: '16x16', type: 'image/png' },
+      { url: '/favicon-32x32.png', sizes: '32x32', type: 'image/png' },
+    ],
   },
   // 🌟 [최종 삽입] 구글과 네이버의 소유권 확인 코드 적용 완료!
   verification: {
@@ -71,7 +75,7 @@ export default function RootLayout({
               window.dataLayer = window.dataLayer || [];
               function gtag(){dataLayer.push(arguments);}
               gtag('js', new Date());
-              gtag('config', 'G-EH957MVS6T', { // 👈 여기를 정확한 ID로 수정 완료!
+              gtag('config', 'G-EH957MVS6T', {
                 page_path: window.location.pathname,
               });
             `,
