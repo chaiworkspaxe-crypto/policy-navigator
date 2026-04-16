@@ -24,7 +24,6 @@ export default function Home() {
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [isFormExpanded, setIsFormExpanded] = useState(true);
 
-  // 🌟 [추가] 전체 삭제 버튼 상태 관리
   const [isConfirmingDeleteAll, setIsConfirmingDeleteAll] = useState(false);
   const deleteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -35,8 +34,6 @@ export default function Home() {
   const [extraInfo, setExtraInfo] = useState(EMPTY_INPUTS.extra_info);
   const [query, setQuery] = useState("");
 
-  const wsRef = useRef<WebSocket | null>(null);
-
   const availableDistricts = useMemo(() => CITY_TO_DISTRICTS[city] || [], [city]);
   const availableDongs = useMemo(() => DONG_MAP[`${city}-${district}`] || [], [city, district]);
 
@@ -46,8 +43,6 @@ export default function Home() {
     setUserId(storedId);
     void loadThreads(storedId);
     document.documentElement.classList.add('dark');
-
-    return () => { if (wsRef.current) wsRef.current.close(); };
   }, []);
 
   const toggleTheme = () => {
@@ -70,21 +65,18 @@ export default function Home() {
     } catch (err) { console.error("삭제 에러:", err); }
   };
 
-  // 🌟 [추가] 전체 대화 삭제 실행 함수 (안전핀 로직 포함)
   const handleDeleteAll = async () => {
     if (!isConfirmingDeleteAll) {
-      // 1단계: 확인 모드로 진입 (3초 뒤 원상복구)
       setIsConfirmingDeleteAll(true);
       deleteTimeoutRef.current = setTimeout(() => {
         setIsConfirmingDeleteAll(false);
       }, 3000);
     } else {
-      // 2단계: 진짜 삭제 실행
       if (deleteTimeoutRef.current) clearTimeout(deleteTimeoutRef.current);
       try {
         await api.deleteAllThreads(userId);
         alert("그동안의 혜택 탐색 기록이 깔끔하게 지워졌습니다! ✨");
-        window.location.reload(); // 성공 시 새로고침
+        window.location.reload();
       } catch (error) {
         console.error(error);
         alert("삭제 중 오류가 발생했습니다. 다시 시도해주세요.");
@@ -170,7 +162,8 @@ export default function Home() {
     try {
       await api.saveThreadInputs(userId, targetThreadId, { selected_city: city, selected_district: district, selected_dong: dong, birth_year: birthYear, extra_info: extraInfo });
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/chat`, {
+      // 🌟 [핵심 변경] 옛날 /chat 호출이 아닌, 새로운 직통 고속도로 /chat/stream 호출!
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/chat/stream`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           user_id: userId, thread_id: targetThreadId, city: isFollowUp ? undefined : city, district: isFollowUp ? undefined : district,
@@ -186,63 +179,49 @@ export default function Home() {
       }
       if (!response.ok) throw new Error("서버 통신 오류");
 
-      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "";
-      const wsProtocol = baseUrl.startsWith("https") ? "wss" : "ws";
-      const wsUrl = `${wsProtocol}://${baseUrl.replace(/^https?:\/\//, '')}/ws/chat/${targetThreadId}`;
-      
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
+      // 🌟 [핵심 변경] 웹소켓(ws) 다 지우고 Fetch 리더(Reader)로 SSE 스트리밍 실시간 수신!
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder("utf-8");
       let accumulatedContent = "";
-      let isNormalClose = false;
+      let buffer = "";
 
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === "content") {
-            accumulatedContent += data.delta;
-            setMessages((prev) => {
-              const next = [...prev];
-              next[next.length - 1] = { ...next[next.length - 1], content: accumulatedContent };
-              return next;
-            });
-            setAiStatus(""); 
-          } else if (data.type === "status") {
-            setAiStatus(data.message);
-          } else if (data.type === "done") {
-            isNormalClose = true; 
-            ws.close();
-            setLoading(false);
-            void api.listThreads(userId).then(setThreads);
-          } else if (data.type === "error") {
-            isNormalClose = true; 
-            setErrorMessage(data.message);
-            ws.close();
-            setLoading(false);
-          }
-        } catch (e) { console.error("WS Parse Error", e); }
-      };
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-      ws.onerror = () => {
-        if (!isNormalClose) {
-          setErrorMessage("실시간 통신 연결에 문제가 발생했습니다.");
-          setLoading(false);
-        }
-      };
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || ""; // 마지막 줄이 끊겼을 수 있으니 버퍼에 남김
 
-      ws.onclose = () => {
-        if (!isNormalClose) {
-          setErrorMessage("서버와의 연결이 끊어졌습니다. 도메인 연결 및 인증서 발급 후 정상 작동합니다.");
-          setLoading(false);
-          
-          setMessages((prev) => {
-            const next = [...prev];
-            if (next.length > 0 && next[next.length - 1].role === "assistant" && next[next.length - 1].content === "") {
-              return next.slice(0, -1);
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const dataStr = line.substring(6).trim();
+              if (!dataStr) continue;
+
+              try {
+                const data = JSON.parse(dataStr);
+                if (data.type === "content") {
+                  accumulatedContent += data.delta;
+                  setMessages((prev) => {
+                    const next = [...prev];
+                    next[next.length - 1] = { ...next[next.length - 1], content: accumulatedContent };
+                    return next;
+                  });
+                  setAiStatus(""); 
+                } else if (data.type === "status") {
+                  setAiStatus(data.message);
+                }
+              } catch (e) {
+                // 사파리 패딩 등 JSON이 아닌 데이터는 무시
+              }
             }
-            return next;
-          });
+          }
         }
-      };
+      }
+
+      setLoading(false);
+      void api.listThreads(userId).then(setThreads);
 
     } catch (error) {
       console.error(error);
@@ -282,9 +261,7 @@ export default function Home() {
           ))}
         </div>
 
-        {/* 🌟 [추가] 사이드바 하단: 전체 삭제 & 후원 버튼 묶음 */}
         <div className="p-4 border-t border-gray-200 dark:border-[#333] flex flex-col gap-2">
-          {/* 전체 대화 삭제 버튼 */}
           <button 
             onClick={handleDeleteAll} 
             className={`w-full flex items-center justify-center gap-2 py-3 font-bold rounded-xl transition-colors shadow-sm ${
@@ -300,7 +277,6 @@ export default function Home() {
             )}
           </button>
           
-          {/* 기존 후원 버튼 */}
           <button onClick={() => setShowDonation(true)} className="w-full flex items-center justify-center gap-2 py-3 bg-yellow-400 hover:bg-yellow-500 text-yellow-900 font-bold rounded-xl transition-colors shadow-sm">
             <Coffee size={18} /> 서버 운영 후원하기
           </button>
@@ -308,7 +284,6 @@ export default function Home() {
       </aside>
 
       <main className="relative flex h-full flex-1 flex-col w-full">
-        {/* 🌟 데스크톱 우측 상단 (컬러 인스타 로고 적용) */}
         <div className="absolute top-4 right-4 z-50 hidden md:flex items-center gap-3">
           <a href="https://www.instagram.com/policyai.kr/" target="_blank" rel="noopener noreferrer" className="p-2.5 rounded-full bg-white dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] shadow-sm hover:scale-110 transition-transform flex items-center justify-center">
             <img src="/instagram-logo.png" alt="Instagram" className="w-5 h-5 object-contain" />
@@ -318,7 +293,6 @@ export default function Home() {
           </button>
         </div>
 
-        {/* 🌟 모바일 우측 상단 (컬러 인스타 로고 적용) */}
         <div className="flex items-center justify-between bg-white dark:bg-[#1a1a1a] p-4 border-b border-gray-200 dark:border-[#333] md:hidden shrink-0">
           <div className="font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>맞춤 혜택 찾기</div>
           <div className="flex items-center gap-3">
