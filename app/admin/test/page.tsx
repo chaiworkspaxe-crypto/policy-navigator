@@ -144,7 +144,6 @@ export default function AdminTestPage() {
     try {
       await api.saveThreadInputs(userId, targetThreadId, { selected_city: city, selected_district: district, selected_dong: dong, birth_year: birthYear, extra_info: extraInfo });
 
-      // 🌟 [핵심 변경] 관리자 페이지도 직통 고속도로 /chat/stream 호출!
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/chat/stream`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -161,7 +160,6 @@ export default function AdminTestPage() {
       }
       if (!response.ok) throw new Error("서버 통신 오류");
 
-      // 🌟 [핵심 변경] Fetch 리더(Reader)로 SSE 스트리밍 실시간 수신!
       const reader = response.body?.getReader();
       const decoder = new TextDecoder("utf-8");
       let accumulatedContent = "";
@@ -312,18 +310,29 @@ export default function AdminTestPage() {
                   <div className={`max-w-[90%] sm:max-w-[85%] rounded-2xl p-4 shadow-sm overflow-hidden ${message.role === "user" ? "whitespace-pre-wrap border border-gray-200 dark:border-[#444] bg-white dark:bg-[#2d2d2d] text-gray-800 dark:text-gray-200 text-sm sm:text-base" : "bg-transparent text-gray-800 dark:text-gray-300"}`}>
                     {message.role === "assistant" ? <MarkdownMessage content={message.content} /> : <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>}
                     
+                    {/* 🌟 PC와 모바일을 완벽하게 구분해서 작동하는 똑똑한 공유 버튼! */}
                     {message.role === "assistant" && message.content.length > 50 && (
                       <div className="mt-4 pt-3 border-t border-gray-200 dark:border-[#444] flex justify-end">
                         <button onClick={async () => {
-                            const shareData = { title: '나에게 딱 맞는 맞춤형 정부 혜택 🎁', text: '정책 내비게이터가 찾아준 맞춤형 혜택을 확인해보세요!\n\n' + message.content.substring(0, 100) + '...', url: window.location.href };
+                            const shareData = { 
+                              title: '나에게 딱 맞는 맞춤형 정부 혜택 🎁', 
+                              text: '정책 내비게이터가 찾아준 맞춤형 혜택을 확인해보세요!\n\n' + message.content + '\n\n', 
+                              url: window.location.href 
+                            };
                             try { 
-                              if (typeof navigator.share === 'function') { 
+                              const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+                              
+                              if (isMobile && navigator.share) { 
+                                // 스마트폰: 카카오톡 등 네이티브 앱 선택 창 띄우기
                                 await navigator.share(shareData); 
                               } else { 
-                                await navigator.clipboard.writeText(shareData.text + '\n' + shareData.url); 
-                                alert('결과가 클립보드에 복사되었습니다! 친구에게 붙여넣기 해보세요.'); 
+                                // PC: 윈도우 공유창 무시하고, 바로 클립보드에 풀 텍스트 복사!
+                                await navigator.clipboard.writeText(shareData.text + shareData.url); 
+                                alert('전체 결과가 클립보드에 복사되었습니다! 메모장이나 카톡 PC버전에 붙여넣기 해보세요.'); 
                               } 
-                            } catch (err) { console.error('공유 실패:', err); }
+                            } catch (err) { 
+                              console.error('공유/복사 실패:', err); 
+                            }
                           }} className="text-xs font-bold bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-3 py-1.5 rounded-lg hover:bg-green-200 dark:hover:bg-green-800/50 transition-colors flex items-center gap-1">🔗 결과 공유하기</button>
                       </div>
                     )}
