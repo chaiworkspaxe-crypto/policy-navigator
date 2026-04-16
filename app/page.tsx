@@ -45,6 +45,28 @@ export default function Home() {
     document.documentElement.classList.add('dark');
   }, []);
 
+  // 🌟 [모바일 UX 최적화] 유저가 다른 앱(카톡 등)을 보다가 다시 브라우저로 돌아왔을 때를 감지!
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      // document.visibilityState가 'visible'이 되면 유저가 화면을 다시 켰다는 뜻!
+      if (document.visibilityState === 'visible' && currentThreadId && userId) {
+        console.log("유저가 돌아왔습니다! 최신 데이터를 다시 불러옵니다.");
+        
+        // 스트리밍이 끊겨서 멈춰있을 수 있으니, DB에 저장된 곳까지만이라도 다시 깔끔하게 불러와서 화면을 정리해줌.
+        api.loadMessages(userId, currentThreadId)
+          .then((reloadedMessages) => {
+            if (reloadedMessages.length > 0) {
+              setMessages(reloadedMessages);
+            }
+          })
+          .catch(console.error);
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [currentThreadId, userId]);
+
   const toggleTheme = () => {
     setIsDarkMode(!isDarkMode);
     if (isDarkMode) document.documentElement.classList.remove('dark');
@@ -162,7 +184,6 @@ export default function Home() {
     try {
       await api.saveThreadInputs(userId, targetThreadId, { selected_city: city, selected_district: district, selected_dong: dong, birth_year: birthYear, extra_info: extraInfo });
 
-      // 🌟 [핵심 변경] 옛날 /chat 호출이 아닌, 새로운 직통 고속도로 /chat/stream 호출!
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/chat/stream`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -179,7 +200,6 @@ export default function Home() {
       }
       if (!response.ok) throw new Error("서버 통신 오류");
 
-      // 🌟 [핵심 변경] 웹소켓(ws) 다 지우고 Fetch 리더(Reader)로 SSE 스트리밍 실시간 수신!
       const reader = response.body?.getReader();
       const decoder = new TextDecoder("utf-8");
       let accumulatedContent = "";
@@ -192,7 +212,7 @@ export default function Home() {
 
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split('\n');
-          buffer = lines.pop() || ""; // 마지막 줄이 끊겼을 수 있으니 버퍼에 남김
+          buffer = lines.pop() || ""; 
 
           for (const line of lines) {
             if (line.startsWith("data: ")) {
