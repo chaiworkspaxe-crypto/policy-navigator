@@ -13,9 +13,7 @@ const EMPTY_INPUTS: ThreadInputs = { selected_city: DEFAULT_CITY, selected_distr
 export default function AdminTestPage() {
   const ADMIN_ID = "8011";
   
-  // 🌟 [추가됨] 관리자 인증 상태를 관리하는 변수
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
-
   const [userId, setUserId] = useState(ADMIN_ID);
   const [threads, setThreads] = useState<ThreadItem[]>([]);
   const [currentThreadId, setCurrentThreadId] = useState("");
@@ -35,26 +33,21 @@ export default function AdminTestPage() {
   const [extraInfo, setExtraInfo] = useState(EMPTY_INPUTS.extra_info);
   const [query, setQuery] = useState("");
 
-  const wsRef = useRef<WebSocket | null>(null);
-
   const availableDistricts = useMemo(() => CITY_TO_DISTRICTS[city] || [], [city]);
   const availableDongs = useMemo(() => DONG_MAP[`${city}-${district}`] || [], [city, district]);
 
-  // 🌟 [수정됨] 페이지 접속 시 비밀번호를 묻는 로직 추가
   useEffect(() => {
     const password = window.prompt("관리자 비밀번호를 입력하세요.");
     
     if (password === "8011") {
-      setIsAdminAuthenticated(true); // 인증 성공!
+      setIsAdminAuthenticated(true);
       setUserId(ADMIN_ID);
       void loadThreads(ADMIN_ID);
       document.documentElement.classList.add('dark');
     } else {
       alert("비밀번호가 틀렸습니다. 메인 페이지로 이동합니다.");
-      window.location.href = "/"; // 메인 페이지로 강제 이동
+      window.location.href = "/";
     }
-
-    return () => { if (wsRef.current) wsRef.current.close(); };
   }, []);
 
   const toggleTheme = () => {
@@ -151,7 +144,8 @@ export default function AdminTestPage() {
     try {
       await api.saveThreadInputs(userId, targetThreadId, { selected_city: city, selected_district: district, selected_dong: dong, birth_year: birthYear, extra_info: extraInfo });
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/chat`, {
+      // 🌟 [핵심 변경] 관리자 페이지도 직통 고속도로 /chat/stream 호출!
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/chat/stream`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           user_id: userId, thread_id: targetThreadId, city: isFollowUp ? undefined : city, district: isFollowUp ? undefined : district,
@@ -167,43 +161,49 @@ export default function AdminTestPage() {
       }
       if (!response.ok) throw new Error("서버 통신 오류");
 
-      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "";
-      const wsProtocol = baseUrl.startsWith("https") ? "wss" : "ws";
-      const wsUrl = `${wsProtocol}://${baseUrl.replace(/^https?:\/\//, '')}/ws/chat/${targetThreadId}`;
-      
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
+      // 🌟 [핵심 변경] Fetch 리더(Reader)로 SSE 스트리밍 실시간 수신!
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder("utf-8");
       let accumulatedContent = "";
+      let buffer = "";
 
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === "content") {
-            accumulatedContent += data.delta;
-            setMessages((prev) => {
-              const next = [...prev];
-              next[next.length - 1] = { ...next[next.length - 1], content: accumulatedContent };
-              return next;
-            });
-            setAiStatus(""); 
-          } else if (data.type === "status") {
-            setAiStatus(data.message);
-          } else if (data.type === "done") {
-            ws.close();
-            setLoading(false);
-            void api.listThreads(userId).then(setThreads);
-          } else if (data.type === "error") {
-            setErrorMessage(data.message);
-            ws.close();
-            setLoading(false);
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || ""; 
+
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const dataStr = line.substring(6).trim();
+              if (!dataStr) continue;
+
+              try {
+                const data = JSON.parse(dataStr);
+                if (data.type === "content") {
+                  accumulatedContent += data.delta;
+                  setMessages((prev) => {
+                    const next = [...prev];
+                    next[next.length - 1] = { ...next[next.length - 1], content: accumulatedContent };
+                    return next;
+                  });
+                  setAiStatus(""); 
+                } else if (data.type === "status") {
+                  setAiStatus(data.message);
+                }
+              } catch (e) {
+                // Ignore parse errors (padding/chunks)
+              }
+            }
           }
-        } catch (e) { console.error("WS Parse Error", e); }
-      };
+        }
+      }
 
-      ws.onerror = () => {
-        setErrorMessage("실시간 통신 연결에 문제가 발생했습니다.");
-        setLoading(false);
-      };
+      setLoading(false);
+      void api.listThreads(userId).then(setThreads);
 
     } catch (error) {
       console.error(error);
@@ -214,7 +214,6 @@ export default function AdminTestPage() {
     }
   };
 
-  // 🌟 [추가됨] 인증되지 않았을 때는 아무 화면도 그리지 않음 (완벽한 차단)
   if (!isAdminAuthenticated) {
     return null; 
   }
@@ -250,7 +249,6 @@ export default function AdminTestPage() {
       </aside>
 
       <main className="relative flex h-full flex-1 flex-col w-full">
-        {/* 🌟 관리자 전용 배너 추가 */}
         <div className="bg-red-600 text-white text-center py-1.5 text-xs sm:text-sm font-bold tracking-wider z-50 shadow-md">
           ⚠️ 관리자 무제한 테스트 모드 활성화 (ID: 8011) ⚠️
         </div>
@@ -314,7 +312,6 @@ export default function AdminTestPage() {
                   <div className={`max-w-[90%] sm:max-w-[85%] rounded-2xl p-4 shadow-sm overflow-hidden ${message.role === "user" ? "whitespace-pre-wrap border border-gray-200 dark:border-[#444] bg-white dark:bg-[#2d2d2d] text-gray-800 dark:text-gray-200 text-sm sm:text-base" : "bg-transparent text-gray-800 dark:text-gray-300"}`}>
                     {message.role === "assistant" ? <MarkdownMessage content={message.content} /> : <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>}
                     
-                    {/* 🌟 안전한 타입 검사를 적용한 버튼 */}
                     {message.role === "assistant" && message.content.length > 50 && (
                       <div className="mt-4 pt-3 border-t border-gray-200 dark:border-[#444] flex justify-end">
                         <button onClick={async () => {
