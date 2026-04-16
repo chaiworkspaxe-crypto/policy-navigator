@@ -384,7 +384,7 @@ export default function Home() {
                       {!loading && isAssistant && message.content.length > 50 && (
                         <div className="mt-4 pt-3 border-t border-gray-200 dark:border-[#444] flex justify-end animate-in fade-in duration-300">
                           <button onClick={async () => {
-                              const shareData = { title: '나에게 딱 맞는 맞춤형 정부 혜택 🎁', text: '정책 내비게이터가 찾아준 맞춤형 혜택을 확인해보세요!\n\n' + message.content.substring(0, 100) + '...', url: window.location.href };
+                              const shareData = { title: '나에게 딱 맞는 맞춤형 정부 혜택 🎁', text: '정책 내비게이터가 찾아준 맞춤형 혜택을 확인해보세요!\n\n' + message.content + '\n\n', url: window.location.href };
                               try { 
                                 if (typeof navigator.share === 'function') { 
                                   await navigator.share(shareData); 
