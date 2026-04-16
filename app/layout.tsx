@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script"; // 🌟 [Phase 4] 구글 애널리틱스 연동을 위한 Script 임포트
+import InAppGuide from "@/components/InAppGuide"; // 🌟 [신규 추가] 인앱 브라우저 탈출 가이드 컴포넌트 불러오기
 import "./globals.css";
 
 const geistSans = Geist({
@@ -81,6 +82,10 @@ export default function RootLayout({
             `,
           }}
         />
+        
+        {/* 🌟 [신규 추가] 화면 최상단에 가이드 컴포넌트를 배치 (인앱일 때만 알아서 나타남!) */}
+        <InAppGuide />
+
         {children}
       </body>
     </html>
