@@ -22,7 +22,7 @@ from api_client import (
     api_rename_thread,
     api_save_inputs,
     get_api_base_url,
-    api_get_ai_response_stream, # 🌟 스트리밍 함수 임포트 (확인 필수!)
+    api_get_ai_response_stream, # 🌟 완벽하게 임포트 됨!
 )
 
 API_BASE_URL = get_api_base_url()
@@ -617,9 +617,9 @@ def render_preview_card(region_preview: str, birth_year_preview: str, extra_info
     st.markdown(
         f"""
         <div class="preview-card">
-            <div class="preview-line"><span class="preview-label">현재 선택한 거주지:</span> {html.escape(region_preview)}</div>
+            <div class="preview-line"><span class="preview-label">현재 선택 거주지:</span> {html.escape(region_preview)}</div>
             <div class="preview-line"><span class="preview-label">출생연도:</span> {html.escape(birth_year_preview)}</div>
-            <div class="preview-line"><span class="preview-label">추가 정보 입력 여부:</span> {html.escape(extra_status)}</div>
+            <div class="preview-line"><span class="preview-label">추가 정보 여부:</span> {html.escape(extra_status)}</div>
         </div>
         """,
         unsafe_allow_html=True
@@ -2101,7 +2101,7 @@ render_notice_card(
 )
 
 render_notice_card(
-    "이름, 전화번호, 주민등록번호, 상세 주소 등 불필요한 개인정보는 입력하지 마세요. "
+    "이름, 전화번호, 상세 주소 등 불필요한 개인정보는 입력하지 마세요. "
     "나이는 '28세', '28살'처럼 적지 말고 출생연도를 입력해 주세요.",
     variant="caution",
     title="개인정보 입력 주의"
@@ -2113,7 +2113,7 @@ render_examples_box()
 render_input_form(CITY_TO_DISTRICTS, DONG_MAP)
 
 # --------------------------------------------------
-# 대화 출력 로직 (위로 이동)
+# 대화 출력 로직
 # --------------------------------------------------
 if st.session_state["messages"]:
     st.subheader("💬 대화 및 검색 결과")
@@ -2215,11 +2215,8 @@ if st.session_state.get("trigger_search", False):
         st.markdown(user_display_text)
 
     try:
-        # 🌟 핵심 수정: spinner 제거하고 채팅창을 바로 염!
+        # 🌟 여기서부터 스트리밍 시작!
         with st.chat_message("assistant"):
-            st.markdown("💆‍♂️ 클라우드 AI가 정책을 탐색하고 있습니다... (실시간 출력 중)")
-            
-            # 스트리밍 발전기(generator) 호출
             stream_generator = api_get_ai_response_stream(
                 user_id=st.session_state["browser_user_id"],
                 thread_id=st.session_state["thread_id"],
@@ -2274,10 +2271,8 @@ if followup_prompt:
         st.markdown(followup_prompt)
 
     try:
-        # 🌟 핵심 수정: 여기서도 spinner 대신 스트리밍 적용!
+        # 🌟 추가 질문 스트리밍 시작!
         with st.chat_message("assistant"):
-            st.markdown("💬 답변을 작성하고 있습니다... (실시간 출력 중)")
-            
             stream_generator = api_get_ai_response_stream(
                 user_id=st.session_state["browser_user_id"],
                 thread_id=st.session_state["thread_id"],
