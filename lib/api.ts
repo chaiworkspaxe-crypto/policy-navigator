@@ -85,22 +85,7 @@ export const api = {
     return res.data.data;
   },
 
-  getAiResponse: async (payload: {
-    user_id: string;
-    thread_id: string;
-    city?: string;
-    district?: string;
-    dong?: string;
-    birth_year?: string;
-    extra_info?: string;
-    query?: string;
-  }): Promise<{ answer: string; thread_id: string }> => {
-    const res = await apiClient.post("/chat", payload);
-    return {
-      answer: res.data.answer,
-      thread_id: res.data.thread_id,
-    };
-  },
+  // 🌟 [최적화] 더 이상 사용하지 않는 옛날 getAiResponse 함수 삭제 완료!
 };
 
 export function extractApiErrorMessage(error: unknown): string {
