@@ -16,3 +16,4 @@ redis
 sentry-sdk
 playwright==1.43.0
 lxml==5.2.1
+supabase>=2.0.0
