@@ -2217,6 +2217,9 @@ if st.session_state.get("trigger_search", False):
     try:
         # 🌟 여기서부터 스트리밍 시작!
         with st.chat_message("assistant"):
+            # 👇 스트리밍 시작 전 헤더를 먼저 렌더링하도록 추가!
+            render_assistant_result_header("search_result", has_summary=False)
+
             stream_generator = api_get_ai_response_stream(
                 user_id=st.session_state["browser_user_id"],
                 thread_id=st.session_state["thread_id"],
@@ -2273,6 +2276,9 @@ if followup_prompt:
     try:
         # 🌟 추가 질문 스트리밍 시작!
         with st.chat_message("assistant"):
+            # 👇 스트리밍 시작 전 헤더를 먼저 렌더링하도록 추가!
+            render_assistant_result_header("followup_answer", has_summary=False)
+
             stream_generator = api_get_ai_response_stream(
                 user_id=st.session_state["browser_user_id"],
                 thread_id=st.session_state["thread_id"],
