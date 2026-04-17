@@ -10,8 +10,19 @@ from psycopg2.extras import DictCursor
 from pgvector.psycopg2 import register_vector
 from dotenv import load_dotenv
 
+# 🌟 [에러 해결 핵심] Supabase 모듈 임포트 및 클라이언트 초기화
+from supabase import create_client, Client
+
 # .env 환경변수 로드
 load_dotenv()
+
+# Supabase 객체 생성 (name 'supabase' is not defined 에러 완벽 차단!)
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+if SUPABASE_URL and SUPABASE_KEY:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+else:
+    supabase = None
 
 # 🌟 [자정 리셋의 핵심 1] 기준 시간을 무조건 한국 시간(KST)으로 고정!
 KST = ZoneInfo("Asia/Seoul")
