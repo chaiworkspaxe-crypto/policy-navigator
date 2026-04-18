@@ -564,29 +564,40 @@ def inject_custom_css():
     )
 
 
-# 🌟 자동 스크롤 기능 추가 (자바스크립트 주입)
+# 🌟 더 강력하고 확실한 자동 스크롤 자바스크립트로 업데이트!
 def inject_auto_scroll():
     components.html(
         """
         <script>
             try {
-                const parentDoc = parent.document;
-                // 스트림릿의 메인 화면 컨테이너를 찾음
-                const target = parentDoc.querySelector('section.main') || parentDoc.body;
+                // Streamlit 메인 화면의 스크롤 컨테이너를 정확히 타겟팅!
+                const getScrollContainer = () => {
+                    return parent.document.querySelector('.main .block-container') || 
+                           parent.document.querySelector('section.main') || 
+                           parent.document.body;
+                };
+
+                let lastHeight = 0;
                 
-                let timeout;
-                const observer = new MutationObserver(() => {
-                    clearTimeout(timeout);
-                    timeout = setTimeout(() => {
-                        // 100ms마다 화면을 맨 아래로 부드럽게 스크롤
-                        parent.window.scrollTo({ top: parentDoc.body.scrollHeight, behavior: 'smooth' });
-                    }, 100); 
-                });
+                // 0.5초마다 화면 높이를 체크해서, 길어졌으면 무조건 바닥으로 꽂아버리는 무식하지만 확실한 방법!
+                setInterval(() => {
+                    const container = getScrollContainer();
+                    if (container) {
+                        const currentHeight = container.scrollHeight;
+                        // 화면 내용이 길어졌다(AI가 글을 쓰고 있다)면?
+                        if (currentHeight > lastHeight) {
+                            // 부드럽게 스크롤 다운!
+                            parent.window.scrollTo({
+                                top: currentHeight,
+                                behavior: 'smooth'
+                            });
+                            // 컨테이너 자체 스크롤도 같이 내려줌 (모바일 환경 호환성 강화)
+                            container.scrollTop = currentHeight;
+                            lastHeight = currentHeight;
+                        }
+                    }
+                }, 500); // 0.5초(500ms) 간격으로 끈질기게 추적!
                 
-                // 컨테이너 안에 내용(글자)이 추가되는 걸 실시간으로 감시!
-                if (target) {
-                    observer.observe(target, { childList: true, subtree: true, characterData: true });
-                }
             } catch (e) {
                 console.error("Auto-scroll failed:", e);
             }
@@ -2325,7 +2336,8 @@ if followup_prompt:
                 query=followup_prompt
             )
             
-            assistant_text = write_stream(stream_generator)
+            # 🌟 (수정) 이전에 write_stream 이었던 부분을 st.write_stream 으로 안전하게 고쳤어!
+            assistant_text = st.write_stream(stream_generator)
 
         append_message("assistant", assistant_text, "followup_answer")
         ensure_valid_active_thread(show_error=False, show_notice=False)
