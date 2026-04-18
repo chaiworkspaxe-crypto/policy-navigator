@@ -197,7 +197,7 @@ def create_agent_executor():
     llm = ChatOpenAI(
         model=model_name, 
         temperature=0.1, 
-        max_tokens=8192, 
+        max_completion_tokens=8192, 
         streaming=True
     ).bind_tools(tools)
     
