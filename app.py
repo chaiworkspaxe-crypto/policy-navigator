@@ -4,6 +4,7 @@ import re
 from datetime import datetime, timedelta
 
 import streamlit as st
+import streamlit.components.v1 as components  # 🌟 자동 스크롤을 위한 컴포넌트 임포트 추가!
 from dotenv import load_dotenv
 from streamlit_js_eval import streamlit_js_eval
 
@@ -560,6 +561,39 @@ def inject_custom_css():
         </style>
         """,
         unsafe_allow_html=True
+    )
+
+
+# 🌟 자동 스크롤 기능 추가 (자바스크립트 주입)
+def inject_auto_scroll():
+    components.html(
+        """
+        <script>
+            try {
+                const parentDoc = parent.document;
+                // 스트림릿의 메인 화면 컨테이너를 찾음
+                const target = parentDoc.querySelector('section.main') || parentDoc.body;
+                
+                let timeout;
+                const observer = new MutationObserver(() => {
+                    clearTimeout(timeout);
+                    timeout = setTimeout(() => {
+                        // 100ms마다 화면을 맨 아래로 부드럽게 스크롤
+                        parent.window.scrollTo({ top: parentDoc.body.scrollHeight, behavior: 'smooth' });
+                    }, 100); 
+                });
+                
+                // 컨테이너 안에 내용(글자)이 추가되는 걸 실시간으로 감시!
+                if (target) {
+                    observer.observe(target, { childList: true, subtree: true, characterData: true });
+                }
+            } catch (e) {
+                console.error("Auto-scroll failed:", e);
+            }
+        </script>
+        """,
+        height=0,
+        width=0,
     )
 
 
@@ -2072,6 +2106,7 @@ init_app_session()
 VIEWPORT_WIDTH = get_viewport_width()
 IS_MOBILE_LAYOUT = VIEWPORT_WIDTH <= MOBILE_LAYOUT_BREAKPOINT
 inject_custom_css()
+inject_auto_scroll()  # 🌟 자동 스크롤 함수 실행 추가!
 
 try:
     CITY_TO_DISTRICTS, DONG_MAP = get_region_data()
@@ -2290,7 +2325,7 @@ if followup_prompt:
                 query=followup_prompt
             )
             
-            assistant_text = st.write_stream(stream_generator)
+            assistant_text = write_stream(stream_generator)
 
         append_message("assistant", assistant_text, "followup_answer")
         ensure_valid_active_thread(show_error=False, show_notice=False)
