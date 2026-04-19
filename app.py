@@ -2173,7 +2173,7 @@ for i, msg in enumerate(st.session_state["messages"]):
             st.markdown(content)
             
             
-            elif role == "assistant":
+        elif role == "assistant":
             summary_text = get_summary_download_text(content)
             has_summary = bool(summary_text)
             download_base_name = build_download_base_name(i)
@@ -2182,8 +2182,7 @@ for i, msg in enumerate(st.session_state["messages"]):
             # 요약 표가 없다면(=중간에 끊겼다면) 강제로 줄바꿈을 추가해 열려있는 표/리스트 블록을 닫아줌
             display_content = content
             if not has_summary:
-            
-            display_content += "\n\n"
+                display_content += "\n\n"
 
             render_assistant_result_header(message_type, has_summary)
             
