@@ -117,7 +117,7 @@ def inject_custom_css():
             border-radius: 999px;
             background: rgba(127, 127, 127, 0.14);
             color: #F5F5F5;
-            border: 1px solid rgba(127, 127, 127, 0.18);
+            border: 1px solid rgba(127, 127, 0.18);
             font-size: 0.76rem;
             font-weight: 700;
             margin-bottom: 0.5rem;
@@ -2227,6 +2227,52 @@ for i, msg in enumerate(st.session_state["messages"]):
                     unsafe_allow_html=True
                 )
 
+# 🌟 [신규 추가] 답변 이어보기 버튼 로직
+if st.session_state["messages"]:
+    last_msg = st.session_state["messages"][-1]
+    if last_msg.get("role") == "assistant":
+        # 요약 표가 정상적으로 추출되지 않았다면(중간에 끊겼다면) 버튼 표시
+        if not extract_summary_table(last_msg.get("content", "")):
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.info("💡 답변이 중간에 끊긴 것 같나요? 아래 버튼을 눌러 마저 들을 수 있어요!")
+
+            if st.button("🔄 답변 이어서 생성하기", use_container_width=True):
+                continue_prompt = "답변이 끊겼어. 방금 하던 말부터 이어서 계속해줘."
+                
+                if not persist_current_inputs(show_error=True, force=True):
+                    st.stop()
+                if not ensure_valid_active_thread(show_error=True, show_notice=False):
+                    st.stop()
+                    
+                clear_delete_confirm()
+                append_message("user", continue_prompt, "followup_question")
+                
+                with st.chat_message("user"):
+                    label_text, label_type = get_user_message_label("followup_question")
+                    if label_text:
+                        render_message_label(label_text, label_type=label_type)
+                    st.markdown(continue_prompt)
+
+                try:
+                    with st.chat_message("assistant"):
+                        render_assistant_result_header("followup_answer", has_summary=False)
+                        stream_generator = api_get_ai_response_stream(
+                            user_id=st.session_state["browser_user_id"],
+                            thread_id=st.session_state["thread_id"],
+                            city=st.session_state["selected_city"],
+                            district=st.session_state["selected_district"],
+                            dong=st.session_state["selected_dong"],
+                            birth_year=st.session_state["birth_year"],
+                            extra_info=st.session_state["extra_info"],
+                            query=continue_prompt
+                        )
+                        assistant_text = st.write_stream(stream_generator)
+
+                    append_message("assistant", assistant_text, "followup_answer")
+                    ensure_valid_active_thread(show_error=False, show_notice=False)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"오류 발생: {e}")
 
 # --------------------------------------------------
 # 🚀 AI 검색 로직 (스트리밍 완벽 적용)
