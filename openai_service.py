@@ -29,7 +29,8 @@ try:
 except Exception:
     pass
 
-from langchain_openai import ChatOpenAI
+# 🌟 [추가] 임베딩 변환을 위해 OpenAIEmbeddings를 임포트에 추가했어!
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import tool
@@ -46,13 +47,18 @@ def get_current_time() -> str:
 def search_internal_db(query: str) -> str:
     """사용자 질문을 바탕으로 내부 DB에서 정책을 검색합니다."""
     try:
-        # 🌟 [핵심 수정] Supabase 찌꺼기를 완전히 지우고, chat_db의 search_policies를 바로 호출!
-        results = search_policies(query)
+        # 🌟 [수정 완료 1] 한글 질문을 벡터(숫자 리스트)로 변환!
+        # (DB에 저장할 때 썼던 동일한 임베딩 모델을 사용해야 해)
+        embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+        query_vector = embeddings.embed_query(query)
+        
+        # 🌟 [수정 완료 2] 한글이 아닌, 변환된 '숫자 리스트(query_vector)'를 DB로 넘김!
+        results = search_policies(query_vector)
         
         if not results:
             return "내부 DB에서 일치하는 정책을 찾지 못했습니다. naver_web_search를 사용하세요."
             
-        # 🌟 search_policies가 리스트 딕셔너리를 반환할 경우를 대비한 안전한 포매팅
+        # search_policies가 리스트 딕셔너리를 반환할 경우를 대비한 안전한 포매팅
         if isinstance(results, list):
             formatted_results = []
             for p in results:
