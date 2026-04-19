@@ -566,34 +566,38 @@ def inject_custom_css():
 
 # 🌟 스트림릿 최신 버전 & 모바일(아이폰/갤럭시) 완벽 호환 자동 스크롤
 # 🌟 에이전트 타이핑(말)을 완벽하게 따라가는 AI 추적형 자동 스크롤!
+# 🌟 에이전트 타이핑(말)을 완벽하게 따라가는 불도저급 자동 스크롤!
 def inject_auto_scroll():
     components.html(
         """
         <script>
             try {
-                // AI가 글자를 치거나(노드 추가) 화면 내용이 변할 때마다 즉각 반응하는 관찰자(Observer)
-                const observer = new MutationObserver((mutations) => {
-                    // 스트림릿에서 스크롤을 담당할 수 있는 모든 후보를 싹 다 끌어내림
-                    const viewContainer = parent.document.querySelector('[data-testid="stAppViewContainer"]');
-                    const mainContainer = parent.document.querySelector('.main');
+                const scrollAll = () => {
+                    // 스트림릿의 다양한 버전과 PC/모바일 레이아웃에서 스크롤을 담당하는 모든 컨테이너를 싹 다 잡음
+                    const containers = [
+                        window.parent.document.querySelector('[data-testid="stAppViewContainer"]'),
+                        window.parent.document.querySelector('.main'),
+                        window.parent.document.documentElement,
+                        window.parent.document.body
+                    ];
                     
-                    if (viewContainer) {
-                        viewContainer.scrollTo({ top: viewContainer.scrollHeight, behavior: 'smooth' });
-                    }
-                    if (mainContainer) {
-                        mainContainer.scrollTo({ top: mainContainer.scrollHeight, behavior: 'smooth' });
-                    }
-                    // 만약을 대비해 브라우저 전체 창(window)도 바닥으로 내림
-                    parent.window.scrollTo({ top: parent.document.body.scrollHeight, behavior: 'smooth' });
-                });
+                    containers.forEach(container => {
+                        if (container && container.scrollHeight) {
+                            // smooth 대신 auto를 써서 애니메이션 지연 없이 타자 속도에 맞춰 즉각즉각 꽂아버림!
+                            if (typeof container.scrollTo === 'function') {
+                                container.scrollTo({ top: container.scrollHeight, behavior: 'auto' });
+                            } else {
+                                container.scrollTop = container.scrollHeight;
+                            }
+                        }
+                    });
+                    
+                    // 최상위 창(Window) 객체도 무조건 바닥으로 강제 고정
+                    window.parent.scrollTo(0, window.parent.document.body.scrollHeight);
+                };
 
-                // 화면(body 또는 main)에 글자가 하나라도 추가되면 즉시 스크롤 작동!
-                const targetNode = parent.document.querySelector('.main') || parent.document.body;
-                observer.observe(targetNode, { 
-                    childList: true, 
-                    subtree: true, 
-                    characterData: true 
-                });
+                // 0.1초(100ms)마다 타자 치는 걸 감시해서 미친듯이 바닥으로 끌어내림!
+                setInterval(scrollAll, 100);
                 
             } catch (e) {
                 console.error("Auto-scroll failed:", e);
@@ -603,7 +607,6 @@ def inject_auto_scroll():
         height=0,
         width=0,
     )
-
 def render_notice_card(
     text: str,
     variant: str = "info",
