@@ -564,39 +564,34 @@ def inject_custom_css():
     )
 
 
-# 🌟 더 강력하고 확실한 자동 스크롤 자바스크립트로 업데이트!
+# 🌟 스트림릿 최신 버전 & 모바일(아이폰/갤럭시) 완벽 호환 자동 스크롤
 def inject_auto_scroll():
     components.html(
         """
         <script>
             try {
-                // Streamlit 메인 화면의 스크롤 컨테이너를 정확히 타겟팅!
-                const getScrollContainer = () => {
-                    return parent.document.querySelector('.main .block-container') || 
-                           parent.document.querySelector('section.main') || 
-                           parent.document.body;
+                let lastScrollHeight = 0;
+                
+                const scrollToBottom = () => {
+                    // 1. 스트림릿에서 실제로 스크롤을 담당하는 찐 컨테이너 찾기
+                    const appContainer = parent.document.querySelector('[data-testid="stAppViewContainer"]') || 
+                                         parent.document.querySelector('.main') || 
+                                         parent.document.documentElement;
+                    
+                    const currentScrollHeight = appContainer.scrollHeight;
+                    
+                    // 2. 화면 전체 높이가 이전보다 늘어났다면 = AI가 글을 쓰고 있다면!
+                    if (currentScrollHeight > lastScrollHeight) {
+                        appContainer.scrollTo({
+                            top: currentScrollHeight,
+                            behavior: 'smooth'
+                        });
+                        lastScrollHeight = currentScrollHeight;
+                    }
                 };
 
-                let lastHeight = 0;
-                
-                // 0.5초마다 화면 높이를 체크해서, 길어졌으면 무조건 바닥으로 꽂아버리는 무식하지만 확실한 방법!
-                setInterval(() => {
-                    const container = getScrollContainer();
-                    if (container) {
-                        const currentHeight = container.scrollHeight;
-                        // 화면 내용이 길어졌다(AI가 글을 쓰고 있다)면?
-                        if (currentHeight > lastHeight) {
-                            // 부드럽게 스크롤 다운!
-                            parent.window.scrollTo({
-                                top: currentHeight,
-                                behavior: 'smooth'
-                            });
-                            // 컨테이너 자체 스크롤도 같이 내려줌 (모바일 환경 호환성 강화)
-                            container.scrollTop = currentHeight;
-                            lastHeight = currentHeight;
-                        }
-                    }
-                }, 500); // 0.5초(500ms) 간격으로 끈질기게 추적!
+                // 0.3초(300ms)마다 컨테이너 높이 변화를 감지해서 바닥으로 끌어내림!
+                setInterval(scrollToBottom, 300);
                 
             } catch (e) {
                 console.error("Auto-scroll failed:", e);
