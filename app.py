@@ -565,33 +565,35 @@ def inject_custom_css():
 
 
 # 🌟 스트림릿 최신 버전 & 모바일(아이폰/갤럭시) 완벽 호환 자동 스크롤
+# 🌟 에이전트 타이핑(말)을 완벽하게 따라가는 AI 추적형 자동 스크롤!
 def inject_auto_scroll():
     components.html(
         """
         <script>
             try {
-                let lastScrollHeight = 0;
-                
-                const scrollToBottom = () => {
-                    // 1. 스트림릿에서 실제로 스크롤을 담당하는 찐 컨테이너 찾기
-                    const appContainer = parent.document.querySelector('[data-testid="stAppViewContainer"]') || 
-                                         parent.document.querySelector('.main') || 
-                                         parent.document.documentElement;
+                // AI가 글자를 치거나(노드 추가) 화면 내용이 변할 때마다 즉각 반응하는 관찰자(Observer)
+                const observer = new MutationObserver((mutations) => {
+                    // 스트림릿에서 스크롤을 담당할 수 있는 모든 후보를 싹 다 끌어내림
+                    const viewContainer = parent.document.querySelector('[data-testid="stAppViewContainer"]');
+                    const mainContainer = parent.document.querySelector('.main');
                     
-                    const currentScrollHeight = appContainer.scrollHeight;
-                    
-                    // 2. 화면 전체 높이가 이전보다 늘어났다면 = AI가 글을 쓰고 있다면!
-                    if (currentScrollHeight > lastScrollHeight) {
-                        appContainer.scrollTo({
-                            top: currentScrollHeight,
-                            behavior: 'smooth'
-                        });
-                        lastScrollHeight = currentScrollHeight;
+                    if (viewContainer) {
+                        viewContainer.scrollTo({ top: viewContainer.scrollHeight, behavior: 'smooth' });
                     }
-                };
+                    if (mainContainer) {
+                        mainContainer.scrollTo({ top: mainContainer.scrollHeight, behavior: 'smooth' });
+                    }
+                    // 만약을 대비해 브라우저 전체 창(window)도 바닥으로 내림
+                    parent.window.scrollTo({ top: parent.document.body.scrollHeight, behavior: 'smooth' });
+                });
 
-                // 0.3초(300ms)마다 컨테이너 높이 변화를 감지해서 바닥으로 끌어내림!
-                setInterval(scrollToBottom, 300);
+                // 화면(body 또는 main)에 글자가 하나라도 추가되면 즉시 스크롤 작동!
+                const targetNode = parent.document.querySelector('.main') || parent.document.body;
+                observer.observe(targetNode, { 
+                    childList: true, 
+                    subtree: true, 
+                    characterData: true 
+                });
                 
             } catch (e) {
                 console.error("Auto-scroll failed:", e);
@@ -601,7 +603,6 @@ def inject_auto_scroll():
         height=0,
         width=0,
     )
-
 
 def render_notice_card(
     text: str,
