@@ -2254,7 +2254,10 @@ init_app_session()
 VIEWPORT_WIDTH = get_viewport_width()
 IS_MOBILE_LAYOUT = VIEWPORT_WIDTH <= MOBILE_LAYOUT_BREAKPOINT
 inject_custom_css()
-inject_auto_scroll()  # 🌟 자동 스크롤 함수 실행 추가!
+inject_auto_scroll()
+
+# 🌟 [여기 한 줄 추가!] 메뉴얼 팝업을 화면에 그림!
+inject_manual_popup() 
 
 try:
     CITY_TO_DISTRICTS, DONG_MAP = get_region_data()
