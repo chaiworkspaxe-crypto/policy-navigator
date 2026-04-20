@@ -8,14 +8,13 @@ import MarkdownMessage from "@/components/MarkdownMessage";
 import { 
   MessageSquare, Plus, Send, Loader2, MapPin, Search, AlertCircle, 
   Menu, X, Trash2, Sun, Moon, Coffee, ChevronUp, ChevronDown, 
-  Download, RefreshCw, FileText // 🌟 [추가] 새로운 아이콘 임포트
+  Download, RefreshCw, FileText, Image as ImageIcon // 🌟 이미지 아이콘 추가
 } from "lucide-react";
 
 const DEFAULT_CITY = "선택하세요";
 const DEFAULT_DONG = "선택 안 함";
 const EMPTY_INPUTS: ThreadInputs = { selected_city: DEFAULT_CITY, selected_district: DEFAULT_CITY, selected_dong: DEFAULT_DONG, birth_year: "", extra_info: "" };
 
-// 🌟 [추가] 요약 표 추출 및 감지 헬퍼 함수 (app.py 로직 100% 이식)
 const extractSummaryTableText = (text: string) => {
   const lines = text.split('\n');
   let headerIdx = -1;
@@ -41,9 +40,9 @@ const hasSummaryTable = (text: string) => {
   return extractSummaryTableText(text).length > 0;
 };
 
-// 🌟 [추가] 마크다운 다운로드 헬퍼 함수
-const downloadMarkdown = (content: string, filename: string) => {
-  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8;' });
+// 🌟 [수정] 일반 사용자를 위해 텍스트(.txt) 다운로드 헬퍼 함수로 변경
+const downloadTextFile = (content: string, filename: string) => {
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
@@ -54,6 +53,34 @@ const downloadMarkdown = (content: string, filename: string) => {
   URL.revokeObjectURL(url);
 };
 
+// 🌟 [신규 추가] 화면을 JPG 이미지로 캡처해서 다운로드하는 함수
+const downloadAsImage = async (elementId: string, filename: string) => {
+  const element = document.getElementById(elementId);
+  if (!element) return;
+
+  try {
+    // Next.js 환경에서 에러가 나지 않도록 동적으로 모듈을 불러옵니다.
+    const html2canvas = (await import("html2canvas")).default;
+    
+    // 다크모드 여부에 따라 배경색을 다르게 지정
+    const isDark = document.documentElement.classList.contains('dark');
+    
+    const canvas = await html2canvas(element, {
+      scale: 2, // 화질 2배로 선명하게
+      useCORS: true,
+      backgroundColor: isDark ? '#2d2d2d' : '#ffffff', // 말풍선 배경색에 맞춤
+    });
+
+    const image = canvas.toDataURL("image/jpeg", 0.9);
+    const link = document.createElement("a");
+    link.href = image;
+    link.download = filename;
+    link.click();
+  } catch (error) {
+    console.error("이미지 캡처 실패:", error);
+    alert("이미지 저장 중 오류가 발생했습니다.");
+  }
+};
 
 export default function Home() {
   const [userId, setUserId] = useState("");
@@ -67,6 +94,8 @@ export default function Home() {
   const [showDonation, setShowDonation] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [isFormExpanded, setIsFormExpanded] = useState(true);
+  
+  // 🌟 [추가] 메뉴얼 팝업 상태 관리
   const [showManual, setShowManual] = useState(false);
 
   const [isConfirmingDeleteAll, setIsConfirmingDeleteAll] = useState(false);
@@ -199,7 +228,7 @@ export default function Home() {
     return "";
   };
 
-  // 🌟 [수정] 강제 프롬프트를 넘길 수 있도록 매개변수 추가
+  // 🌟 강제 프롬프트를 넘길 수 있도록 매개변수 추가 (이어보기용)
   const handleSearch = async (isFollowUp = false, overridePrompt?: string) => {
     setErrorMessage(""); setAiStatus("");
 
@@ -350,6 +379,7 @@ export default function Home() {
       </aside>
 
       <main className="relative flex h-full flex-1 flex-col w-full">
+        {/* 🌟 PC버전 헤더 영역 (메뉴얼 버튼 포함) */}
         <div className="absolute top-4 right-4 z-50 hidden md:flex items-center gap-3">
           <button onClick={() => setShowManual(true)} className="px-3 py-2 rounded-xl bg-white dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] text-gray-700 dark:text-gray-200 text-sm font-bold shadow-sm hover:scale-105 transition-transform flex items-center gap-1.5">
             📖 메뉴얼
@@ -362,6 +392,7 @@ export default function Home() {
           </button>
         </div>
 
+        {/* 🌟 모바일버전 헤더 영역 (메뉴얼 버튼 포함) */}
         <div className="flex items-center justify-between bg-white dark:bg-[#1a1a1a] p-4 border-b border-gray-200 dark:border-[#333] md:hidden shrink-0">
           <div className="font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>맞춤 혜택 찾기</div>
           <div className="flex items-center gap-3">
@@ -417,7 +448,7 @@ export default function Home() {
                 const isLastMessage = index === messages.length - 1;
                 const isAssistant = message.role === "assistant";
                 
-                // 🌟 마크다운 깨짐 방지: 마지막 메시지이고 요약표가 없다면 임시로 줄바꿈 추가
+                // 🌟 마크다운 깨짐 방지: 요약표가 끊겼다면 임시로 줄바꿈 추가
                 const displayContent = (!loading && isLastMessage && isAssistant && !hasSummaryTable(message.content)) 
                   ? message.content + "\n\n" 
                   : message.content;
@@ -429,9 +460,11 @@ export default function Home() {
                     )}
                     <div className={`max-w-[90%] sm:max-w-[85%] rounded-2xl p-4 shadow-sm overflow-hidden ${message.role === "user" ? "whitespace-pre-wrap border border-gray-200 dark:border-[#444] bg-white dark:bg-[#2d2d2d] text-gray-800 dark:text-gray-200 text-sm sm:text-base" : "bg-transparent text-gray-800 dark:text-gray-300"}`}>
                       
-                      {isAssistant ? <MarkdownMessage content={displayContent} /> : <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>}
+                      {/* 🌟 캡처를 위해 내용 부분을 div로 감싸고 ID 부여 */}
+                      <div id={`capture-area-${index}`} className="p-1 rounded-xl">
+                        {isAssistant ? <MarkdownMessage content={displayContent} /> : <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>}
+                      </div>
                       
-                      {/* 🌟 로딩 중 표시 */}
                       {isLastMessage && isAssistant && loading && (
                         <div className="mt-4 flex items-center gap-2 text-sm font-bold text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 px-4 py-2.5 rounded-xl w-fit animate-pulse border border-green-200 dark:border-green-800/30 shadow-sm">
                           <Loader2 size={16} className="animate-spin shrink-0" />
@@ -439,18 +472,23 @@ export default function Home() {
                         </div>
                       )}
 
-                      {/* 🌟 다운로드 및 공유 버튼 그룹 (app.py 완벽 대응) */}
+                      {/* 🌟 버튼 그룹 (.txt 저장 & 이미지 캡처) */}
                       {!loading && isAssistant && message.content.length > 50 && (
                         <div className="mt-4 pt-3 border-t border-gray-200 dark:border-[#444] flex flex-wrap justify-end gap-2 animate-in fade-in duration-300">
-                          <button onClick={() => downloadMarkdown(message.content, `정책내비게이터_전체응답.md`)} className="text-xs font-bold bg-gray-100 dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-[#333] transition-colors flex items-center gap-1 border border-gray-200 dark:border-[#444]">
-                            <FileText size={14}/> 전체 저장
+                          
+                          <button onClick={() => downloadTextFile(message.content, `정책내비게이터_전체응답.txt`)} className="text-xs font-bold bg-gray-100 dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-[#333] transition-colors flex items-center gap-1 border border-gray-200 dark:border-[#444]">
+                            <FileText size={14}/> 텍스트 저장
                           </button>
                           
                           {hasSummaryTable(message.content) && (
-                            <button onClick={() => downloadMarkdown(extractSummaryTableText(message.content), `정책내비게이터_요약표.md`)} className="text-xs font-bold bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 px-3 py-1.5 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors flex items-center gap-1 border border-blue-200 dark:border-blue-800/30">
-                              <Download size={14}/> 요약표 저장
+                            <button onClick={() => downloadTextFile(extractSummaryTableText(message.content), `정책내비게이터_요약표.txt`)} className="text-xs font-bold bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 px-3 py-1.5 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors flex items-center gap-1 border border-blue-200 dark:border-blue-800/30">
+                              <Download size={14}/> 표 텍스트 저장
                             </button>
                           )}
+
+                          <button onClick={() => downloadAsImage(`capture-area-${index}`, `정책내비게이터_결과.jpg`)} className="text-xs font-bold bg-pink-50 dark:bg-pink-900/20 text-pink-600 dark:text-pink-400 px-3 py-1.5 rounded-lg hover:bg-pink-100 dark:hover:bg-pink-900/40 transition-colors flex items-center gap-1 border border-pink-200 dark:border-pink-800/30">
+                            <ImageIcon size={14}/> 이미지 저장
+                          </button>
                           
                           <button onClick={async () => {
                               const shareData = { 
@@ -473,7 +511,7 @@ export default function Home() {
                         </div>
                       )}
 
-                      {/* 🌟 답변 이어보기 버튼 (app.py 완벽 대응) */}
+                      {/* 🌟 답변 이어보기 버튼 */}
                       {!loading && isLastMessage && isAssistant && !hasSummaryTable(message.content) && (
                          <div className="mt-4 p-4 bg-gray-50 dark:bg-[#1a1a1a] rounded-xl border border-gray-200 dark:border-[#444] animate-in fade-in duration-300">
                            <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
@@ -482,7 +520,7 @@ export default function Home() {
                            </p>
                            <button
                              onClick={() => {
-                               setQuery(""); // 입력창 초기화
+                               setQuery(""); 
                                void handleSearch(true, "답변이 끊겼어. 방금 하던 말부터 이어서 계속해줘.");
                              }}
                              className="w-full flex items-center justify-center gap-2 py-2.5 bg-white dark:bg-[#2d2d2d] border border-gray-300 dark:border-[#555] rounded-lg hover:bg-gray-100 dark:hover:bg-[#3d3d3d] transition-colors text-sm font-bold text-gray-700 dark:text-gray-200 shadow-sm"
@@ -555,7 +593,7 @@ export default function Home() {
                 <strong className="text-green-600 dark:text-green-400 block mb-1">4️⃣ 답변 이어보기 & 결과 저장하기</strong>
                 혹시 혜택이 너무 많아 AI 답변이 중간에 멈췄나요?<br/>
                 결과 하단의 <code className="bg-gray-100 dark:bg-[#2a2a2a] px-1.5 py-0.5 rounded text-green-700 dark:text-green-400 font-semibold">[🔄 답변 이어서 생성하기]</code> 버튼을 누르거나, 채팅창에 <code className="bg-gray-100 dark:bg-[#2a2a2a] px-1.5 py-0.5 rounded text-green-700 dark:text-green-400 font-semibold">💬 "이어서 계속해줘"</code> 라고 입력하면 마저 알려줍니다.<br/>
-                찾은 정보는 <code className="bg-gray-100 dark:bg-[#2a2a2a] px-1.5 py-0.5 rounded text-green-700 dark:text-green-400 font-semibold">[📄 전체 저장]</code> 또는 <code className="bg-gray-100 dark:bg-[#2a2a2a] px-1.5 py-0.5 rounded text-green-700 dark:text-green-400 font-semibold">[🔗 공유하기]</code> 버튼을 눌러 기기에 저장해 보세요!
+                찾은 정보는 <code className="bg-gray-100 dark:bg-[#2a2a2a] px-1.5 py-0.5 rounded text-green-700 dark:text-green-400 font-semibold">[📸 이미지 저장]</code> 또는 <code className="bg-gray-100 dark:bg-[#2a2a2a] px-1.5 py-0.5 rounded text-green-700 dark:text-green-400 font-semibold">[🔗 공유하기]</code> 버튼을 눌러 기기에 저장해 보세요!
               </div>
             </div>
             
