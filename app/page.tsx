@@ -590,8 +590,8 @@ export default function Home() {
               </div>
               
               <div>
-                <strong className="text-green-600 dark:text-green-400 block mb-1">4️⃣ 답변 이어보기 & 결과 저장하기</strong>
-                혹시 혜택이 너무 많아 AI 답변이 중간에 멈췄나요?<br/>
+                <strong className="text-green-600 dark:text-green-400 block mb-1">4️⃣ 🚨답변 이어보기 & 결과 저장하기🚨</strong>
+                🚨혹시 혜택이 너무 많아 AI 답변이 중간에 멈췄나요?🚨<br/>
                 결과 하단의 <code className="bg-gray-100 dark:bg-[#2a2a2a] px-1.5 py-0.5 rounded text-green-700 dark:text-green-400 font-semibold">[🔄 답변 이어서 생성하기]</code> 버튼을 누르거나, 채팅창에 <code className="bg-gray-100 dark:bg-[#2a2a2a] px-1.5 py-0.5 rounded text-green-700 dark:text-green-400 font-semibold">💬 "이어서 계속해줘"</code> 라고 입력하면 마저 알려줍니다.<br/>
                 찾은 정보는 <code className="bg-gray-100 dark:bg-[#2a2a2a] px-1.5 py-0.5 rounded text-green-700 dark:text-green-400 font-semibold">[📸 이미지 저장]</code> 또는 <code className="bg-gray-100 dark:bg-[#2a2a2a] px-1.5 py-0.5 rounded text-green-700 dark:text-green-400 font-semibold">[🔗 공유하기]</code> 버튼을 눌러 기기에 저장해 보세요!
               </div>
