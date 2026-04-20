@@ -53,7 +53,7 @@ const downloadTextFile = (content: string, filename: string) => {
   URL.revokeObjectURL(url);
 };
 
-// 🌟 [수정된 부분] 화면을 JPG 이미지로 캡처해서 다운로드하는 튼튼한 함수
+// 🌟 [수정된 부분] 최신 CSS(Tailwind v4 lab 색상)를 완벽 지원하는 html-to-image로 교체!
 const downloadAsImage = async (elementId: string, filename: string) => {
   const element = document.getElementById(elementId);
   if (!element) {
@@ -62,24 +62,22 @@ const downloadAsImage = async (elementId: string, filename: string) => {
   }
 
   try {
-    // 🌟 1. Next.js 모듈 불러오기 호환성 강화 (에러 주범 해결)
-    const module = await import("html2canvas");
-    const html2canvas = module.default ? module.default : module;
+    // 🌟 html-to-image 라이브러리를 동적으로 불러옴
+    const htmlToImage = await import("html-to-image");
     
     // 다크모드 여부에 따라 배경색을 다르게 지정
     const isDark = document.documentElement.classList.contains('dark');
+    const bgColor = isDark ? '#2d2d2d' : '#ffffff';
     
-    // 🌟 2. 캡처 실행 (외부 아이콘이나 이모티콘 렌더링 에러 방지 옵션 추가)
-    const canvas = await (html2canvas as any)(element, {
-      scale: 2, // 화질 2배로 선명하게
-      useCORS: true,
-      allowTaint: true, // 폰트나 외부 SVG 요소 때문에 튕기는 현상 방지
-      backgroundColor: isDark ? '#2d2d2d' : '#ffffff', 
+    // 🌟 최신 SVG 변환 방식을 써서 폰트나 lab() 색상 에러 없이 완벽하게 캡처!
+    const dataUrl = await htmlToImage.toJpeg(element, {
+      quality: 0.95, // 화질 설정
+      backgroundColor: bgColor, 
+      pixelRatio: 2, // 2배수로 선명하게 캡처
     });
 
-    const image = canvas.toDataURL("image/jpeg", 0.9);
     const link = document.createElement("a");
-    link.href = image;
+    link.href = dataUrl;
     link.download = filename;
     link.click();
   } catch (error: any) {
