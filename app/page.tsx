@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { api, ChatMessage, extractApiErrorMessage, ThreadInputs, ThreadItem } from "@/lib/api";
 import { CITY_TO_DISTRICTS, DONG_MAP } from "@/lib/regionData";
-// 🌟 [수정] 먹통이었던 MarkdownMessage 대신 검증된 라이브러리 직접 임포트!
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { 
@@ -42,7 +41,7 @@ const hasSummaryTable = (text: string) => {
   return extractSummaryTableText(text).length > 0;
 };
 
-// 🌟 텍스트(.txt) 다운로드 헬퍼 함수
+// 🌟 텍스트 다운로드 헬퍼 함수
 const downloadTextFile = (content: string, filename: string) => {
   const blob = new Blob([content], { type: 'text/plain;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
@@ -55,7 +54,7 @@ const downloadTextFile = (content: string, filename: string) => {
   URL.revokeObjectURL(url);
 };
 
-// 🌟 최신 CSS(Tailwind v4 lab 색상)를 완벽 지원하는 html-to-image 캡처
+// 🌟 [수정 완료] 최신 CSS를 완벽 지원하는 html-to-image로 교체!
 const downloadAsImage = async (elementId: string, filename: string) => {
   const element = document.getElementById(elementId);
   if (!element) {
@@ -65,6 +64,7 @@ const downloadAsImage = async (elementId: string, filename: string) => {
 
   try {
     const htmlToImage = await import("html-to-image");
+    
     const isDark = document.documentElement.classList.contains('dark');
     const bgColor = isDark ? '#2d2d2d' : '#ffffff';
     
@@ -456,7 +456,7 @@ export default function Home() {
                       
                       <div id={`capture-area-${index}`} className="p-1 rounded-xl">
                         {isAssistant ? (
-                          // 🌟 먹통 컴포넌트 버리고 직접 ReactMarkdown으로 완벽하게 디자인!
+                          // 🌟 마크다운을 예쁘게 그려주는 진짜 렌더링 엔진!
                           <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
                             components={{
