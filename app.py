@@ -564,162 +564,161 @@ def inject_custom_css():
     )
 
 
-# 🌟 [신규 추가] 헤더 고정 메뉴얼 버튼 및 CSS 전용 팝업 모달
+# 🌟 [신규 추가] 헤더 고정 메뉴얼 버튼 및 JS 전용 팝업 모달 (보안 필터 우회)
 def inject_manual_popup():
-    st.markdown(
+    components.html(
         """
-        <style>
-        /* 1. 체크박스 숨기기 (이 체크박스의 상태로 팝업을 열고 닫음) */
-        #manual-toggle { display: none; }
+        <script>
+            try {
+                // 이미 버튼이 생성되어 있다면 중복해서 만들지 않음
+                if (!parent.document.getElementById('custom-manual-btn')) {
+                    
+                    // 1. 팝업 & 버튼 디자인(CSS) 강제 주입
+                    const style = parent.document.createElement('style');
+                    style.innerHTML = `
+                        #custom-manual-btn {
+                            position: fixed;
+                            top: 14px;
+                            right: 140px; /* PC 위치 */
+                            z-index: 999999;
+                            background: rgba(255, 255, 255, 0.1);
+                            border: 1px solid rgba(255, 255, 255, 0.2);
+                            color: #F5F5F5;
+                            padding: 4px 12px;
+                            border-radius: 8px;
+                            font-size: 0.85rem;
+                            font-weight: 600;
+                            cursor: pointer;
+                            backdrop-filter: blur(4px);
+                            transition: all 0.2s ease;
+                        }
+                        #custom-manual-btn:hover { background: rgba(255, 255, 255, 0.2); }
+                        
+                        @media (max-width: 768px) {
+                            #custom-manual-btn {
+                                top: 15px;
+                                right: 95px; /* 모바일 위치 */
+                                padding: 3px 8px;
+                                font-size: 0.75rem;
+                            }
+                        }
 
-        /* 2. 헤더 메뉴얼 버튼 스타일 (Label을 버튼처럼 꾸밈) */
-        .manual-trigger-label {
-            position: fixed;
-            top: 14px;
-            right: 140px; /* PC 위치: 인스타 로고 왼쪽 */
-            z-index: 999990;
-            background: rgba(255, 255, 255, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            color: #F5F5F5;
-            padding: 4px 12px;
-            border-radius: 8px;
-            font-size: 0.85rem;
-            font-weight: 600;
-            cursor: pointer;
-            backdrop-filter: blur(4px);
-            transition: all 0.2s ease;
-        }
-        
-        .manual-trigger-label:hover {
-            background: rgba(255, 255, 255, 0.2);
-        }
+                        #custom-manual-modal {
+                            position: fixed;
+                            top: 0; left: 0; width: 100vw; height: 100vh;
+                            background: rgba(0, 0, 0, 0.6);
+                            backdrop-filter: blur(5px);
+                            z-index: 1000000;
+                            display: none; /* 평소엔 숨김 */
+                            align-items: center;
+                            justify-content: center;
+                            opacity: 0;
+                            transition: opacity 0.3s ease;
+                        }
+                        
+                        #custom-manual-box {
+                            background: #17181B;
+                            border: 1px solid rgba(255, 255, 255, 0.15);
+                            width: 90%;
+                            max-width: 450px;
+                            border-radius: 16px;
+                            padding: 1.5rem;
+                            color: #f5f5f5;
+                            position: relative;
+                            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+                            transform: translateY(-20px);
+                            transition: transform 0.3s ease;
+                            max-height: 80vh;
+                            overflow-y: auto;
+                            font-family: inherit;
+                        }
+                        
+                        #custom-manual-close {
+                            position: absolute;
+                            top: 15px; right: 20px;
+                            font-size: 1.5rem; color: #aaa; cursor: pointer;
+                        }
+                        #custom-manual-close:hover { color: #fff; }
+                        
+                        .manual-title {
+                            font-size: 1.15rem; font-weight: 700; margin-bottom: 1rem;
+                            border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.8rem;
+                        }
+                        .manual-step { margin-bottom: 0.8rem; font-size: 0.9rem; line-height: 1.65; color: #ddd; }
+                        .manual-step strong { color: #4ade80; }
+                    `;
+                    parent.document.head.appendChild(style);
 
-        /* 모바일 위치 세밀 조정 */
-        @media (max-width: 768px) {
-            .manual-trigger-label {
-                top: 15px;
-                right: 95px; /* 모바일 위치: 타이틀과 인스타 로고 사이 */
-                padding: 3px 8px;
-                font-size: 0.75rem;
+                    // 2. 모달 팝업 HTML 강제 주입
+                    const modal = parent.document.createElement('div');
+                    modal.id = 'custom-manual-modal';
+                    modal.innerHTML = `
+                        <div id="custom-manual-box">
+                            <div id="custom-manual-close">&times;</div>
+                            <div class="manual-title">🧭 정책 내비게이터 100% 활용 가이드</div>
+                            <div class="manual-step">
+                                <strong>1️⃣ 나의 기본 정보 입력하기</strong><br>
+                                좌측 메뉴(모바일은 상단)에서 거주지와 출생연도를 선택해 주세요.<br>
+                                추가 정보 칸에 현재 상황(예: <i>대학교 4학년, 1인가구 무주택, 취업 준비 중</i>)을 구체적으로 적을수록 AI가 더 정확한 정책을 찾아옵니다.<br>
+                                <span style="color: #fb7185; font-size: 0.8rem;">※ 주의: 이름, 전화번호 등 민감한 개인정보는 절대 입력하지 마세요!</span>
+                            </div>
+                            <div class="manual-step">
+                                <strong>2️⃣ 맞춤 혜택 검색하기</strong><br>
+                                입력을 마쳤다면 <code>[🔍 맞춤 혜택 찾기]</code> 버튼을 눌러주세요.<br>
+                                AI가 주거, 취업, 금융 등 다양한 분야에서 신청 가능한 혜택을 요약 표로 정리해 드립니다.
+                            </div>
+                            <div class="manual-step">
+                                <strong>3️⃣ AI와 자유롭게 대화하기 (핵심 꿀팁!)</strong><br>
+                                검색 결과가 끝이 아닙니다! 하단 채팅창을 통해 사람과 대화하듯 질문해 보세요.<br>
+                                💬 <i>"이 중에서 당장 다음 달에 신청할 수 있는 것만 추려줘"</i><br>
+                            </div>
+                            <div class="manual-step">
+                                <strong>4️⃣ 답변 이어보기 & 결과 저장하기</strong><br>
+                                혹시 혜택이 많아 AI 답변이 중간에 멈췄나요?<br>
+                                <code>[🔄 답변 이어서 생성하기]</code> 버튼을 누르거나, 채팅창에 💬 <i>"이어서 계속해줘"</i> 라고 입력하면 마저 알려줍니다.<br>
+                                찾은 정보는 <code>[다운로드]</code> 버튼을 눌러 기기에 저장해 두세요!
+                            </div>
+                        </div>
+                    `;
+                    parent.document.body.appendChild(modal);
+
+                    // 3. 우측 상단 버튼 강제 주입
+                    const btn = parent.document.createElement('button');
+                    btn.id = 'custom-manual-btn';
+                    btn.innerText = '📖 메뉴얼';
+                    parent.document.body.appendChild(btn);
+
+                    // 4. 클릭 시 열리고 닫히는 동작(이벤트) 설정
+                    const openModal = () => {
+                        modal.style.display = 'flex';
+                        setTimeout(() => { 
+                            modal.style.opacity = '1'; 
+                            parent.document.getElementById('custom-manual-box').style.transform = 'translateY(0)';
+                        }, 10);
+                    };
+                    
+                    const closeModal = () => {
+                        modal.style.opacity = '0';
+                        parent.document.getElementById('custom-manual-box').style.transform = 'translateY(-20px)';
+                        setTimeout(() => { modal.style.display = 'none'; }, 300);
+                    };
+
+                    btn.addEventListener('click', openModal);
+                    parent.document.getElementById('custom-manual-close').addEventListener('click', closeModal);
+                    
+                    // 팝업 바깥 어두운 배경 클릭하면 닫히게 설정
+                    modal.addEventListener('click', (e) => {
+                        if (e.target === modal) closeModal();
+                    });
+                }
+            } catch (e) {
+                console.error("Manual popup injection failed:", e);
             }
-        }
-
-        /* 3. 모달 오버레이 (어두운 배경) */
-        .manual-modal-wrapper {
-            position: fixed;
-            top: 0; left: 0; width: 100vw; height: 100vh;
-            background: rgba(0, 0, 0, 0.6);
-            backdrop-filter: blur(5px);
-            z-index: 999999;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            opacity: 0;
-            pointer-events: none; /* 숨겨져 있을 땐 클릭 무시 */
-            transition: opacity 0.3s ease;
-        }
-
-        /* 4. 모달 팝업 박스 본체 */
-        .manual-modal-box {
-            background: #17181B;
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            width: 90%;
-            max-width: 450px;
-            border-radius: 16px;
-            padding: 1.5rem;
-            color: #f5f5f5;
-            position: relative;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-            transform: translateY(-20px);
-            transition: transform 0.3s ease;
-            max-height: 80vh;
-            overflow-y: auto;
-        }
-
-        /* 5. 체크박스가 체크(클릭)되면 모달 표시하는 CSS 매직! */
-        #manual-toggle:checked ~ .manual-modal-wrapper {
-            opacity: 1;
-            pointer-events: auto; /* 클릭 활성화 */
-        }
-        #manual-toggle:checked ~ .manual-modal-wrapper .manual-modal-box {
-            transform: translateY(0);
-        }
-
-        /* 6. 닫기 버튼 및 빈 공간 클릭 시 닫히게 하는 투명 덮개 */
-        .close-overlay {
-            position: absolute;
-            top: 0; left: 0; width: 100%; height: 100%;
-            cursor: default;
-        }
-        .close-btn {
-            position: absolute;
-            top: 15px;
-            right: 20px;
-            font-size: 1.5rem;
-            color: #aaa;
-            cursor: pointer;
-            z-index: 10;
-        }
-        .close-btn:hover { color: #fff; }
-
-        /* 7. 메뉴얼 내용 텍스트 디자인 */
-        .manual-title {
-            font-size: 1.15rem;
-            font-weight: 700;
-            margin-bottom: 1rem;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
-            padding-bottom: 0.8rem;
-        }
-        .manual-text { font-size: 0.9rem; line-height: 1.65; color: #ddd; }
-        .manual-step { margin-bottom: 0.8rem; }
-        .manual-step strong { color: #4ade80; /* 산뜻한 그린 컬러 */ }
-        </style>
-
-        <input type="checkbox" id="manual-toggle">
-        
-        <label for="manual-toggle" class="manual-trigger-label">📖 메뉴얼</label>
-
-        <div class="manual-modal-wrapper">
-            <label for="manual-toggle" class="close-overlay"></label>
-            
-            <div class="manual-modal-box">
-                <label for="manual-toggle" class="close-btn">&times;</label>
-                
-                <div class="manual-title">🧭 정책 내비게이터 100% 활용 가이드</div>
-                <div class="manual-text">
-                    <div class="manual-step">
-                        <strong>1️⃣ 나의 기본 정보 입력하기</strong><br>
-                        좌측 메뉴(모바일은 상단)에서 거주지와 출생연도를 선택해 주세요.<br>
-                        추가 정보 칸에는 현재 상황(예: <i>대학교 4학년, 1인가구 무주택, 월세 50만 원 거주, 취업 준비 중</i>)을 구체적으로 적을수록 AI가 더 정확한 정책을 찾아옵니다.<br>
-                        <span style="color: #fb7185; font-size: 0.8rem;">※ 주의: 이름, 전화번호, 상세 주소 등 민감한 개인정보는 절대 입력하지 마세요!</span>
-                    </div>
-                    
-                    <div class="manual-step">
-                        <strong>2️⃣ 맞춤 혜택 검색하기</strong><br>
-                        입력을 마쳤다면 <code>[🔍 맞춤 혜택 찾기]</code> 버튼을 눌러주세요.<br>
-                        AI가 주거, 취업, 금융 등 다양한 분야에서 현재 내 조건으로 신청 가능한 알짜배기 혜택들만 모아서 보기 쉬운 '요약 표'와 함께 정리해 드립니다.
-                    </div>
-                    
-                    <div class="manual-step">
-                        <strong>3️⃣ AI와 자유롭게 대화하기 (핵심 꿀팁!)</strong><br>
-                        검색 결과가 끝이 아닙니다! 하단 채팅창을 통해 사람과 대화하듯 질문해 보세요.<br>
-                        💬 <i>"이 중에서 당장 다음 달에 신청할 수 있는 것만 추려줘"</i><br>
-                        💬 <i>"월세 지원 정책들만 조금 더 자세히 설명해 줄래?"</i>
-                    </div>
-                    
-                    <div class="manual-step">
-                        <strong>4️⃣ 답변 이어보기 & 결과 저장하기</strong><br>
-                        혹시 혜택이 너무 많아 AI 답변이 중간에 멈췄나요? 당황하지 마세요!<br>
-                        <code>[🔄 답변 이어서 생성하기]</code> 버튼을 누르거나, 하단 채팅창에 직접 💬 <i>"이어서 계속해줘"</i> 라고 입력하면 끊긴 부분부터 마저 알려줍니다.<br>
-                        찾은 정보는 하단의 <code>[다운로드]</code> 버튼을 눌러 잊지 말고 저장해 두세요!
-                    </div>
-                </div>
-            </div>
-        </div>
+        </script>
         """,
-        unsafe_allow_html=True
+        height=0,
+        width=0
     )
-
 
 # 🌟 스트림릿 최신 버전 & 모바일(아이폰/갤럭시) 완벽 호환 자동 스크롤
 # 🌟 에이전트 타이핑(말)을 완벽하게 따라가는 AI 추적형 자동 스크롤!
