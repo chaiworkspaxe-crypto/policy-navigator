@@ -23,6 +23,9 @@ export default function Home() {
   const [showDonation, setShowDonation] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [isFormExpanded, setIsFormExpanded] = useState(true);
+  
+  // 🌟 [추가] 메뉴얼 팝업 상태 관리
+  const [showManual, setShowManual] = useState(false);
 
   const [isConfirmingDeleteAll, setIsConfirmingDeleteAll] = useState(false);
   const deleteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -45,7 +48,6 @@ export default function Home() {
     document.documentElement.classList.add('dark');
   }, []);
 
-  // 🌟 [모바일 UX 최적화] 유저가 다른 앱(카톡 등)을 보다가 다시 브라우저로 돌아왔을 때를 감지!
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && currentThreadId && userId) {
@@ -302,7 +304,11 @@ export default function Home() {
       </aside>
 
       <main className="relative flex h-full flex-1 flex-col w-full">
+        {/* 🌟 PC버전 헤더 영역 (여기에 메뉴얼 버튼 추가) */}
         <div className="absolute top-4 right-4 z-50 hidden md:flex items-center gap-3">
+          <button onClick={() => setShowManual(true)} className="px-3 py-2 rounded-xl bg-white dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] text-gray-700 dark:text-gray-200 text-sm font-bold shadow-sm hover:scale-105 transition-transform flex items-center gap-1.5">
+            📖 메뉴얼
+          </button>
           <a href="https://www.instagram.com/policyai.kr/" target="_blank" rel="noopener noreferrer" className="p-2.5 rounded-full bg-white dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] shadow-sm hover:scale-110 transition-transform flex items-center justify-center">
             <img src="/instagram-logo.png" alt="Instagram" className="w-5 h-5 object-contain" />
           </a>
@@ -311,9 +317,13 @@ export default function Home() {
           </button>
         </div>
 
+        {/* 🌟 모바일버전 헤더 영역 (여기에 메뉴얼 버튼 추가) */}
         <div className="flex items-center justify-between bg-white dark:bg-[#1a1a1a] p-4 border-b border-gray-200 dark:border-[#333] md:hidden shrink-0">
           <div className="font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>맞춤 혜택 찾기</div>
           <div className="flex items-center gap-3">
+            <button onClick={() => setShowManual(true)} className="px-2.5 py-1.5 rounded-lg bg-white dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] text-gray-700 dark:text-gray-200 text-xs font-bold shadow-sm hover:scale-105 transition-transform flex items-center gap-1">
+              📖 메뉴얼
+            </button>
             <a href="https://www.instagram.com/policyai.kr/" target="_blank" rel="noopener noreferrer" className="hover:scale-110 transition-transform flex items-center justify-center">
               <img src="/instagram-logo.png" alt="Instagram" className="w-6 h-6 object-contain" />
             </a>
@@ -427,6 +437,57 @@ export default function Home() {
           </div>
         </div>
       </main>
+
+      {/* 🌟 [추가] 메뉴얼 팝업 모달 */}
+      {showManual && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] px-4 animate-in fade-in duration-200" onClick={() => setShowManual(false)}>
+          <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl shadow-xl w-full max-w-lg relative border border-gray-200 dark:border-[#333] text-left max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <button onClick={() => setShowManual(false)} className="absolute top-4 right-4 p-1.5 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"><X size={20} /></button>
+            
+            <h2 className="text-xl font-bold mb-4 border-b border-gray-200 dark:border-[#333] pb-3 text-gray-800 dark:text-gray-100 flex items-center gap-2">
+              🧭 정책 내비게이터 100% 활용 가이드
+            </h2>
+            
+            <div className="space-y-5 text-sm sm:text-base text-gray-700 dark:text-gray-300">
+              <div>
+                <strong className="text-green-600 dark:text-green-400 block mb-1">1️⃣ 나의 기본 정보 입력하기</strong>
+                좌측 메뉴(모바일은 상단)에서 거주지와 출생연도를 선택해 주세요.<br/>
+                추가 정보 칸에 현재 상황(예: <i className="text-gray-500 dark:text-gray-400">대학교 4학년, 1인가구 무주택, 취업 준비 중</i>)을 구체적으로 적을수록 AI가 더 정확한 정책을 찾아옵니다.<br/>
+                <span className="text-red-500 dark:text-red-400 text-[13px] font-medium mt-1.5 block bg-red-50 dark:bg-red-900/20 p-2 rounded-md">※ 주의: 이름, 전화번호 등 민감한 개인정보는 절대 입력하지 마세요!</span>
+              </div>
+              
+              <div>
+                <strong className="text-green-600 dark:text-green-400 block mb-1">2️⃣ 맞춤 혜택 검색하기</strong>
+                입력을 마쳤다면 <code className="bg-gray-100 dark:bg-[#2a2a2a] px-1.5 py-0.5 rounded text-green-700 dark:text-green-400 font-semibold">[🔍 맞춤 혜택 찾기]</code> 버튼을 눌러주세요.<br/>
+                AI가 다양한 분야에서 신청 가능한 혜택을 싹 모아서 보기 좋게 정리해 드립니다.
+              </div>
+              
+              <div>
+                <strong className="text-green-600 dark:text-green-400 block mb-1">3️⃣ AI와 자유롭게 대화하기 (핵심 꿀팁!)</strong>
+                검색 결과가 끝이 아닙니다! 하단 채팅창을 통해 사람과 대화하듯 질문해 보세요.<br/>
+                <div className="bg-gray-50 dark:bg-[#2a2a2a] p-3 rounded-xl mt-2 text-sm text-gray-600 dark:text-gray-400 border border-gray-100 dark:border-[#333]">
+                  💬 "이 중에서 당장 다음 달에 신청할 수 있는 것만 추려줘"<br/>
+                  <div className="h-2"></div>
+                  💬 "월세 지원 정책들만 조금 더 자세히 설명해 줄래?"
+                </div>
+              </div>
+              
+              <div>
+                <strong className="text-green-600 dark:text-green-400 block mb-1">4️⃣ 답변 이어보기 & 결과 저장하기</strong>
+                혹시 혜택이 너무 많아 AI 답변이 중간에 멈췄나요?<br/>
+                채팅창에 직접 <code className="bg-gray-100 dark:bg-[#2a2a2a] px-1.5 py-0.5 rounded text-green-700 dark:text-green-400 font-semibold">💬 "이어서 계속해줘"</code> 라고 입력하면 끊긴 부분부터 마저 알려줍니다.<br/>
+                찾은 정보는 결과 하단의 <code className="bg-gray-100 dark:bg-[#2a2a2a] px-1.5 py-0.5 rounded text-green-700 dark:text-green-400 font-semibold">[🔗 결과 공유하기]</code> 버튼을 눌러 기기에 저장하거나 지인에게 공유해 보세요!
+              </div>
+            </div>
+            
+            <div className="mt-6 pt-4 border-t border-gray-200 dark:border-[#333]">
+              <button onClick={() => setShowManual(false)} className="w-full py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl transition-colors active:scale-95 shadow-sm">
+                확인했습니다!
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showDonation && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] px-4 animate-in fade-in duration-200">
