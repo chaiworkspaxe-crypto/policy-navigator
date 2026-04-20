@@ -5,11 +5,55 @@ import { v4 as uuidv4 } from "uuid";
 import { api, ChatMessage, extractApiErrorMessage, ThreadInputs, ThreadItem } from "@/lib/api";
 import { CITY_TO_DISTRICTS, DONG_MAP } from "@/lib/regionData";
 import MarkdownMessage from "@/components/MarkdownMessage";
-import { MessageSquare, Plus, Send, Loader2, MapPin, Search, AlertCircle, Menu, X, Trash2, Sun, Moon, Coffee, ChevronUp, ChevronDown } from "lucide-react";
+import { 
+  MessageSquare, Plus, Send, Loader2, MapPin, Search, AlertCircle, 
+  Menu, X, Trash2, Sun, Moon, Coffee, ChevronUp, ChevronDown, 
+  Download, RefreshCw, FileText // 🌟 [추가] 새로운 아이콘 임포트
+} from "lucide-react";
 
 const DEFAULT_CITY = "선택하세요";
 const DEFAULT_DONG = "선택 안 함";
 const EMPTY_INPUTS: ThreadInputs = { selected_city: DEFAULT_CITY, selected_district: DEFAULT_CITY, selected_dong: DEFAULT_DONG, birth_year: "", extra_info: "" };
+
+// 🌟 [추가] 요약 표 추출 및 감지 헬퍼 함수 (app.py 로직 100% 이식)
+const extractSummaryTableText = (text: string) => {
+  const lines = text.split('\n');
+  let headerIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const normalized = lines[i].replace(/ /g, "");
+    if (normalized.includes("|분야|") && normalized.includes("|정책명|") && (normalized.includes("|신청마감일|") || normalized.includes("|핵심혜택|"))) {
+      headerIdx = i; break;
+    }
+  }
+  if (headerIdx === -1) return "";
+  
+  const tableLines = [lines[headerIdx]];
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) { if (tableLines.length >= 2) break; continue; }
+    if (!line.includes('|')) { if (tableLines.length >= 2) break; continue; }
+    tableLines.push(lines[i]);
+  }
+  return tableLines.join('\n');
+};
+
+const hasSummaryTable = (text: string) => {
+  return extractSummaryTableText(text).length > 0;
+};
+
+// 🌟 [추가] 마크다운 다운로드 헬퍼 함수
+const downloadMarkdown = (content: string, filename: string) => {
+  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
+
 
 export default function Home() {
   const [userId, setUserId] = useState("");
@@ -23,12 +67,13 @@ export default function Home() {
   const [showDonation, setShowDonation] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [isFormExpanded, setIsFormExpanded] = useState(true);
-  
-  // 🌟 [추가] 메뉴얼 팝업 상태 관리
   const [showManual, setShowManual] = useState(false);
 
   const [isConfirmingDeleteAll, setIsConfirmingDeleteAll] = useState(false);
   const deleteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 🌟 [추가] 자동 스크롤을 위한 꼬리표(Ref)
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const [city, setCity] = useState(EMPTY_INPUTS.selected_city);
   const [district, setDistrict] = useState(EMPTY_INPUTS.selected_district);
@@ -51,21 +96,21 @@ export default function Home() {
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && currentThreadId && userId) {
-        console.log("유저가 돌아왔습니다! 최신 데이터를 다시 불러옵니다.");
-        
         api.loadMessages(userId, currentThreadId)
           .then((reloadedMessages) => {
-            if (reloadedMessages.length > 0) {
-              setMessages(reloadedMessages);
-            }
+            if (reloadedMessages.length > 0) setMessages(reloadedMessages);
           })
           .catch(console.error);
       }
     };
-
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, [currentThreadId, userId]);
+
+  // 🌟 [추가] 메시지가 추가되거나 AI가 타자를 칠 때마다 맨 밑으로 부드럽게 스크롤!
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, aiStatus]);
 
   const toggleTheme = () => {
     setIsDarkMode(!isDarkMode);
@@ -154,7 +199,8 @@ export default function Home() {
     return "";
   };
 
-  const handleSearch = async (isFollowUp = false) => {
+  // 🌟 [수정] 강제 프롬프트를 넘길 수 있도록 매개변수 추가
+  const handleSearch = async (isFollowUp = false, overridePrompt?: string) => {
     setErrorMessage(""); setAiStatus("");
 
     if (!userId) return setErrorMessage("사용자 정보가 준비되지 않았습니다. 새로고침 해주세요.");
@@ -165,21 +211,21 @@ export default function Home() {
       catch { return setErrorMessage("대화방을 만들 수 없습니다. 잠시 후 시도해 주세요."); }
     }
 
-    if (isFollowUp) {
+    if (isFollowUp && !overridePrompt) {
       if (!query.trim()) return setErrorMessage("추가 질문을 입력해주세요.");
       if (messages.length === 0) return setErrorMessage("먼저 기본 조건으로 혜택을 조회해주세요.");
-    } else {
+    } else if (!isFollowUp) {
       const validationMessage = validateStructuredSearch();
       if (validationMessage) return setErrorMessage(validationMessage);
       setIsFormExpanded(false);
     }
 
-    const followUpText = query.trim();
+    const followUpText = overridePrompt || query.trim();
     const optimisticUserMessage = isFollowUp ? followUpText : `📍 ${city} ${district} ${dong !== DEFAULT_DONG ? dong : ""} | 🎂 ${birthYear}년생 | 📝 ${extraInfo}`;
 
     setLoading(true);
     setMessages((prev) => [...prev, { role: "user", content: optimisticUserMessage }, { role: "assistant", content: "" }]);
-    if (isFollowUp) setQuery("");
+    if (isFollowUp && !overridePrompt) setQuery("");
 
     try {
       await api.saveThreadInputs(userId, targetThreadId, { selected_city: city, selected_district: district, selected_dong: dong, birth_year: birthYear, extra_info: extraInfo });
@@ -233,7 +279,7 @@ export default function Home() {
                   setAiStatus(data.message);
                 }
               } catch (e) {
-                // 사파리 패딩 등 JSON이 아닌 데이터는 무시
+                // Ignore
               }
             }
           }
@@ -304,7 +350,6 @@ export default function Home() {
       </aside>
 
       <main className="relative flex h-full flex-1 flex-col w-full">
-        {/* 🌟 PC버전 헤더 영역 (여기에 메뉴얼 버튼 추가) */}
         <div className="absolute top-4 right-4 z-50 hidden md:flex items-center gap-3">
           <button onClick={() => setShowManual(true)} className="px-3 py-2 rounded-xl bg-white dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] text-gray-700 dark:text-gray-200 text-sm font-bold shadow-sm hover:scale-105 transition-transform flex items-center gap-1.5">
             📖 메뉴얼
@@ -317,7 +362,6 @@ export default function Home() {
           </button>
         </div>
 
-        {/* 🌟 모바일버전 헤더 영역 (여기에 메뉴얼 버튼 추가) */}
         <div className="flex items-center justify-between bg-white dark:bg-[#1a1a1a] p-4 border-b border-gray-200 dark:border-[#333] md:hidden shrink-0">
           <div className="font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>맞춤 혜택 찾기</div>
           <div className="flex items-center gap-3">
@@ -372,6 +416,11 @@ export default function Home() {
               {messages.map((message, index) => {
                 const isLastMessage = index === messages.length - 1;
                 const isAssistant = message.role === "assistant";
+                
+                // 🌟 마크다운 깨짐 방지: 마지막 메시지이고 요약표가 없다면 임시로 줄바꿈 추가
+                const displayContent = (!loading && isLastMessage && isAssistant && !hasSummaryTable(message.content)) 
+                  ? message.content + "\n\n" 
+                  : message.content;
 
                 return (
                   <div key={`${message.role}-${index}`} className={`flex gap-3 sm:gap-4 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
@@ -380,8 +429,9 @@ export default function Home() {
                     )}
                     <div className={`max-w-[90%] sm:max-w-[85%] rounded-2xl p-4 shadow-sm overflow-hidden ${message.role === "user" ? "whitespace-pre-wrap border border-gray-200 dark:border-[#444] bg-white dark:bg-[#2d2d2d] text-gray-800 dark:text-gray-200 text-sm sm:text-base" : "bg-transparent text-gray-800 dark:text-gray-300"}`}>
                       
-                      {isAssistant ? <MarkdownMessage content={message.content} /> : <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>}
+                      {isAssistant ? <MarkdownMessage content={displayContent} /> : <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>}
                       
+                      {/* 🌟 로딩 중 표시 */}
                       {isLastMessage && isAssistant && loading && (
                         <div className="mt-4 flex items-center gap-2 text-sm font-bold text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 px-4 py-2.5 rounded-xl w-fit animate-pulse border border-green-200 dark:border-green-800/30 shadow-sm">
                           <Loader2 size={16} className="animate-spin shrink-0" />
@@ -389,9 +439,19 @@ export default function Home() {
                         </div>
                       )}
 
+                      {/* 🌟 다운로드 및 공유 버튼 그룹 (app.py 완벽 대응) */}
                       {!loading && isAssistant && message.content.length > 50 && (
-                        <div className="mt-4 pt-3 border-t border-gray-200 dark:border-[#444] flex justify-end animate-in fade-in duration-300">
-                          {/* 🌟 PC와 모바일을 완벽하게 구분해서 작동하는 똑똑한 공유 버튼! */}
+                        <div className="mt-4 pt-3 border-t border-gray-200 dark:border-[#444] flex flex-wrap justify-end gap-2 animate-in fade-in duration-300">
+                          <button onClick={() => downloadMarkdown(message.content, `정책내비게이터_전체응답.md`)} className="text-xs font-bold bg-gray-100 dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-[#333] transition-colors flex items-center gap-1 border border-gray-200 dark:border-[#444]">
+                            <FileText size={14}/> 전체 저장
+                          </button>
+                          
+                          {hasSummaryTable(message.content) && (
+                            <button onClick={() => downloadMarkdown(extractSummaryTableText(message.content), `정책내비게이터_요약표.md`)} className="text-xs font-bold bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 px-3 py-1.5 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors flex items-center gap-1 border border-blue-200 dark:border-blue-800/30">
+                              <Download size={14}/> 요약표 저장
+                            </button>
+                          )}
+                          
                           <button onClick={async () => {
                               const shareData = { 
                                 title: '나에게 딱 맞는 맞춤형 정부 혜택 🎁', 
@@ -400,25 +460,44 @@ export default function Home() {
                               };
                               try { 
                                 const isMobile = /Mobi|Android/i.test(navigator.userAgent);
-                                
                                 if (isMobile && navigator.share) { 
-                                  // 스마트폰: 카카오톡 등 네이티브 앱 선택 창 띄우기
                                   await navigator.share(shareData); 
                                 } else { 
-                                  // PC: 윈도우 공유창 무시하고, 바로 클립보드에 풀 텍스트 복사!
                                   await navigator.clipboard.writeText(shareData.text + shareData.url); 
                                   alert('전체 결과가 클립보드에 복사되었습니다! 메모장이나 카톡 PC버전에 붙여넣기 해보세요.'); 
                                 } 
-                              } catch (err) { 
-                                console.error('공유/복사 실패:', err); 
-                              }
-                            }} className="text-xs font-bold bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-3 py-1.5 rounded-lg hover:bg-green-200 dark:hover:bg-green-800/50 transition-colors flex items-center gap-1">🔗 결과 공유하기</button>
+                              } catch (err) { console.error('공유/복사 실패:', err); }
+                            }} className="text-xs font-bold bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-3 py-1.5 rounded-lg hover:bg-green-200 dark:hover:bg-green-800/50 transition-colors flex items-center gap-1 border border-green-200 dark:border-green-800/30">
+                              🔗 공유하기
+                          </button>
                         </div>
                       )}
+
+                      {/* 🌟 답변 이어보기 버튼 (app.py 완벽 대응) */}
+                      {!loading && isLastMessage && isAssistant && !hasSummaryTable(message.content) && (
+                         <div className="mt-4 p-4 bg-gray-50 dark:bg-[#1a1a1a] rounded-xl border border-gray-200 dark:border-[#444] animate-in fade-in duration-300">
+                           <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
+                             <AlertCircle size={16} className="text-yellow-500" />
+                             답변이 중간에 끊긴 것 같나요? 아래 버튼을 눌러 마저 들을 수 있어요!
+                           </p>
+                           <button
+                             onClick={() => {
+                               setQuery(""); // 입력창 초기화
+                               void handleSearch(true, "답변이 끊겼어. 방금 하던 말부터 이어서 계속해줘.");
+                             }}
+                             className="w-full flex items-center justify-center gap-2 py-2.5 bg-white dark:bg-[#2d2d2d] border border-gray-300 dark:border-[#555] rounded-lg hover:bg-gray-100 dark:hover:bg-[#3d3d3d] transition-colors text-sm font-bold text-gray-700 dark:text-gray-200 shadow-sm"
+                           >
+                             <RefreshCw size={16} /> 답변 이어서 생성하기
+                           </button>
+                         </div>
+                      )}
+                      
                     </div>
                   </div>
                 );
               })}
+              {/* 🌟 자동 스크롤을 위한 숨겨진 꼬리표 */}
+              <div ref={messagesEndRef} />
             </div>
           )}
         </div>
@@ -438,7 +517,7 @@ export default function Home() {
         </div>
       </main>
 
-      {/* 🌟 [추가] 메뉴얼 팝업 모달 */}
+      {/* 🌟 메뉴얼 팝업 모달 */}
       {showManual && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] px-4 animate-in fade-in duration-200" onClick={() => setShowManual(false)}>
           <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl shadow-xl w-full max-w-lg relative border border-gray-200 dark:border-[#333] text-left max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
@@ -475,8 +554,8 @@ export default function Home() {
               <div>
                 <strong className="text-green-600 dark:text-green-400 block mb-1">4️⃣ 답변 이어보기 & 결과 저장하기</strong>
                 혹시 혜택이 너무 많아 AI 답변이 중간에 멈췄나요?<br/>
-                채팅창에 직접 <code className="bg-gray-100 dark:bg-[#2a2a2a] px-1.5 py-0.5 rounded text-green-700 dark:text-green-400 font-semibold">💬 "이어서 계속해줘"</code> 라고 입력하면 끊긴 부분부터 마저 알려줍니다.<br/>
-                찾은 정보는 결과 하단의 <code className="bg-gray-100 dark:bg-[#2a2a2a] px-1.5 py-0.5 rounded text-green-700 dark:text-green-400 font-semibold">[🔗 결과 공유하기]</code> 버튼을 눌러 기기에 저장하거나 지인에게 공유해 보세요!
+                결과 하단의 <code className="bg-gray-100 dark:bg-[#2a2a2a] px-1.5 py-0.5 rounded text-green-700 dark:text-green-400 font-semibold">[🔄 답변 이어서 생성하기]</code> 버튼을 누르거나, 채팅창에 <code className="bg-gray-100 dark:bg-[#2a2a2a] px-1.5 py-0.5 rounded text-green-700 dark:text-green-400 font-semibold">💬 "이어서 계속해줘"</code> 라고 입력하면 마저 알려줍니다.<br/>
+                찾은 정보는 <code className="bg-gray-100 dark:bg-[#2a2a2a] px-1.5 py-0.5 rounded text-green-700 dark:text-green-400 font-semibold">[📄 전체 저장]</code> 또는 <code className="bg-gray-100 dark:bg-[#2a2a2a] px-1.5 py-0.5 rounded text-green-700 dark:text-green-400 font-semibold">[🔗 공유하기]</code> 버튼을 눌러 기기에 저장해 보세요!
               </div>
             </div>
             
