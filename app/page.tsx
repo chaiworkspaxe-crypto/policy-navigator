@@ -53,22 +53,28 @@ const downloadTextFile = (content: string, filename: string) => {
   URL.revokeObjectURL(url);
 };
 
-// 🌟 [신규 추가] 화면을 JPG 이미지로 캡처해서 다운로드하는 함수
+// 🌟 [수정된 부분] 화면을 JPG 이미지로 캡처해서 다운로드하는 튼튼한 함수
 const downloadAsImage = async (elementId: string, filename: string) => {
   const element = document.getElementById(elementId);
-  if (!element) return;
+  if (!element) {
+    alert("캡처할 영역을 찾을 수 없습니다.");
+    return;
+  }
 
   try {
-    // Next.js 환경에서 에러가 나지 않도록 동적으로 모듈을 불러옵니다.
-    const html2canvas = (await import("html2canvas")).default;
+    // 🌟 1. Next.js 모듈 불러오기 호환성 강화 (에러 주범 해결)
+    const module = await import("html2canvas");
+    const html2canvas = module.default ? module.default : module;
     
     // 다크모드 여부에 따라 배경색을 다르게 지정
     const isDark = document.documentElement.classList.contains('dark');
     
-    const canvas = await html2canvas(element, {
+    // 🌟 2. 캡처 실행 (외부 아이콘이나 이모티콘 렌더링 에러 방지 옵션 추가)
+    const canvas = await (html2canvas as any)(element, {
       scale: 2, // 화질 2배로 선명하게
       useCORS: true,
-      backgroundColor: isDark ? '#2d2d2d' : '#ffffff', // 말풍선 배경색에 맞춤
+      allowTaint: true, // 폰트나 외부 SVG 요소 때문에 튕기는 현상 방지
+      backgroundColor: isDark ? '#2d2d2d' : '#ffffff', 
     });
 
     const image = canvas.toDataURL("image/jpeg", 0.9);
@@ -76,9 +82,9 @@ const downloadAsImage = async (elementId: string, filename: string) => {
     link.href = image;
     link.download = filename;
     link.click();
-  } catch (error) {
+  } catch (error: any) {
     console.error("이미지 캡처 실패:", error);
-    alert("이미지 저장 중 오류가 발생했습니다.");
+    alert(`이미지 저장 중 오류가 발생했습니다: ${error?.message || '알 수 없는 에러'}`);
   }
 };
 
