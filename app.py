@@ -564,6 +564,144 @@ def inject_custom_css():
     )
 
 
+# 🌟 [신규 추가] 헤더 고정 메뉴얼 버튼 및 CSS 전용 팝업 모달
+def inject_manual_popup():
+    st.markdown(
+        """
+        <style>
+        /* 1. 체크박스 숨기기 (이 체크박스의 상태로 팝업을 열고 닫음) */
+        #manual-toggle { display: none; }
+
+        /* 2. 헤더 메뉴얼 버튼 스타일 (Label을 버튼처럼 꾸밈) */
+        .manual-trigger-label {
+            position: fixed;
+            top: 14px;
+            right: 140px; /* PC 위치: 인스타 로고 왼쪽 */
+            z-index: 999990;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #F5F5F5;
+            padding: 4px 12px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            backdrop-filter: blur(4px);
+            transition: all 0.2s ease;
+        }
+        
+        .manual-trigger-label:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        /* 모바일 위치 세밀 조정 */
+        @media (max-width: 768px) {
+            .manual-trigger-label {
+                top: 15px;
+                right: 95px; /* 모바일 위치: 타이틀과 인스타 로고 사이 */
+                padding: 3px 8px;
+                font-size: 0.75rem;
+            }
+        }
+
+        /* 3. 모달 오버레이 (어두운 배경) */
+        .manual-modal-wrapper {
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(5px);
+            z-index: 999999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            pointer-events: none; /* 숨겨져 있을 땐 클릭 무시 */
+            transition: opacity 0.3s ease;
+        }
+
+        /* 4. 모달 팝업 박스 본체 */
+        .manual-modal-box {
+            background: #17181B;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            width: 90%;
+            max-width: 450px;
+            border-radius: 16px;
+            padding: 1.5rem;
+            color: #f5f5f5;
+            position: relative;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            transform: translateY(-20px);
+            transition: transform 0.3s ease;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        /* 5. 체크박스가 체크(클릭)되면 모달 표시하는 CSS 매직! */
+        #manual-toggle:checked ~ .manual-modal-wrapper {
+            opacity: 1;
+            pointer-events: auto; /* 클릭 활성화 */
+        }
+        #manual-toggle:checked ~ .manual-modal-wrapper .manual-modal-box {
+            transform: translateY(0);
+        }
+
+        /* 6. 닫기 버튼 및 빈 공간 클릭 시 닫히게 하는 투명 덮개 */
+        .close-overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            cursor: default;
+        }
+        .close-btn {
+            position: absolute;
+            top: 15px;
+            right: 20px;
+            font-size: 1.5rem;
+            color: #aaa;
+            cursor: pointer;
+            z-index: 10;
+        }
+        .close-btn:hover { color: #fff; }
+
+        /* 7. 메뉴얼 내용 텍스트 디자인 */
+        .manual-title {
+            font-size: 1.15rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            padding-bottom: 0.8rem;
+        }
+        .manual-text { font-size: 0.9rem; line-height: 1.65; color: #ddd; }
+        .manual-step { margin-bottom: 0.8rem; }
+        .manual-step strong { color: #4ade80; /* 산뜻한 그린 컬러 */ }
+        </style>
+
+        <input type="checkbox" id="manual-toggle">
+        
+        <label for="manual-toggle" class="manual-trigger-label">📖 메뉴얼</label>
+
+        <div class="manual-modal-wrapper">
+            <label for="manual-toggle" class="close-overlay"></label>
+            
+            <div class="manual-modal-box">
+                <label for="manual-toggle" class="close-btn">&times;</label>
+                
+                <div class="manual-title">🧭 정책 내비게이터 100% 활용법</div>
+                <div class="manual-text">
+                    <div class="manual-step"><strong>1. 나의 기본 정보 입력하기</strong><br>좌측 메뉴(모바일은 화면 상단)에서 거주지, 출생연도, 현재 상황(직업, 주거 형태 등)을 꼼꼼히 적어주세요.</div>
+                    
+                    <div class="manual-step"><strong>2. 맞춤 혜택 검색</strong><br><code>[🔍 맞춤 혜택 찾기]</code> 버튼을 누르면 AI가 전국 16개 분야에서 신청 가능한 정책을 싹 모아옵니다.</div>
+                    
+                    <div class="manual-step"><strong>3. 자유롭게 추가 질문하기</strong><br>결과를 확인한 후, 하단 입력창에 "월세 지원금만 다시 묶어줘", "목돈 마련에 좋은 건?" 등 사람과 대화하듯 자유롭게 질문해 보세요.</div>
+                    
+                    <div class="manual-step"><strong>4. 이어보기 & 요약표 다운로드</strong><br>답변이 너무 많아 중간에 끊겼다면 <code>[🔄 답변 이어서 생성하기]</code> 버튼을 누르세요. 최종 결과는 한눈에 보기 쉬운 요약 표로 정리되며 파일로 다운로드할 수 있습니다.</div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
 # 🌟 스트림릿 최신 버전 & 모바일(아이폰/갤럭시) 완벽 호환 자동 스크롤
 # 🌟 에이전트 타이핑(말)을 완벽하게 따라가는 AI 추적형 자동 스크롤!
 # 🌟 에이전트 타이핑(말)을 완벽하게 따라가는 불도저급 자동 스크롤!
