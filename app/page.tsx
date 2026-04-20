@@ -4,11 +4,13 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { api, ChatMessage, extractApiErrorMessage, ThreadInputs, ThreadItem } from "@/lib/api";
 import { CITY_TO_DISTRICTS, DONG_MAP } from "@/lib/regionData";
-import MarkdownMessage from "@/components/MarkdownMessage";
+// 🌟 [수정] 먹통이었던 MarkdownMessage 대신 검증된 라이브러리 직접 임포트!
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { 
   MessageSquare, Plus, Send, Loader2, MapPin, Search, AlertCircle, 
   Menu, X, Trash2, Sun, Moon, Coffee, ChevronUp, ChevronDown, 
-  Download, RefreshCw, FileText, Image as ImageIcon // 🌟 이미지 아이콘 추가
+  Download, RefreshCw, FileText, Image as ImageIcon
 } from "lucide-react";
 
 const DEFAULT_CITY = "선택하세요";
@@ -40,7 +42,7 @@ const hasSummaryTable = (text: string) => {
   return extractSummaryTableText(text).length > 0;
 };
 
-// 🌟 [수정] 일반 사용자를 위해 텍스트(.txt) 다운로드 헬퍼 함수로 변경
+// 🌟 텍스트(.txt) 다운로드 헬퍼 함수
 const downloadTextFile = (content: string, filename: string) => {
   const blob = new Blob([content], { type: 'text/plain;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
@@ -53,7 +55,7 @@ const downloadTextFile = (content: string, filename: string) => {
   URL.revokeObjectURL(url);
 };
 
-// 🌟 [수정된 부분] 최신 CSS(Tailwind v4 lab 색상)를 완벽 지원하는 html-to-image로 교체!
+// 🌟 최신 CSS(Tailwind v4 lab 색상)를 완벽 지원하는 html-to-image 캡처
 const downloadAsImage = async (elementId: string, filename: string) => {
   const element = document.getElementById(elementId);
   if (!element) {
@@ -62,18 +64,14 @@ const downloadAsImage = async (elementId: string, filename: string) => {
   }
 
   try {
-    // 🌟 html-to-image 라이브러리를 동적으로 불러옴
     const htmlToImage = await import("html-to-image");
-    
-    // 다크모드 여부에 따라 배경색을 다르게 지정
     const isDark = document.documentElement.classList.contains('dark');
     const bgColor = isDark ? '#2d2d2d' : '#ffffff';
     
-    // 🌟 최신 SVG 변환 방식을 써서 폰트나 lab() 색상 에러 없이 완벽하게 캡처!
     const dataUrl = await htmlToImage.toJpeg(element, {
-      quality: 0.95, // 화질 설정
+      quality: 0.95,
       backgroundColor: bgColor, 
-      pixelRatio: 2, // 2배수로 선명하게 캡처
+      pixelRatio: 2,
     });
 
     const link = document.createElement("a");
@@ -98,14 +96,11 @@ export default function Home() {
   const [showDonation, setShowDonation] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [isFormExpanded, setIsFormExpanded] = useState(true);
-  
-  // 🌟 [추가] 메뉴얼 팝업 상태 관리
   const [showManual, setShowManual] = useState(false);
 
   const [isConfirmingDeleteAll, setIsConfirmingDeleteAll] = useState(false);
   const deleteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 🌟 [추가] 자동 스크롤을 위한 꼬리표(Ref)
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const [city, setCity] = useState(EMPTY_INPUTS.selected_city);
@@ -140,7 +135,6 @@ export default function Home() {
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, [currentThreadId, userId]);
 
-  // 🌟 [추가] 메시지가 추가되거나 AI가 타자를 칠 때마다 맨 밑으로 부드럽게 스크롤!
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, aiStatus]);
@@ -232,7 +226,6 @@ export default function Home() {
     return "";
   };
 
-  // 🌟 강제 프롬프트를 넘길 수 있도록 매개변수 추가 (이어보기용)
   const handleSearch = async (isFollowUp = false, overridePrompt?: string) => {
     setErrorMessage(""); setAiStatus("");
 
@@ -383,7 +376,6 @@ export default function Home() {
       </aside>
 
       <main className="relative flex h-full flex-1 flex-col w-full">
-        {/* 🌟 PC버전 헤더 영역 (메뉴얼 버튼 포함) */}
         <div className="absolute top-4 right-4 z-50 hidden md:flex items-center gap-3">
           <button onClick={() => setShowManual(true)} className="px-3 py-2 rounded-xl bg-white dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] text-gray-700 dark:text-gray-200 text-sm font-bold shadow-sm hover:scale-105 transition-transform flex items-center gap-1.5">
             📖 메뉴얼
@@ -396,7 +388,6 @@ export default function Home() {
           </button>
         </div>
 
-        {/* 🌟 모바일버전 헤더 영역 (메뉴얼 버튼 포함) */}
         <div className="flex items-center justify-between bg-white dark:bg-[#1a1a1a] p-4 border-b border-gray-200 dark:border-[#333] md:hidden shrink-0">
           <div className="font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>맞춤 혜택 찾기</div>
           <div className="flex items-center gap-3">
@@ -452,7 +443,6 @@ export default function Home() {
                 const isLastMessage = index === messages.length - 1;
                 const isAssistant = message.role === "assistant";
                 
-                // 🌟 마크다운 깨짐 방지: 요약표가 끊겼다면 임시로 줄바꿈 추가
                 const displayContent = (!loading && isLastMessage && isAssistant && !hasSummaryTable(message.content)) 
                   ? message.content + "\n\n" 
                   : message.content;
@@ -464,9 +454,39 @@ export default function Home() {
                     )}
                     <div className={`max-w-[90%] sm:max-w-[85%] rounded-2xl p-4 shadow-sm overflow-hidden ${message.role === "user" ? "whitespace-pre-wrap border border-gray-200 dark:border-[#444] bg-white dark:bg-[#2d2d2d] text-gray-800 dark:text-gray-200 text-sm sm:text-base" : "bg-transparent text-gray-800 dark:text-gray-300"}`}>
                       
-                      {/* 🌟 캡처를 위해 내용 부분을 div로 감싸고 ID 부여 */}
                       <div id={`capture-area-${index}`} className="p-1 rounded-xl">
-                        {isAssistant ? <MarkdownMessage content={displayContent} /> : <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>}
+                        {isAssistant ? (
+                          // 🌟 먹통 컴포넌트 버리고 직접 ReactMarkdown으로 완벽하게 디자인!
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              p: ({ ...props }) => <p className="mb-2 leading-relaxed" {...props} />,
+                              ul: ({ ...props }) => <ul className="list-disc pl-5 mb-3 space-y-1" {...props} />,
+                              ol: ({ ...props }) => <ol className="list-decimal pl-5 mb-3 space-y-1" {...props} />,
+                              li: ({ ...props }) => <li className="" {...props} />,
+                              h1: ({ ...props }) => <h1 className="text-xl font-bold mb-3 mt-5" {...props} />,
+                              h2: ({ ...props }) => <h2 className="text-lg font-bold mb-2 mt-4" {...props} />,
+                              h3: ({ ...props }) => <h3 className="text-md font-bold mb-2 mt-4" {...props} />,
+                              strong: ({ ...props }) => <strong className="font-bold text-gray-900 dark:text-white" {...props} />,
+                              a: ({ ...props }) => <a className="text-blue-600 dark:text-blue-400 hover:underline break-all" target="_blank" rel="noopener noreferrer" {...props} />,
+                              hr: ({ ...props }) => <hr className="my-4 border-gray-200 dark:border-gray-700" {...props} />,
+                              table: ({ ...props }) => (
+                                <div className="overflow-x-auto mb-4 w-full rounded-lg border border-gray-200 dark:border-gray-700">
+                                  <table className="min-w-full text-sm text-left" {...props} />
+                                </div>
+                              ),
+                              thead: ({ ...props }) => <thead className="bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300" {...props} />,
+                              th: ({ ...props }) => <th className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 font-bold whitespace-nowrap" {...props} />,
+                              td: ({ ...props }) => <td className="px-4 py-3 border-b border-gray-200 dark:border-gray-700" {...props} />,
+                              pre: ({ ...props }) => <pre className="bg-gray-100 dark:bg-[#2a2a2a] p-3 rounded-lg overflow-x-auto text-sm font-mono mb-3" {...props} />,
+                              code: ({ className, ...props }) => <code className={`${className || ''} bg-gray-100 dark:bg-[#2a2a2a] text-pink-600 dark:text-pink-400 px-1.5 py-0.5 rounded text-sm font-mono`} {...props} />,
+                            }}
+                          >
+                            {displayContent}
+                          </ReactMarkdown>
+                        ) : (
+                          <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>
+                        )}
                       </div>
                       
                       {isLastMessage && isAssistant && loading && (
@@ -476,7 +496,6 @@ export default function Home() {
                         </div>
                       )}
 
-                      {/* 🌟 버튼 그룹 (.txt 저장 & 이미지 캡처) */}
                       {!loading && isAssistant && message.content.length > 50 && (
                         <div className="mt-4 pt-3 border-t border-gray-200 dark:border-[#444] flex flex-wrap justify-end gap-2 animate-in fade-in duration-300">
                           
@@ -515,7 +534,6 @@ export default function Home() {
                         </div>
                       )}
 
-                      {/* 🌟 답변 이어보기 버튼 */}
                       {!loading && isLastMessage && isAssistant && !hasSummaryTable(message.content) && (
                          <div className="mt-4 p-4 bg-gray-50 dark:bg-[#1a1a1a] rounded-xl border border-gray-200 dark:border-[#444] animate-in fade-in duration-300">
                            <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
@@ -538,7 +556,6 @@ export default function Home() {
                   </div>
                 );
               })}
-              {/* 🌟 자동 스크롤을 위한 숨겨진 꼬리표 */}
               <div ref={messagesEndRef} />
             </div>
           )}
@@ -559,7 +576,6 @@ export default function Home() {
         </div>
       </main>
 
-      {/* 🌟 메뉴얼 팝업 모달 */}
       {showManual && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] px-4 animate-in fade-in duration-200" onClick={() => setShowManual(false)}>
           <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl shadow-xl w-full max-w-lg relative border border-gray-200 dark:border-[#333] text-left max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
