@@ -685,15 +685,34 @@ def inject_manual_popup():
             <div class="manual-modal-box">
                 <label for="manual-toggle" class="close-btn">&times;</label>
                 
-                <div class="manual-title">🧭 정책 내비게이터 100% 활용법</div>
+                <div class="manual-title">🧭 정책 내비게이터 100% 활용 가이드</div>
                 <div class="manual-text">
-                    <div class="manual-step"><strong>1. 나의 기본 정보 입력하기</strong><br>좌측 메뉴(모바일은 화면 상단)에서 거주지, 출생연도, 현재 상황(직업, 주거 형태 등)을 꼼꼼히 적어주세요.</div>
+                    <div class="manual-step">
+                        <strong>1️⃣ 나의 기본 정보 입력하기</strong><br>
+                        좌측 메뉴(모바일은 상단)에서 거주지와 출생연도를 선택해 주세요.<br>
+                        추가 정보 칸에는 현재 상황(예: <i>대학교 4학년, 1인가구 무주택, 월세 50만 원 거주, 취업 준비 중</i>)을 구체적으로 적을수록 AI가 더 정확한 정책을 찾아옵니다.<br>
+                        <span style="color: #fb7185; font-size: 0.8rem;">※ 주의: 이름, 전화번호, 상세 주소 등 민감한 개인정보는 절대 입력하지 마세요!</span>
+                    </div>
                     
-                    <div class="manual-step"><strong>2. 맞춤 혜택 검색</strong><br><code>[🔍 맞춤 혜택 찾기]</code> 버튼을 누르면 AI가 전국 16개 분야에서 신청 가능한 정책을 싹 모아옵니다.</div>
+                    <div class="manual-step">
+                        <strong>2️⃣ 맞춤 혜택 검색하기</strong><br>
+                        입력을 마쳤다면 <code>[🔍 맞춤 혜택 찾기]</code> 버튼을 눌러주세요.<br>
+                        AI가 주거, 취업, 금융 등 다양한 분야에서 현재 내 조건으로 신청 가능한 알짜배기 혜택들만 모아서 보기 쉬운 '요약 표'와 함께 정리해 드립니다.
+                    </div>
                     
-                    <div class="manual-step"><strong>3. 자유롭게 추가 질문하기</strong><br>결과를 확인한 후, 하단 입력창에 "월세 지원금만 다시 묶어줘", "목돈 마련에 좋은 건?" 등 사람과 대화하듯 자유롭게 질문해 보세요.</div>
+                    <div class="manual-step">
+                        <strong>3️⃣ AI와 자유롭게 대화하기 (핵심 꿀팁!)</strong><br>
+                        검색 결과가 끝이 아닙니다! 하단 채팅창을 통해 사람과 대화하듯 질문해 보세요.<br>
+                        💬 <i>"이 중에서 당장 다음 달에 신청할 수 있는 것만 추려줘"</i><br>
+                        💬 <i>"월세 지원 정책들만 조금 더 자세히 설명해 줄래?"</i>
+                    </div>
                     
-                    <div class="manual-step"><strong>4. 이어보기 & 요약표 다운로드</strong><br>답변이 너무 많아 중간에 끊겼다면 <code>[🔄 답변 이어서 생성하기]</code> 버튼을 누르세요. 최종 결과는 한눈에 보기 쉬운 요약 표로 정리되며 파일로 다운로드할 수 있습니다.</div>
+                    <div class="manual-step">
+                        <strong>4️⃣ 답변 이어보기 & 결과 저장하기</strong><br>
+                        혹시 혜택이 너무 많아 AI 답변이 중간에 멈췄나요? 당황하지 마세요!<br>
+                        <code>[🔄 답변 이어서 생성하기]</code> 버튼을 누르거나, 하단 채팅창에 직접 💬 <i>"이어서 계속해줘"</i> 라고 입력하면 끊긴 부분부터 마저 알려줍니다.<br>
+                        찾은 정보는 하단의 <code>[다운로드]</code> 버튼을 눌러 잊지 말고 저장해 두세요!
+                    </div>
                 </div>
             </div>
         </div>
