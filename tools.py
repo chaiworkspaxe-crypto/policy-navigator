@@ -10,6 +10,11 @@ from urllib.parse import urlparse, urlunparse
 from urllib.request import Request, urlopen
 import pytz
 
+# 🌟 [DB 연동] openai_service.py에서 사용하던 DB 검색 함수를 여기서 바로 불러옵니다!
+try:
+    from chat_db import search_policies
+except ImportError:
+    search_policies = None
 
 def setup_windows_ssl_env():
     """
@@ -656,13 +661,19 @@ def format_search_results(results: list[dict], expanded: bool) -> str:
     return "\n".join(header + output)
 
 
+# =====================================================================
+# 🌟 [도구 1] 웹 통합 검색 도구 (웹 문서 + 공식 문서 긁어오기)
+# =====================================================================
 @tool
 def web_search(query: str):
     """
     최신 웹 정보를 검색할 때 사용하는 도구입니다.
     청년 정책, 지원금, 지자체 공지사항 등을 찾을 때 이 도구를 호출하세요.
     내부적으로 여러 쿼리를 생성하여 누락을 줄이고, 공식/공공성 높은 결과를 우선 정렬합니다.
-    또한 상위 공식 후보는 내부적으로 가볍게 재검증합니다.
+    
+    [🚨 필수 지침 🚨]
+    에이전트는 사용자에게 정책 정보를 제공할 때, 이 web_search 단독으로만 의존해서는 안 됩니다.
+    반드시 '내부 DB 검색 도구(search_internal_db)'와 이 'web_search'를 **모두** 사용하여 정보를 교차 검증하고 종합해서 답변하세요.
     """
     try:
         base_query = normalize_query_text(query)
@@ -699,6 +710,9 @@ def web_search(query: str):
         return f"검색 가져오기 오류: {e}"
 
 
+# =====================================================================
+# 🌟 [도구 2] 팩트 체크 도구
+# =====================================================================
 @tool
 def verify_official_page(url: str):
     """
@@ -721,6 +735,9 @@ def verify_official_page(url: str):
     )
 
 
+# =====================================================================
+# 🌟 [도구 3] 현재 시간 확인 도구
+# =====================================================================
 @tool
 def get_current_time(timezone: str = "Asia/Seoul"):
     """타임존의 현재 날짜와 시간을 'YYYY-MM-DD HH:MM:SS' 형식으로 반환합니다."""
@@ -729,3 +746,45 @@ def get_current_time(timezone: str = "Asia/Seoul"):
         return datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S") + f" {timezone}"
     except Exception as e:
         return f"시간 가져오기 오류: {e}"
+
+
+# =====================================================================
+# 🔥 [도구 4] 내부 DB 검색 도구 (RAG 핵심)
+# =====================================================================
+@tool
+def search_internal_db(query: str):
+    """
+    [🚨 필수 지침 🚨]
+    사용자의 질문과 관련된 정책을 내부 DB에서 검색하는 필수 도구입니다.
+    
+    1. 내부 DB를 검색할 때는 절대 완성된 문장으로 검색하지 마세요. (예: "강남구 청년 월세 지원 받을 수 있어?" -> X)
+    2. 반드시 '지역명 + 타겟 + 지원종류' 형태의 2~3개 명사형 핵심 키워드 조합으로만 검색하세요. (예: "강남구 청년 월세" -> O)
+    3. 결과를 찾지 못하더라도 이 도구만 단독으로 사용하지 말고, 반드시 web_search 도구와 함께 사용하여 결과를 종합하세요.
+    """
+    
+    # 🔥 AI가 무슨 키워드로 멍청하게(?) 검색하고 있는지 백엔드 로그에서 감시하기 위해 print 추가!
+    print(f"\n==============================================")
+    print(f"🔥 [AI가 입력한 DB 검색어]: {query}")
+    print(f"==============================================\n")
+    
+    try:
+        if not search_policies:
+            return "⚠️ 시스템 오류: DB 검색 함수(search_policies)를 불러오지 못했습니다. 서버 로그를 확인하세요."
+
+        # 🔥 수정할 내용 3: 검색 가져오는 갯수(k)를 늘려서 넉넉하게 스캔하기 (top_k 옵션 시도)
+        try:
+            # 만약 chat_db.py의 search_policies 함수가 top_k(가져올 개수) 파라미터를 지원한다면 5개 호출
+            result_text = search_policies(query, top_k=5)
+        except TypeError:
+            # 파라미터 에러 발생 시 기본값으로 호출 (보통 k=3 정도)
+            result_text = search_policies(query)
+
+        # 검색 결과가 없거나 너무 짧은 에러 메시지만 뱉은 경우
+        if not result_text or len(result_text.strip()) < 10:
+            return "내부 DB에서 일치하는 정책을 찾지 못했습니다. web_search 도구를 함께 사용하여 최신 정보를 검색하세요."
+            
+        return result_text
+
+    except Exception as e:
+        print(f"❌ [DB 검색 오류 발생]: {e}")
+        return f"내부 DB 검색 중 오류가 발생했습니다: {e}"
