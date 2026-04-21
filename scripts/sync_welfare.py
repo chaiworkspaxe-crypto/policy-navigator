@@ -4,6 +4,9 @@ import requests
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
+# 🌟 [추가] 텍스트를 벡터로 변환하기 위한 임포트
+from langchain_openai import OpenAIEmbeddings
+
 # 1. 환경 변수 로드
 load_dotenv()
 
@@ -35,9 +38,34 @@ def sync_to_supabase(policies):
             "provider": p.get("소관기관명", "기관 없음"), # ✅ DB 컬럼명 일치
             "summary": p.get("지원대상", ""),           # ✅ DB 컬럼명 일치
             "category": p.get("서비스분야", ""),
-            "url": p.get("상세조회URL", ""),            # 🌟 link도 url로 통일하는 게 좋아!
+            "url": p.get("상세조회URL", ""),             # 🌟 link도 url로 통일
             "updated_at": "now()"
         })
+
+    # =================================================================
+    # 🔥 [핵심 추가] DB에 넣기 전에 OpenAI로 텍스트를 임베딩(벡터) 변환!
+    # =================================================================
+    try:
+        print(f"🤖 OpenAI API로 {len(formatted_data)}개 정책 내용을 임베딩(벡터) 변환 중...")
+        embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+        
+        # 벡터로 변환할 텍스트 덩어리 만들기 (매칭률을 높이기 위해 핵심 정보 총집합)
+        texts_to_embed = [
+            f"정책명: {data['title']} 주관: {data['provider']} 카테고리: {data['category']} 내용: {data['summary']}" 
+            for data in formatted_data
+        ]
+        
+        # 텍스트 리스트를 한 방에 벡터 숫자로 변환 (돈/시간 절약)
+        vectors = embeddings.embed_documents(texts_to_embed)
+        
+        # 변환된 벡터를 formatted_data 에 'embedding' 이라는 키로 쏙쏙 집어넣기
+        for i, data in enumerate(formatted_data):
+            data["embedding"] = vectors[i]
+            
+    except Exception as e:
+        print(f"❌ 임베딩 변환 실패! (OpenAI API 키 확인 필요): {e}")
+        return False
+    # =================================================================
 
     try:
         # Upsert: id가 같으면 덮어쓰고, 없으면 새로 생성
@@ -69,7 +97,7 @@ def fetch_all_data():
     total_saved = 0
 
     while True:
-        print(f"🔄 {page}페이지 (총 {per_page}개씩) 수집 요청 중...")
+        print(f"\n🔄 {page}페이지 (총 {per_page}개씩) 수집 요청 중...")
         
         params = {
             "page": page,
@@ -98,7 +126,7 @@ def fetch_all_data():
                 
             print(f"✅ {page}페이지에서 {len(policies)}개의 데이터를 찾았습니다. DB로 전송 중...")
             
-            # Supabase에 저장
+            # Supabase에 저장 (임베딩 포함)
             is_success = sync_to_supabase(policies)
             
             if is_success:
@@ -117,7 +145,7 @@ def fetch_all_data():
             print(f"❌ 통신 중 오류 발생: {e}")
             break
 
-    print(f"\n🎉 [최종 결과] 총 {total_saved}개의 정책 데이터가 DB에 동기화되었습니다!")
+    print(f"\n🎉 [최종 결과] 총 {total_saved}개의 정책 데이터가 임베딩과 함께 DB에 동기화되었습니다!")
 
 if __name__ == "__main__":
     fetch_all_data()
