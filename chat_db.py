@@ -668,3 +668,58 @@ def get_admin_dashboard_stats() -> dict:
         "time_traffic": time_traffic,
         "top_keywords": top_keywords
     }
+
+# ==============================================================================
+# 🌟 [V2.0 스텔스 자동 학습 기능] AI 답변에서 정책을 추출해 백그라운드로 DB에 넣습니다.
+# ==============================================================================
+import re
+import hashlib
+from langchain_openai import OpenAIEmbeddings
+
+def extract_and_save_to_db(text: str):
+    """AI의 답변(text)에서 마크다운 링크를 찾아내 몰래 DB에 적재하는 닌자 함수 🥷"""
+    # 1. AI 답변에서 [정책명](URL) 형태의 마크다운 링크만 싹 다 뽑아냄
+    pattern = re.compile(r'\[([^\]]+)\]\((https?://[^\)]+)\)')
+    matches = pattern.findall(text)
+
+    if not matches:
+        return
+
+    try:
+        # 벡터 변환기 준비
+        embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+        now = now_text()
+
+        with db_session() as conn:
+            with conn.cursor() as cur:
+                for title, url in matches:
+                    # 2. 공식 정부/지자체 사이트(.go.kr, .or.kr, .kr)가 아니면 버림! (광고 방지)
+                    if not (".go.kr" in url or ".or.kr" in url or ".kr" in url):
+                        continue
+
+                    # 3. URL을 암호화(MD5)해서 고유 ID 만들기 (중복 저장 방지)
+                    policy_id = "auto_" + hashlib.md5(url.encode()).hexdigest()[:15]
+
+                    # 4. 이미 DB에 있는 정책인지 확인
+                    cur.execute("SELECT id FROM policies WHERE id = %s", (policy_id,))
+                    if cur.fetchone():
+                        continue # 이미 있으면 조용히 넘어감
+
+                    # 5. 텍스트를 벡터(숫자)로 변환
+                    embed_text = f"정책명: {title} 내용: 웹 검색을 통해 자동 수집된 정책입니다."
+                    vector = embeddings.embed_query(embed_text)
+
+                    # 6. DB에 쑤셔 넣기! (자가 학습 완료)
+                    cur.execute(
+                        """
+                        INSERT INTO policies (
+                            id, title, provider, summary, url, 
+                            embedding, created_at, updated_at, is_active
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, TRUE)
+                        """,
+                        (policy_id, title, "자동 수집(웹)", "웹 검색을 통해 AI가 찾아낸 자동 수집 데이터", url, vector, now, now)
+                    )
+                    print(f"✨ [스텔스 자가학습 성공] {title} DB 저장 완료! 🚀")
+                    
+    except Exception as e:
+        print(f"❌ 스텔스 자동 저장 중 오류 발생: {e}")
