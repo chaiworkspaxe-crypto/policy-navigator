@@ -1,5 +1,5 @@
 from langchain_core.tools import tool
-from ddgs import DDGS
+from duckduckgo_search import DDGS  # 🌟 여기 ddgs를 duckduckgo_search로 수정!
 import os
 import platform
 import re
