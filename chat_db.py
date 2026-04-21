@@ -13,9 +13,6 @@ from dotenv import load_dotenv
 # 🌟 [에러 해결 핵심] Supabase 모듈 임포트 및 클라이언트 초기화
 from supabase import create_client, Client
 
-# 🌟 [추가] 문자열을 임베딩 벡터로 변환하기 위한 Langchain OpenAI 임포트!
-from langchain_openai import OpenAIEmbeddings
-
 # .env 환경변수 로드
 load_dotenv()
 
@@ -206,22 +203,8 @@ def upsert_policy(policy_data: dict):
             )
 
 
-# 🌟 [완벽 개조 완료!] tools.py의 요청에 맞게 파라미터(top_k)와 반환값(text)을 맞췄습니다!
-def search_policies(query: str, top_k: int = 5) -> str:
-    """
-    주어진 검색어(query)를 벡터로 변환한 뒤, pgvector DB에서 가장 유사한 정책 top_k개를 찾아
-    AI가 읽기 좋은 텍스트(string) 형태로 예쁘게 포매팅하여 반환합니다.
-    """
-    try:
-        # 1. 텍스트 검색어를 벡터 임베딩(숫자 리스트)으로 변환
-        # (DB에 저장할 때 썼던 'text-embedding-3-small' 모델과 완벽하게 일치시킴!)
-        embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-        query_embedding = embeddings.embed_query(query)
-    except Exception as e:
-        print(f"❌ 임베딩 변환 오류: {e}")
-        return ""
-
-    # 2. 벡터 DB(pgvector) 유사도 검색 실행
+# 🌟 [롤백 완료] 예전처럼 벡터(숫자 리스트)를 받아서 Dict 리스트를 반환합니다.
+def search_policies(query_embedding: list, limit: int = 10):
     with db_session() as conn:
         register_vector(conn)
         with conn.cursor(cursor_factory=DictCursor) as cur:
@@ -234,23 +217,9 @@ def search_policies(query: str, top_k: int = 5) -> str:
                 ORDER BY embedding <=> %s::vector
                 LIMIT %s
                 """,
-                (query_embedding, top_k)
+                (query_embedding, limit)
             )
-            rows = cur.fetchall()
-
-    # 3. 검색된 결과를 문자열(Text)로 예쁘게 조립해서 tools.py로 넘겨주기
-    if not rows:
-        return ""
-
-    formatted_results = []
-    for p in rows:
-        title = p.get('title', '이름 없음')
-        provider = p.get('provider', '주관기관 없음')
-        summary = p.get('summary', '내용 없음')
-        url = p.get('url', '링크 없음')
-        formatted_results.append(f"- 정책명: {title} ({provider})\n  내용: {summary}\n  링크: {url}")
-    
-    return "\n\n".join(formatted_results)
+            return [dict(row) for row in cur.fetchall()]
 
 
 # ==============================================================================
