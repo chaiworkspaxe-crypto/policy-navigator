@@ -26,7 +26,8 @@ from chat_db import (
     save_thread_inputs, load_thread_inputs,
     consume_daily_request_quota,
     get_admin_dashboard_stats,
-    extract_and_save_to_db  
+    extract_and_save_to_db,
+    get_admin_policies_list
 )
 
 # 🌟 [신규 추가] AI 스트리밍 모듈 임포트!
@@ -189,6 +190,12 @@ def health_check(): return {"ok": True, "status": "healthy"}
 @app.get("/admin/stats")
 def admin_stats():
     return {"ok": True, "data": get_admin_dashboard_stats()}
+
+
+@app.get("/admin/policies")
+def admin_policies_api():
+    """프론트엔드 대시보드 '정책 DB 관리' 탭에서 호출할 API"""
+    return {"ok": True, "data": get_admin_policies_list(limit=200)}
 
 # 🌟 [신규 추가] Streamlit/Next.js를 위한 HTTP 기반 실시간 스트리밍 엔드포인트
 # 🌟 [수정 3] 파라미터에 background_tasks 추가
