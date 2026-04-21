@@ -1,0 +1,40 @@
+name: Daily Welfare Data Sync
+
+# ⏰ 언제 실행할지 설정 (스케줄)
+on:
+  schedule:
+    # 매일 한국 시간 새벽 4시 (UTC 기준 19시)에 자동 실행
+    - cron: '0 19 * * *'
+  # 💡 GitHub 웹사이트에서 버튼을 눌러서 '수동'으로 실행할 수도 있게 해줌
+  workflow_dispatch:
+
+jobs:
+  update-db:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. 창현이의 코드를 GitHub 서버로 가져옴
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. 파이썬 설치
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11' # Render와 동일한 버전
+
+      # 3. 필요한 패키지 설치
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests supabase python-dotenv langchain-openai duckduckgo-search
+
+      # 4. 대망의 스크립트 실행! (환경변수 주입)
+      - name: Run Sync Script
+        env:
+          PUBLIC_DATA_PORTAL_KEY: ${{ secrets.PUBLIC_DATA_PORTAL_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python scripts/sync_welfare.py
