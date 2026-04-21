@@ -662,7 +662,7 @@ def format_search_results(results: list[dict], expanded: bool) -> str:
 
 
 # =====================================================================
-# 🌟 [도구 1] 웹 통합 검색 도구 (웹 문서 + 공식 문서 긁어오기)
+# 🌟 [도구 1] 웹 통합 검색 도구 (무적의 Fallback 3단 콤보 장착!)
 # =====================================================================
 @tool
 def web_search(query: str):
@@ -675,11 +675,14 @@ def web_search(query: str):
     에이전트는 사용자에게 정책 정보를 제공할 때, 이 web_search 단독으로만 의존해서는 안 됩니다.
     반드시 '내부 DB 검색 도구(search_internal_db)'와 이 'web_search'를 **모두** 사용하여 정보를 교차 검증하고 종합해서 답변하세요.
     """
-    try:
-        base_query = normalize_query_text(query)
-        if not base_query:
-            return "검색어가 비어 있습니다."
+    base_query = normalize_query_text(query)
+    if not base_query:
+        return "검색어가 비어 있습니다."
 
+    # ---------------------------------------------------------
+    # [1순위] 무료 & 고성능: 덕덕고(DuckDuckGo) 검색 시도
+    # ---------------------------------------------------------
+    try:
         cached_search = get_cached_item(SEARCH_CACHE, base_query, SEARCH_CACHE_TTL_SECONDS)
         if cached_search is not None:
             return cached_search
@@ -688,6 +691,11 @@ def web_search(query: str):
         initial_variants, expanded_variants = split_query_variants(all_variants)
 
         raw_results = collect_search_results(query_variants=initial_variants, per_query_limit=PER_QUERY_LIMIT)
+        
+        # 🚨 [핵심] 덕덕고가 막혀서 결과가 아예 없으면 억지로 에러를 발생시켜서 다음 순위로 넘김!
+        if not raw_results:
+            raise ValueError("덕덕고 검색 결과 없음 (봇 차단 의심)")
+
         deduped_results = deduplicate_results(base_query=base_query, results=raw_results)
 
         expanded = False
@@ -706,9 +714,55 @@ def web_search(query: str):
 
         return formatted
 
-    except Exception as e:
-        return f"검색 가져오기 오류: {e}"
+    except Exception as e1:
+        print(f"🚨 [검색 경고] 덕덕고 막힘 감지! ({e1}) -> 타빌리(Tavily)로 우회합니다 🏃‍♂️💨")
+        
+        # ---------------------------------------------------------
+        # [2순위] AI 전용 검색: 타빌리(Tavily) 시도
+        # ---------------------------------------------------------
+        try:
+            from langchain_community.tools.tavily_search import TavilySearchResults
+            localized_query = f"대한민국 {base_query} (site:go.kr OR site:kr)"
+            tavily_search = TavilySearchResults(max_results=4)
+            tavily_res = tavily_search.invoke(localized_query)
 
+            if tavily_res and isinstance(tavily_res, list):
+                return "타빌리(Tavily) 검색 결과:\n" + "\n".join([f"- 제목: {r.get('title')}\n  내용: {r.get('content')}\n  링크: {r.get('url')}" for r in tavily_res])
+            else:
+                raise ValueError("타빌리 결과 없음")
+
+        except Exception as e2:
+            print(f"🚨 [검색 경고] 타빌리도 막힘/오류! ({e2}) -> 네이버(Naver)로 최후 우회합니다 🚀")
+            
+            # ---------------------------------------------------------
+            # [3순위] 최후의 보루: 네이버(Naver) API 시도
+            # ---------------------------------------------------------
+            client_id = os.getenv("NAVER_CLIENT_ID", "").strip()
+            client_secret = os.getenv("NAVER_CLIENT_SECRET", "").strip()
+
+            if not client_id or not client_secret:
+                return "모든 외부 검색 엔진이 차단되었고 네이버 API 키도 없습니다. 내부 DB 정보로만 답변하세요."
+
+            import urllib.request
+            import urllib.parse
+            import json
+            url = f"https://openapi.naver.com/v1/search/webkr?query={urllib.parse.quote(base_query)}&display=5"
+            request = urllib.request.Request(url)
+            request.add_header("X-Naver-Client-Id", client_id)
+            request.add_header("X-Naver-Client-Secret", client_secret)
+
+            try:
+                response = urllib.request.urlopen(request, timeout=10)
+                if response.getcode() == 200:
+                    data = json.loads(response.read().decode('utf-8'))
+                    results = []
+                    for item in data.get('items', []):
+                        clean_title = item['title'].replace('<b>', '').replace('</b>', '')
+                        clean_desc = item['description'].replace('<b>', '').replace('</b>', '')
+                        results.append(f"- 제목: {clean_title}\n  내용: {clean_desc}\n  링크: {item['link']}")
+                    return "네이버(Naver) 검색 결과:\n" + "\n".join(results) if results else "모든 검색 엔진에서 결과를 찾지 못했습니다."
+            except Exception as e3:
+                return f"모든 검색 엔진이 응답하지 않습니다. (오류: {e3})"
 
 # =====================================================================
 # 🌟 [도구 2] 팩트 체크 도구
