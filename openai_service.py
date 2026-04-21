@@ -21,7 +21,8 @@ from pydantic import BaseModel, Field
 import redis.asyncio as aioredis 
 import sentry_sdk 
 
-# 🌟 불필요해진 requests와 BeautifulSoup(bs4) 임포트 삭제로 파일 경량화!
+# 🌟 [중요] 우리가 tools.py에 새로 정의한 강력한 도구들을 불러옵니다!
+from tools import web_search, verify_official_page, get_current_time, search_internal_db
 
 try:
     import truststore
@@ -29,104 +30,12 @@ try:
 except Exception:
     pass
 
-# 🌟 [추가] 임베딩 변환을 위해 OpenAIEmbeddings를 임포트에 추가했어!
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import tool
 
-# 🌟 [핵심 수정] 주석 해제! 우리가 만든 진짜 DB 검색 함수를 불러옵니다.
-from chat_db import search_policies 
-
-@tool
-def get_current_time() -> str:
-    """현재 날짜와 시간을 확인합니다."""
-    return datetime.now(pytz.timezone('Asia/Seoul')).strftime("%Y년 %m월 %d일")
-
-@tool
-def search_internal_db(query: str) -> str:
-    """사용자 질문을 바탕으로 내부 DB에서 정책을 검색합니다."""
-    try:
-        # 🌟 [수정 완료 1] 한글 질문을 벡터(숫자 리스트)로 변환!
-        # (DB에 저장할 때 썼던 동일한 임베딩 모델을 사용해야 해)
-        embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-        query_vector = embeddings.embed_query(query)
-        
-        # 🌟 [수정 완료 2] 한글이 아닌, 변환된 '숫자 리스트(query_vector)'를 DB로 넘김!
-        results = search_policies(query_vector)
-        
-        if not results:
-            return "내부 DB에서 일치하는 정책을 찾지 못했습니다. naver_web_search를 사용하세요."
-            
-        # search_policies가 리스트 딕셔너리를 반환할 경우를 대비한 안전한 포매팅
-        if isinstance(results, list):
-            formatted_results = []
-            for p in results:
-                title = p.get('title', '이름 없음')
-                provider = p.get('provider', '주관기관 없음')
-                summary = p.get('summary', '내용 없음')
-                url = p.get('url', '링크 없음')
-                formatted_results.append(f"- 정책명: {title} ({provider})\n  내용: {summary}\n  링크: {url}")
-            return "\n\n".join(formatted_results)
-            
-        # 만약 이미 문자열로 잘 포매팅되어 나온다면 그대로 반환
-        return str(results)
-        
-    except Exception as e:
-        return f"DB 검색 중 오류 발생: {e}"
-
-@tool
-def naver_web_search(query: str) -> str:
-    """지자체 블로그, 최신 뉴스, 지역구 특화 정보를 찾을 때 사용하는 필수 도구입니다."""
-    client_id = os.getenv("NAVER_CLIENT_ID", "").strip()
-    client_secret = os.getenv("NAVER_CLIENT_SECRET", "").strip()
-    
-    if not client_id or not client_secret:
-        return "네이버 API 키 누락. global_web_search를 사용하세요."
-
-    url = f"https://openapi.naver.com/v1/search/webkr?query={urllib.parse.quote(query)}&display=5"
-    request = urllib.request.Request(url)
-    request.add_header("X-Naver-Client-Id", client_id)
-    request.add_header("X-Naver-Client-Secret", client_secret)
-    
-    try:
-        response = urllib.request.urlopen(request)
-        if response.getcode() == 200:
-            data = json.loads(response.read().decode('utf-8'))
-            results = []
-            for item in data.get('items', []):
-                clean_title = item['title'].replace('<b>', '').replace('</b>', '')
-                clean_desc = item['description'].replace('<b>', '').replace('</b>', '')
-                results.append(f"- 제목: {clean_title}\n  내용: {clean_desc}\n  링크: {item['link']}")
-            return "\n".join(results) if results else "네이버 검색 결과 없음."
-        return "네이버 검색 실패"
-    except Exception as e:
-        return f"네이버 검색 오류: {e}"
-
-@tool
-def global_web_search(query: str) -> str:
-    """네이버 검색에서 찾지 못한 대한민국 정부 공식 문서나 심층 정책 정보를 교차 검증할 때 사용합니다."""
-    
-    # 🌟 [개조 완료] 검색어에 강제로 '대한민국'과 한국 도메인(.go.kr, .kr)을 붙여 해외 정책(환각) 원천 차단!
-    localized_query = f"대한민국 {query} (site:go.kr OR site:kr)"
-    
-    try:
-        # 🌟 DuckDuckGo에 한국 지역(kr-kr) 강제 설정
-        from langchain_community.tools import DuckDuckGoSearchResults
-        search = DuckDuckGoSearchResults(backend="web", region="kr-kr", max_results=5)
-        return search.invoke(localized_query)
-    except Exception:
-        try:
-            from langchain_community.tools.tavily_search import TavilySearchResults
-            tavily_search = TavilySearchResults(max_results=3)
-            return tavily_search.invoke(localized_query)
-        except Exception:
-            return "글로벌 검색 엔진 차단됨. 현재 지식과 수집된 정보로 최선을 다해 답변하세요."
-
-
-# 🌟 불필요한 verify_official_page 함수 삭제 완료!
-
-
+# 🌟 [동기화] 프롬프트 내부의 도구 이름을 새 이름으로 전부 교체 완료!
 SYSTEM_PROMPT = """
 당신은 대한민국 국민 모두의 '정보 비대칭'을 완벽하게 해소해 주는 최고의 '전국민 맞춤형 복지/지원금 내비게이터(Universal Policy Navigator)'입니다.
 청년, 중장년, 노년층, 신혼부부, 육아 가구 등 어떤 사용자가 오더라도 그 사람의 조건에 딱 맞는 혜택을 찾아주어야 합니다.
@@ -143,13 +52,14 @@ SYSTEM_PROMPT = """
    
 2. 🔍 다중 도구 병렬 탐색 (Stopping is Forbidden):
    - 내부 DB(`search_internal_db`)에 결과가 있더라도 절대 거기서 탐색을 멈추지 마세요.
-   - 사용자의 구체적인 '시/군/구/동' 단위의 지자체 특화 혜택과 실시간 민간 지원금은 웹 검색(`naver_web_search`)에 훨씬 더 많습니다.
+   - 사용자의 구체적인 '시/군/구/동' 단위의 지자체 특화 혜택과 실시간 민간 지원금은 웹 검색(`web_search`)에 훨씬 더 많습니다.
    - 반드시 2개 이상의 도구를 조합하여 정보의 양과 질을 극대화하세요. 정보량이 곧 당신의 실력입니다.
 
 3. 🚦 탐색 전략 (Multi-Step Retrieval):
-   - 1단계: `search_internal_db`로 정부 공식 정책의 뼈대를 빠르게 확보합니다.
-   - 2단계: `naver_web_search`를 통해 사용자의 거주지(예: 화성시, 압구정동 등)와 직업적 특성에 맞는 '동네 전용 혜택'을 무조건 검색합니다.
-   - 3단계: 1, 2단계에서 정보가 부족할 경우에만 `global_web_search`를 활용하여 정부 공식 문서를 교차 검증합니다.
+   - 1단계: `search_internal_db`로 정부 공식 정책의 뼈대를 빠르게 확보합니다. (반드시 키워드 중심으로 검색하세요)
+   - 2단계: `web_search`를 통해 사용자의 거주지(예: 화성시, 압구정동 등)와 직업적 특성에 맞는 '동네 전용 혜택'을 무조건 검색합니다.
+   - 3단계: 발견된 공식 링크의 진위여부나 마감일을 확인할 때는 `verify_official_page`를 적극 활용하세요.
+   - 1, 2단계에서 정보가 부족할 경우에만 `global_web_search`를 활용하여 정부 공식 문서를 교차 검증합니다.
    - 🚨 절대 여러 도구를 한 번에 병렬로 동시 호출하지 마세요. 반드시 순서대로 하나씩 확인하세요.
 
 4. 탐색 및 팩트 체크:
@@ -200,8 +110,8 @@ def create_agent_executor():
 
     model_name = os.getenv("OPENAI_MODEL", "gpt-5.4").strip() 
     
-    # 🌟 깔끔하게 정리된 4개의 도구!
-    tools = [search_internal_db, naver_web_search, global_web_search, get_current_time]
+    # 🌟 [할 일 1] 새 무기들로 도구 목록 세팅 완료!
+    tools = [search_internal_db, web_search, verify_official_page, get_current_time]
 
     llm = ChatOpenAI(
         model=model_name, 
@@ -241,12 +151,13 @@ async def get_ai_response_stream(agent_executor, messages: list):
         elif kind == "on_tool_start":
             tool_name = event["name"]
             
+            # 🌟 [할 일 2] 사용자 화면에 뜨는 로딩 텍스트를 새 도구 이름에 맞게 짝지어 줬어!
             if tool_name == "search_internal_db":
                 friendly_msg = "정부 정책 창고 셔터 올리는 중! 먼지가 쫌 날려도(쿨럭) 싹 다 찾아올게요 😷💨"
-            elif tool_name == "naver_web_search":
+            elif tool_name == "web_search":
                 friendly_msg = "동네방네 뿌려진 지자체 혜택 전단지 싹 다 긁어모으는 중! 🏃‍♂️💨🔥"
-            elif tool_name == "global_web_search" or "tavily" in tool_name or "duckduckgo" in tool_name:
-                friendly_msg = "국내 공식 정부 문서 풀스캔 중! 하나도 안 놓칠게요 🔎💻"
+            elif tool_name == "verify_official_page":
+                friendly_msg = "공식 홈페이지에 직접 들어가서 진짜인지 팩트 체크 중입니다 🕵️‍♂️✨"
             elif tool_name == "get_current_time":
                 friendly_msg = "이미 끝난 공고 주면 혼나니까! 실시간 마감일 깐깐하게 비교 중입니다 🗓️⏳"
             else:
