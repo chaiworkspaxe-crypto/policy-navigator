@@ -9,23 +9,25 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 from typing import Optional
 
+# 🌟 [수정 1] BackgroundTasks 임포트 추가
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 import redis.asyncio as aioredis 
 import sentry_sdk 
 
+# 🌟 [수정 2] extract_and_save_to_db 닌자 함수 임포트 추가
 from chat_db import (
     init_db, db_session, create_thread, rename_thread, delete_thread,
     delete_all_threads, 
     list_user_threads, load_chat_messages, save_chat_message,
     save_thread_inputs, load_thread_inputs,
     consume_daily_request_quota,
-    get_admin_dashboard_stats
+    get_admin_dashboard_stats,
+    extract_and_save_to_db  
 )
-# 🌟 [최적화] 더 이상 Celery 워커를 쓰지 않으므로 worker 임포트 삭제 완료!
 
 # 🌟 [신규 추가] AI 스트리밍 모듈 임포트!
 from openai_service import create_agent_executor, get_ai_response_stream
@@ -188,13 +190,10 @@ def health_check(): return {"ok": True, "status": "healthy"}
 def admin_stats():
     return {"ok": True, "data": get_admin_dashboard_stats()}
 
-
-# 🌟 [최적화] 더 이상 사용하지 않는 옛날 POST /chat (워커 연동용) 삭제 완료!
-
-
-# 🌟 [신규 추가] Streamlit/Next.js를 위한 HTTP 기반 실시간 스트리밍 엔드포인트 (절대 삭제 금지!)
+# 🌟 [신규 추가] Streamlit/Next.js를 위한 HTTP 기반 실시간 스트리밍 엔드포인트
+# 🌟 [수정 3] 파라미터에 background_tasks 추가
 @app.post("/chat/stream")
-async def chat_stream(request: ChatRequest, http_request: Request):
+async def chat_stream(request: ChatRequest, http_request: Request, background_tasks: BackgroundTasks):
     """프론트엔드와 직접 연결되어 타자 치듯 실시간으로 데이터를 내려주는 엔드포인트"""
     try:
         user_id, thread_id = (request.user_id or "").strip(), (request.thread_id or "").strip()
@@ -226,8 +225,7 @@ async def chat_stream(request: ChatRequest, http_request: Request):
         
         agent_messages = build_agent_messages(previous_messages, user_message)
         
-        
-# 3. 실시간 스트리밍 제너레이터
+        # 3. 실시간 스트리밍 제너레이터
         async def event_generator():
             # [아이폰 사파리 참교육 코드]
             yield f": {' ' * 2048}\n\n"
@@ -246,7 +244,6 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                     except Exception:
                         pass
                         
-            # 🌟 [신규 추가] 유저가 도중에 나갔을 때 발생하는 에러를 예쁘게 잡아서 처리!
             except asyncio.CancelledError:
                 logger.warning(f"⚠️ [연결 끊김] 유저가 스트리밍 도중 이탈했습니다. AI 생성을 중단하여 자원을 절약합니다. (Thread: {thread_id})")
                 raise  # 서버가 연결을 완전히 끊을 수 있도록 다시 던져줌
@@ -256,8 +253,15 @@ async def chat_stream(request: ChatRequest, http_request: Request):
                 if full_assistant_message:
                     ans_type = "followup_answer" if request.query else "search_result"
                     save_chat_message(user_id, thread_id, "assistant", full_assistant_message, ans_type)
+                    
+                    # ==========================================================
+                    # 🌟 [대망의 스텔스 자가 학습 발동!] 🌟
+                    # 스트리밍 방식에서는 응답 분리 현상을 막기 위해 asyncio 스레드로 뒷방 작업을 던집니다.
+                    # 유저는 지연 없이 답변을 받고, 서버는 몰래 DB 저장을 진행합니다!
+                    # ==========================================================
+                    asyncio.create_task(asyncio.to_thread(extract_and_save_to_db, full_assistant_message))
         
-        # 🌟 5. 파이프라인을 열어서 반환 (SSE 방식) - 서버 버퍼링 방지 헤더 장착 완료!
+        # 5. 파이프라인을 열어서 반환 (SSE 방식) - 서버 버퍼링 방지 헤더 장착 완료!
         return StreamingResponse(
             event_generator(), 
             media_type="text/event-stream",
@@ -274,10 +278,6 @@ async def chat_stream(request: ChatRequest, http_request: Request):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# 🌟 [최적화] 더 이상 사용하지 않는 옛날 웹소켓 /ws/chat 삭제 완료!
-
-
 @app.get("/threads")
 def get_threads(user_id: str = Query(...)): return {"ok": True, "threads": list_user_threads(user_id.strip())}
 
@@ -293,7 +293,6 @@ def get_thread_inputs_api(thread_id: str, user_id: str = Query(...)): return {"o
 @app.patch("/threads/{thread_id}")
 def rename_thread_api(thread_id: str, req: RenameRequest): rename_thread(req.user_id.strip(), thread_id, req.title.strip()); return {"ok": True}
 
-# 🌟 [추가] 전체 삭제 API! (반드시 특정 id 삭제보다 위에 있어야 함!)
 @app.delete("/threads/all")
 def delete_all_threads_api(user_id: str = Query(...)): 
     delete_all_threads(user_id.strip())
