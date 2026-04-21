@@ -678,13 +678,15 @@ from langchain_openai import OpenAIEmbeddings
 
 def extract_and_save_to_db(text: str):
     """AI의 답변(text)에서 마크다운 링크를 찾아내 몰래 DB에 적재하는 닌자 함수 🥷"""
-    # 1. AI 답변에서 [정책명](URL) 형태의 마크다운 링크만 싹 다 뽑아냄
     pattern = re.compile(r'\[([^\]]+)\]\((https?://[^\)]+)\)')
     matches = pattern.findall(text)
 
     if not matches:
+        # 🌟 빈손으로 퇴근할 때도 로그를 남기도록 추가!
+        print("⚠️ [스텔스 저장 패스] AI 답변에 [정책명](URL) 형식의 마크다운 링크가 없어서 저장을 건너뜁니다.")
         return
 
+    # ... (아래는 기존 try ~ except 코드 그대로 유지) ...
     try:
         # 벡터 변환기 준비
         embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
@@ -706,10 +708,11 @@ def extract_and_save_to_db(text: str):
                         continue # 이미 있으면 조용히 넘어감
 
                     # 5. 텍스트를 벡터(숫자)로 변환
-                    embed_text = f"정책명: {title} 내용: 웹 검색을 통해 자동 수집된 정책입니다."
+                    # 🌟 5. 텍스트를 벡터(숫자)로 변환 (AI가 대답한 '전체 텍스트'를 통째로 갈아 넣음!)
+                    embed_text = f"정책명: {title}\n상세내용: {text}"
                     vector = embeddings.embed_query(embed_text)
 
-                    # 6. DB에 쑤셔 넣기! (자가 학습 완료)
+                    # 🌟 6. DB에 쑤셔 넣기! (summary 칸에 AI의 전체 대답인 text를 그대로 집어넣음!)
                     cur.execute(
                         """
                         INSERT INTO policies (
@@ -717,7 +720,7 @@ def extract_and_save_to_db(text: str):
                             embedding, created_at, updated_at, is_active
                         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, TRUE)
                         """,
-                        (policy_id, title, "자동 수집(웹)", "웹 검색을 통해 AI가 찾아낸 자동 수집 데이터", url, vector, now, now)
+                        (policy_id, title, "자동 수집(웹)", text, url, vector, now, now)
                     )
                     print(f"✨ [스텔스 자가학습 성공] {title} DB 저장 완료! 🚀")
                     
