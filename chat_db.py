@@ -723,3 +723,29 @@ def extract_and_save_to_db(text: str):
                     
     except Exception as e:
         print(f"❌ 스텔스 자동 저장 중 오류 발생: {e}")
+
+# chat_db.py 파일 끝부분에 추가
+
+def get_admin_policies_list(limit: int = 100) -> list:
+    """관리자 대시보드(정책 DB 관리 탭)에 뿌려줄 정책 목록을 최신순으로 가져옵니다."""
+    with db_session() as conn:
+        with conn.cursor(cursor_factory=DictCursor) as cur:
+            # 정책들을 최신 업데이트 순으로 가져옵니다. (너무 많으면 느려지니 일단 100개 제한)
+            cur.execute("""
+                SELECT id, title, provider, target_audience, region_req, updated_at
+                FROM policies
+                ORDER BY updated_at DESC
+                LIMIT %s
+            """, (limit,))
+            rows = cur.fetchall()
+
+    return [{
+        "id": r["id"],
+        "title": r["title"],
+        "provider": r["provider"],
+        "target_audience": r["target_audience"] or "제한 없음",
+        "region_req": r["region_req"] or "전국",
+        "updated_at": r["updated_at"],
+        # 🌟 핵심: id가 'auto_'로 시작하면 AI가 자동 수집한 데이터임을 프론트엔드에 알려줌!
+        "is_auto": str(r["id"]).startswith("auto_") 
+    } for r in rows]
