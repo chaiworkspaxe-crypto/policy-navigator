@@ -670,62 +670,80 @@ def get_admin_dashboard_stats() -> dict:
     }
 
 # ==============================================================================
-# 🌟 [V2.0 스텔스 자동 학습 기능] AI 답변에서 정책을 추출해 백그라운드로 DB에 넣습니다.
+# 🌟 [V3.0 스텔스 자동 학습 기능] AI 답변을 파싱(쪼개기)하여 DB 컬럼에 맞게 적재합니다.
 # ==============================================================================
 import re
 import hashlib
 from langchain_openai import OpenAIEmbeddings
 
 def extract_and_save_to_db(text: str):
-    """AI의 답변(text)에서 마크다운 링크를 찾아내 몰래 DB에 적재하는 닌자 함수 🥷"""
-    pattern = re.compile(r'\[([^\]]+)\]\((https?://[^\)]+)\)')
-    matches = pattern.findall(text)
-
-    if not matches:
-        # 🌟 빈손으로 퇴근할 때도 로그를 남기도록 추가!
-        print("⚠️ [스텔스 저장 패스] AI 답변에 [정책명](URL) 형식의 마크다운 링크가 없어서 저장을 건너뜁니다.")
-        return
-
-    # ... (아래는 기존 try ~ except 코드 그대로 유지) ...
+    """AI의 답변(text)에서 세부 정보(기관, 조건 등)를 쪼개서 몰래 DB에 적재하는 V3.0 닌자 함수 🥷"""
+    # 1. 텍스트를 문단(블록) 단위로 대략 쪼갭니다. (더블 엔터나 --- 기준)
+    blocks = re.split(r'\n\s*\n|---', text)
+    
     try:
-        # 벡터 변환기 준비
         embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
         now = now_text()
+        saved_count = 0
 
         with db_session() as conn:
             with conn.cursor() as cur:
-                for title, url in matches:
-                    # 2. 공식 정부/지자체 사이트(.go.kr, .or.kr, .kr)가 아니면 버림! (광고 방지)
+                for block in blocks:
+                    # 2. 해당 블록(문단) 안에 마크다운 링크가 있는지 확인
+                    link_match = re.search(r'\[([^\]]+)\]\((https?://[^\)]+)\)', block)
+                    if not link_match:
+                        continue # 링크 없으면 패스!
+                        
+                    title = link_match.group(1).strip()
+                    url = link_match.group(2).strip()
+                    
+                    # 3. 공식 정부/지자체 사이트(.go.kr, .or.kr, .kr) 필터링
                     if not (".go.kr" in url or ".or.kr" in url or ".kr" in url):
                         continue
 
-                    # 3. URL을 암호화(MD5)해서 고유 ID 만들기 (중복 저장 방지)
+                    # 🌟 [V3.0 핵심] 파이썬 정규식(Regex)으로 세부 텍스트 예쁘게 잘라내기!
+                    # (이모지가 있든 없든 '주관 기관:', '신청 조건:' 뒤의 글씨만 쏙 빼옵니다)
+                    
+                    provider_match = re.search(r'(?:주관\s*기관|주관|제공)\s*:\s*([^\n]+)', block)
+                    provider = provider_match.group(1).strip() if provider_match else "자동 수집(웹)"
+                    
+                    target_match = re.search(r'(?:신청\s*조건|지원\s*대상|조건)\s*:\s*([^\n]+)', block)
+                    target_audience = target_match.group(1).strip() if target_match else ""
+                    
+                    deadline_match = re.search(r'(?:신청\s*기간|마감일|기간)\s*:\s*([^\n]+)', block)
+                    deadline = deadline_match.group(1).strip() if deadline_match else ""
+
+                    # 4. URL 암호화로 고유 ID 생성 (중복 방지)
                     policy_id = "auto_" + hashlib.md5(url.encode()).hexdigest()[:15]
 
-                    # 4. 이미 DB에 있는 정책인지 확인
+                    # 5. 이미 DB에 있는지 검사
                     cur.execute("SELECT id FROM policies WHERE id = %s", (policy_id,))
                     if cur.fetchone():
                         continue # 이미 있으면 조용히 넘어감
 
-                    # 5. 텍스트를 벡터(숫자)로 변환
-                    # 🌟 5. 텍스트를 벡터(숫자)로 변환 (AI가 대답한 '전체 텍스트'를 통째로 갈아 넣음!)
-                    embed_text = f"정책명: {title}\n상세내용: {text}"
+                    # 6. 임베딩 벡터 생성 (검색 성능을 위해 전체 텍스트 내용 활용)
+                    embed_text = f"정책명: {title}\n주관:{provider}\n대상:{target_audience}\n기간:{deadline}\n상세:{block.strip()}"
                     vector = embeddings.embed_query(embed_text)
 
-                    # 🌟 6. DB에 쑤셔 넣기! (summary 칸에 AI의 전체 대답인 text를 그대로 집어넣음!)
+                    # 🌟 7. DB에 예쁘게 쪼개서 넣기! (빈칸 제자리 찾기)
                     cur.execute(
                         """
                         INSERT INTO policies (
-                            id, title, provider, summary, url, 
+                            id, title, provider, target_audience, deadline, summary, url, 
                             embedding, created_at, updated_at, is_active
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, TRUE)
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE)
                         """,
-                        (policy_id, title, "자동 수집(웹)", text, url, vector, now, now)
+                        (policy_id, title, provider, target_audience, deadline, block.strip(), url, vector, now, now)
                     )
-                    print(f"✨ [스텔스 자가학습 성공] {title} DB 저장 완료! 🚀")
+                    print(f"✨ [V3.0 파싱 완료] {title} (기관: {provider}) DB 각방 적재 성공! 🚀")
+                    saved_count += 1
                     
+        # 블록을 다 돌았는데도 저장된 게 0개라면? (링크가 없었거나 형식이 안 맞았음)
+        if saved_count == 0:
+            print("⚠️ [스텔스 저장 패스] AI 답변에서 [정책명](URL) 형식을 찾지 못했거나 이미 저장된 데이터입니다.")
+            
     except Exception as e:
-        print(f"❌ 스텔스 자동 저장 중 오류 발생: {e}")
+        print(f"❌ 스텔스 V3 자동 파싱 중 오류 발생: {e}")
 
 # chat_db.py 파일 끝부분에 추가
 
