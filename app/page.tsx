@@ -589,7 +589,12 @@ export default function Home() {
               <div>
                 <strong className="text-green-600 dark:text-green-400 block mb-1">1️⃣ 나의 기본 정보 입력하기</strong>
                 좌측 메뉴(모바일은 상단)에서 거주지와 출생연도를 선택해 주세요.<br/>
-                추가 정보 칸에 현재 상황(예: <i className="text-gray-500 dark:text-gray-400">대학교 4학년, 1인가구 무주택, 취업 준비 중</i>)을 구체적으로 적을수록 AI가 더 정확한 정책을 찾아옵니다.<br/>
+               <p className="mb-3 text-gray-300 leading-relaxed text-sm">
+          추가 정보 칸에 현재 상황(예: <em className="text-gray-400">대학교 4학년, 1인가구 무주택, 취업 준비 중</em>)을{' '}
+          <span className="font-bold text-blue-300 bg-blue-900/40 px-1.5 py-0.5 rounded">
+            구체적으로 입력할수록 AI가 더 많고 정확한 정책을 찾아옵니다.
+          </span>
+        </p>
                 <span className="text-red-500 dark:text-red-400 text-[13px] font-medium mt-1.5 block bg-red-50 dark:bg-red-900/20 p-2 rounded-md">※ 주의: 이름, 전화번호 등 민감한 개인정보는 절대 입력하지 마세요!</span>
               </div>
               
