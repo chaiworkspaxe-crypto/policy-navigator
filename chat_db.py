@@ -769,7 +769,8 @@ def get_admin_policies_list(limit: int = 200) -> dict:
             "provider": r["provider"],
             "target_audience": r["target_audience"] or "제한 없음",
             "region_req": r["region_req"] or "전국",
-            "updated_at": r["updated_at"]
+            "updated_at": r["updated_at"],
+            "is_auto": str(r["id"]).startswith("auto_")
         }
         
         # ID가 'auto_'로 시작하면 AI 에이전트가 수집한 데이터로 분류
