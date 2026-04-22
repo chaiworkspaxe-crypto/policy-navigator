@@ -616,6 +616,21 @@ export default function Home() {
                 찾은 정보는 <code className="bg-gray-100 dark:bg-[#2a2a2a] px-1.5 py-0.5 rounded text-green-700 dark:text-green-400 font-semibold">[📸 이미지 저장]</code> 또는 <code className="bg-gray-100 dark:bg-[#2a2a2a] px-1.5 py-0.5 rounded text-green-700 dark:text-green-400 font-semibold">[🔗 공유하기]</code> 버튼을 눌러 기기에 저장해 보세요!
               </div>
             </div>
+
+            {/* 💡 건의사항 및 인스타 링크 섹션 */}
+        <div className="mt-6 pt-4 border-t border-gray-700 text-center">
+          <p className="text-sm text-gray-300 mb-2">
+            💡 더 많은 정보나 서비스 건의사항이 있으신가요?
+          </p>
+          <a
+            href="https://www.instagram.com/policyai.kr"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-blue-400 hover:text-blue-300 font-bold transition-colors text-sm"
+          >
+            👉 공식 인스타그램 (@policyai.kr) 바로가기
+          </a>
+        </div>
             
             <div className="mt-6 pt-4 border-t border-gray-200 dark:border-[#333]">
               <button onClick={() => setShowManual(false)} className="w-full py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl transition-colors active:scale-95 shadow-sm">
