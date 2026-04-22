@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { Users, MessageSquare, AlertOctagon, Calendar, Activity, RefreshCw, MessageCircle, Database, Plus, Edit, Trash2, X, Save } from "lucide-react";
+import { Users, MessageSquare, AlertOctagon, Calendar, Activity, RefreshCw, MessageCircle, Database, Plus, Edit, Trash2, X, Save, Bot, Landmark } from "lucide-react";
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   PieChart, Pie, Cell, AreaChart, Area
@@ -22,15 +22,18 @@ interface DashboardStats {
 }
 
 interface Policy {
+  id?: string;
   policy_id?: string;
   title: string;
   provider: string;
   target_audience: string;
-  age_req: string;
-  income_req: string;
+  age_req?: string;
+  income_req?: string;
   region_req: string;
-  summary: string;
-  url: string;
+  summary?: string;
+  url?: string;
+  is_auto?: boolean; // 🌟 AI 수집 여부
+  updated_at?: string;
 }
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#ec4899'];
@@ -42,14 +45,17 @@ export default function AdminDashboardPage() {
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   const [loading, setLoading] = useState(true);
   
-  // 탭 상태 (stats: 통계 보기, db: 정책 DB 관리)
+  // 메인 탭 상태
   const [activeTab, setActiveTab] = useState<'stats' | 'db'>('stats');
+  // 🌟 DB 서브 탭 상태 (공식 vs AI수집)
+  const [dbSubTab, setDbSubTab] = useState<'official' | 'agent'>('official');
 
-  // 통계 데이터 상태
+  // 통계/데이터 상태
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [officialPolicies, setOfficialPolicies] = useState<Policy[]>([]);
+  const [agentPolicies, setAgentPolicies] = useState<Policy[]>([]);
 
-  // 정책 데이터 상태
-  const [policies, setPolicies] = useState<Policy[]>([]);
+  // 모달 폼 상태
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState<Policy>(EMPTY_POLICY);
 
@@ -66,15 +72,16 @@ export default function AdminDashboardPage() {
     }
   };
 
-  // 정책 리스트 불러오기 (임시 껍데기 함수 - 다음 스텝에서 완성할 예정!)
+  // 🌟 정책 리스트 진짜로 불러오기 (백엔드 연동)
   const fetchPolicies = async () => {
     setLoading(true);
     try {
-      // 🌟 여기에 백엔드 API 연결 코드가 들어갈 자리!
-      // 임시 데이터 (화면 확인용)
-      setPolicies([
-        { policy_id: "1", title: "청년도약계좌", provider: "서민금융진흥원", target_audience: "만 19~34세 청년", age_req: "19-34", income_req: "총급여 7,500만원 이하", region_req: "전국", summary: "매월 70만원 한도 내에서 자유롭게 납입하면 정부 기여금을 더해주는 적금", url: "https://ylaccount.kinfa.or.kr/" }
-      ]);
+      // lib/api.ts에 getAdminPolicies() 가 정의되어 있다고 가정!
+      const res = await api.getAdminPolicies(); 
+      if (res && res.data) {
+        setOfficialPolicies(res.data.official || []);
+        setAgentPolicies(res.data.agent_collected || []);
+      }
     } catch (error) {
       console.error("정책 불러오기 실패:", error);
     } finally {
@@ -103,7 +110,6 @@ export default function AdminDashboardPage() {
 
   if (!isAdminAuthenticated) return null;
 
-  // 커스텀 툴팁
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       return (
@@ -115,6 +121,9 @@ export default function AdminDashboardPage() {
     }
     return null;
   };
+
+  // 현재 서브 탭에 따라 보여줄 데이터 결정
+  const currentPolicies = dbSubTab === 'official' ? officialPolicies : agentPolicies;
 
   return (
     <div className="min-h-screen bg-[#121212] text-gray-100 p-4 sm:p-8 font-sans overflow-y-auto">
@@ -140,7 +149,7 @@ export default function AdminDashboardPage() {
           </button>
         </div>
 
-        {/* 🌟 탭 네비게이션 */}
+        {/* 🌟 메인 탭 네비게이션 */}
         <div className="flex gap-2 border-b border-gray-800 pt-4">
           <button 
             onClick={() => handleTabChange('stats')}
@@ -157,11 +166,11 @@ export default function AdminDashboardPage() {
         </div>
 
         {/* ========================================================= */}
-        {/* 탭 1: 통계 보기 (기존 화면) */}
+        {/* 탭 1: 통계 보기 (기존 그대로) */}
         {/* ========================================================= */}
         {activeTab === 'stats' && (
           <div className="space-y-8 animate-in fade-in duration-300 pt-4">
-            {/* 최상단 핵심 지표 요약 */}
+            {/* ... 기존 통계 UI 내용과 동일하므로 생략 없이 유지됨 ... */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="bg-[#1e1e1e] border border-gray-800 rounded-2xl p-5 shadow-lg flex flex-col transition-transform hover:-translate-y-1">
                 <div className="flex items-center gap-3 mb-3">
@@ -196,7 +205,6 @@ export default function AdminDashboardPage() {
               </div>
             </div>
 
-            {/* 차트 섹션 1 */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div className="bg-[#1e1e1e] border border-gray-800 rounded-2xl p-6 shadow-lg">
                 <h2 className="text-lg font-bold text-white mb-6">📍 지역별 검색 랭킹 (Top 5)</h2>
@@ -232,7 +240,6 @@ export default function AdminDashboardPage() {
               </div>
             </div>
 
-            {/* 차트 섹션 2 */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="bg-[#1e1e1e] border border-gray-800 rounded-2xl p-6 shadow-lg lg:col-span-2">
                 <h2 className="text-lg font-bold text-white mb-6">🕒 시간대별 트래픽</h2>
@@ -275,7 +282,7 @@ export default function AdminDashboardPage() {
         )}
 
         {/* ========================================================= */}
-        {/* 탭 2: 정책 DB 관리 (새로 추가된 화면!) */}
+        {/* 탭 2: 정책 DB 관리 (🌟 서브 탭 추가됨!) */}
         {/* ========================================================= */}
         {activeTab === 'db' && (
           <div className="space-y-6 animate-in fade-in duration-300 pt-4">
@@ -283,13 +290,31 @@ export default function AdminDashboardPage() {
             <div className="flex justify-between items-center bg-[#1e1e1e] p-6 rounded-2xl border border-gray-800 shadow-sm">
               <div>
                 <h2 className="text-xl font-bold text-white">DB 정책 리스트</h2>
-                <p className="text-gray-400 text-sm mt-1">총 {policies.length}개의 정책이 금고에 저장되어 있습니다.</p>
+                <p className="text-gray-400 text-sm mt-1">
+                  총 <span className="text-white font-bold">{officialPolicies.length + agentPolicies.length}</span>개의 정책이 저장되어 있습니다.
+                </p>
               </div>
               <button 
                 onClick={() => { setFormData(EMPTY_POLICY); setShowForm(true); }}
                 className="bg-green-600 hover:bg-green-500 text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-colors shadow-lg"
               >
-                <Plus size={18} /> 새 정책 추가
+                <Plus size={18} /> 새 정책 수동 추가
+              </button>
+            </div>
+
+            {/* 🌟 서브 탭 네비게이션 (공식 vs AI수집) */}
+            <div className="flex gap-2 bg-[#1a1a1a] p-1 rounded-xl border border-gray-800 w-fit">
+              <button 
+                onClick={() => setDbSubTab('official')}
+                className={`px-4 py-2 text-sm font-bold rounded-lg flex items-center gap-2 transition-all ${dbSubTab === 'official' ? 'bg-[#2a2a2a] text-blue-400 shadow-sm' : 'text-gray-500 hover:text-gray-300'}`}
+              >
+                <Landmark size={16} /> 🏛️ 공식 등록 데이터 ({officialPolicies.length})
+              </button>
+              <button 
+                onClick={() => setDbSubTab('agent')}
+                className={`px-4 py-2 text-sm font-bold rounded-lg flex items-center gap-2 transition-all ${dbSubTab === 'agent' ? 'bg-[#2a2a2a] text-purple-400 shadow-sm' : 'text-gray-500 hover:text-gray-300'}`}
+              >
+                <Bot size={16} /> 🤖 AI 스텔스 수집 ({agentPolicies.length})
               </button>
             </div>
 
@@ -302,18 +327,25 @@ export default function AdminDashboardPage() {
                       <th className="px-6 py-4 font-semibold">정책명</th>
                       <th className="px-6 py-4 font-semibold">제공 기관</th>
                       <th className="px-6 py-4 font-semibold">대상 / 지역</th>
+                      <th className="px-6 py-4 font-semibold">최종 업데이트</th>
                       <th className="px-6 py-4 font-semibold text-right">관리</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-800 text-gray-300">
-                    {policies.length === 0 ? (
-                      <tr><td colSpan={4} className="px-6 py-10 text-center text-gray-500">등록된 정책이 없습니다.</td></tr>
+                    {loading ? (
+                      <tr><td colSpan={5} className="px-6 py-10 text-center text-gray-500 animate-pulse">데이터를 불러오는 중입니다...</td></tr>
+                    ) : currentPolicies.length === 0 ? (
+                      <tr><td colSpan={5} className="px-6 py-10 text-center text-gray-500">해당 분류에 등록된 정책이 없습니다.</td></tr>
                     ) : (
-                      policies.map((p, idx) => (
+                      currentPolicies.map((p, idx) => (
                         <tr key={idx} className="hover:bg-[#252525] transition-colors">
-                          <td className="px-6 py-4 font-medium text-white">{p.title}</td>
+                          <td className="px-6 py-4 font-medium text-white flex items-center gap-2">
+                            {p.title}
+                            {p.is_auto && <span className="bg-purple-900/50 text-purple-300 text-[10px] px-2 py-0.5 rounded border border-purple-700">AI수집</span>}
+                          </td>
                           <td className="px-6 py-4">{p.provider}</td>
                           <td className="px-6 py-4 text-gray-400">{p.target_audience} <span className="mx-2 text-gray-700">|</span> {p.region_req}</td>
+                          <td className="px-6 py-4 text-gray-500 text-xs">{p.updated_at?.split(' ')[0]}</td>
                           <td className="px-6 py-4 text-right space-x-3">
                             <button className="text-blue-400 hover:text-blue-300 transition-colors" onClick={() => { setFormData(p); setShowForm(true); }}><Edit size={18} className="inline" /></button>
                             <button className="text-red-400 hover:text-red-300 transition-colors"><Trash2 size={18} className="inline" /></button>
@@ -337,12 +369,13 @@ export default function AdminDashboardPage() {
           <div className="bg-[#1e1e1e] border border-gray-700 rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl">
             <div className="flex justify-between items-center p-6 border-b border-gray-800">
               <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                <Database className="text-green-500" size={20}/> {formData.policy_id ? "정책 수정하기" : "새 정책 등록하기"}
+                <Database className="text-green-500" size={20}/> {formData.id || formData.policy_id ? "정책 수정하기" : "새 정책 등록하기"}
               </h2>
               <button onClick={() => setShowForm(false)} className="text-gray-400 hover:text-white p-1"><X size={24} /></button>
             </div>
             
             <div className="p-6 overflow-y-auto space-y-4 flex-1 custom-scrollbar">
+              {/* ... (입력 폼 내용은 기존과 동일) ... */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-gray-400">정책명 (필수)</label>
@@ -387,7 +420,7 @@ export default function AdminDashboardPage() {
 
             <div className="p-6 border-t border-gray-800 bg-[#1a1a1a] rounded-b-2xl flex justify-end gap-3">
               <button onClick={() => setShowForm(false)} className="px-5 py-2.5 rounded-xl font-bold text-gray-400 hover:text-white hover:bg-gray-800 transition-colors">취소</button>
-              <button onClick={() => alert("다음 단계에서 백엔드랑 연결할게! 일단 화면 확인해봐 😎")} className="bg-green-600 hover:bg-green-500 text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 shadow-lg transition-transform active:scale-95">
+              <button onClick={() => alert("다음 단계에서 수정/삭제 백엔드 API 연결할게! 😎")} className="bg-green-600 hover:bg-green-500 text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 shadow-lg transition-transform active:scale-95">
                 <Save size={18} /> 저장하기
               </button>
             </div>
