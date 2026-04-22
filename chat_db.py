@@ -1,6 +1,6 @@
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta # 🌟 timedelta 추가!
 from zoneinfo import ZoneInfo
 from contextlib import contextmanager
 
@@ -770,3 +770,59 @@ def get_admin_policies_list(limit: int = 100) -> list:
         # 🌟 핵심: id가 'auto_'로 시작하면 AI가 자동 수집한 데이터임을 프론트엔드에 알려줌!
         "is_auto": str(r["id"]).startswith("auto_") 
     } for r in rows]
+
+# ==============================================================================
+# 🧹 [V3.1 자동 청소 닌자] 마감일이 확실히 지난 정책을 숨김 처리(Soft Delete) 합니다.
+# ==============================================================================
+def cleanup_expired_policies() -> int:
+    """마감일이 +3일(버퍼) 이상 지난 정책을 찾아 안전하게 is_active=False 처리합니다."""
+    now_str = now_text()
+    today_date = datetime.now(KST)
+    deactivated_count = 0
+
+    with db_session() as conn:
+        with conn.cursor(cursor_factory=DictCursor) as cur:
+            # 1. 현재 살아있는 정책만 모두 불러오기
+            cur.execute("SELECT id, deadline FROM policies WHERE is_active = TRUE")
+            rows = cur.fetchall()
+
+            expired_ids = []
+
+            for row in rows:
+                policy_id = row['id']
+                deadline_str = row['deadline']
+
+                if not deadline_str:
+                    continue
+
+                # 🌟 [안전장치 1] 정규식으로 'YYYY-MM-DD' 또는 'YYYY.MM.DD' 확실한 형식만 찾기
+                # 만약 "2026.04.20 ~ 2026.04.25" 라면 리스트로 두 날짜 모두 찾음
+                dates = re.findall(r'(20\d{2})[-./](0?[1-9]|1[0-2])[-./](0?[1-9]|[12]\d|3[01])', deadline_str)
+                
+                if not dates:
+                    continue # [안전장치 2] 날짜 형식 없으면 상시모집으로 간주! 무조건 살려둠!
+
+                try:
+                    # 찾은 날짜들을 실제 날짜 객체로 변환
+                    parsed_dates = [datetime(int(y), int(m), int(d), tzinfo=KST) for y, m, d in dates]
+                    # 날짜가 여러 개면 가장 '늦은 날짜(마지막 날짜)'를 기준으로 삼음
+                    latest_date = max(parsed_dates)
+
+                    # 🌟 [안전장치 3] 마감일 기준 +3일의 여유(버퍼) 기간 부여
+                    buffer_date = latest_date + timedelta(days=3)
+
+                    # 오늘 날짜가 버퍼 기간마저 지나버렸다면? -> 아웃!
+                    if today_date > buffer_date:
+                        expired_ids.append(policy_id)
+                except ValueError:
+                    continue # 혹시라도 날짜 변환 중 꼬이면 안전하게 패스
+
+            # 2. 모인 기한 만료 ID들을 한 번에 숨김 처리 (절대 DELETE 아님, UPDATE임)
+            if expired_ids:
+                cur.execute(
+                    "UPDATE policies SET is_active = FALSE, updated_at = %s WHERE id = ANY(%s)",
+                    (now_str, expired_ids)
+                )
+                deactivated_count = len(expired_ids)
+
+    return deactivated_count
