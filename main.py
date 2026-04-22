@@ -27,7 +27,8 @@ from chat_db import (
     consume_daily_request_quota,
     get_admin_dashboard_stats,
     extract_and_save_to_db,
-    get_admin_policies_list
+    get_admin_policies_list,
+    cleanup_expired_policies # 🌟 이거 추가!
 )
 
 # 🌟 [신규 추가] AI 스트리밍 모듈 임포트!
@@ -99,6 +100,9 @@ class CreateThreadRequest(BaseModel):
 class RenameRequest(BaseModel):
     user_id: str
     title: str
+
+class AdminActionRequest(BaseModel):
+    admin_key: str
 
 class SaveInputsRequest(BaseModel):
     user_id: str
@@ -180,6 +184,18 @@ app.add_middleware(
     CORSMiddleware, allow_origins=allowed_origins,
     allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
+
+@app.post("/admin/cleanup")
+def admin_cleanup_api(req: AdminActionRequest):
+    """(관리자 전용) 마감일이 지난 정책들을 청소(숨김)하는 API"""
+    if req.admin_key != ADMIN_PASS_KEY:
+        raise HTTPException(status_code=403, detail="권한이 없습니다. 삐빅- ❌")
+    
+    cleaned_count = cleanup_expired_policies()
+    return {
+        "ok": True, 
+        "message": f"성공! 총 {cleaned_count}개의 기한 만료 정책을 안전하게 숨김 처리했습니다. 🧹"
+    }
 
 @app.get("/")
 def read_root(): return {"ok": True, "message": "FastAPI 백엔드가 정상 실행 중입니다."}
