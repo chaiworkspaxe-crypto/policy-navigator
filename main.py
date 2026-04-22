@@ -9,9 +9,8 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 from typing import Optional
 
-# 🌟 [수정 1] BackgroundTasks 임포트 추가
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query, Request, BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -214,9 +213,8 @@ def admin_policies_api():
     return {"ok": True, "data": get_admin_policies_list(limit=200)}
 
 # 🌟 [신규 추가] Streamlit/Next.js를 위한 HTTP 기반 실시간 스트리밍 엔드포인트
-# 🌟 [수정 3] 파라미터에 background_tasks 추가
 @app.post("/chat/stream")
-async def chat_stream(request: ChatRequest, http_request: Request, background_tasks: BackgroundTasks):
+async def chat_stream(request: ChatRequest, http_request: Request):
     """프론트엔드와 직접 연결되어 타자 치듯 실시간으로 데이터를 내려주는 엔드포인트"""
     try:
         user_id, thread_id = (request.user_id or "").strip(), (request.thread_id or "").strip()
