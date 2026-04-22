@@ -664,7 +664,7 @@ export default function Home() {
             <button onClick={() => setShowDonation(false)} className="absolute top-3 right-3 p-1 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"><X size={20} /></button>
             <div className="w-16 h-16 bg-yellow-100 dark:bg-yellow-900/30 rounded-full flex items-center justify-center mx-auto mb-4"><Coffee size={32} className="text-yellow-600 dark:text-yellow-500" /></div>
             <h2 className="text-xl font-bold mb-2 text-gray-800 dark:text-gray-100">서버 운영에 힘 보태기</h2>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-6 leading-relaxed">여러분에게 유용한 혜택을 찾아주기 위한<br/>AI API 통신비와 서버 유지비로 사용됩니다.<br/>작은 후원도 큰 힘이 됩니다! 🙇‍♂️</p>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-6 leading-relaxed">더욱 정확하고 유용한 맞춤형 정책 정보를 제공하기 위해,<br/>AI 데이터 처리 비용과 서버 인프라 유지비로 사용됩니다.<br/>여러분의 소중한 후원이 서비스 발전에 큰 힘이 됩니다. 🙌🙇‍♂️</p>
             <div className="bg-gray-50 dark:bg-[#121212] border border-gray-200 dark:border-[#333] p-4 rounded-xl text-left text-sm font-medium text-gray-700 dark:text-gray-300 mb-6 space-y-1">
               <p className="flex justify-between"><span>은행</span> <span className="font-bold">케이뱅크</span></p>
               <p className="flex justify-between"><span>계좌번호</span> <span className="font-bold">100238386987</span></p>
