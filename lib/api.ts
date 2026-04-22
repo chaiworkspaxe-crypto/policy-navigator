@@ -80,9 +80,15 @@ export const api = {
     await apiClient.delete(`/threads/all`, { params: { user_id: userId } });
   },
 
-  getAdminStats: async (): Promise<{ total_users: number; total_threads: number; blocked_today: number; today_date: string }> => {
+  getAdminStats: async (): Promise<any> => {
     const res = await apiClient.get("/admin/stats");
     return res.data.data;
+  },
+
+  // 🌟 [신규 추가] 관리자 대시보드 - 분리된 정책 리스트 가져오기
+  getAdminPolicies: async (): Promise<any> => {
+    const res = await apiClient.get("/admin/policies");
+    return res.data; // { ok: true, data: { official: [], agent_collected: [] } } 형태
   },
 
   // 🌟 [최적화] 더 이상 사용하지 않는 옛날 getAiResponse 함수 삭제 완료!
