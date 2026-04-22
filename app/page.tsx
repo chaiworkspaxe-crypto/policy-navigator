@@ -54,7 +54,7 @@ const downloadTextFile = (content: string, filename: string) => {
   URL.revokeObjectURL(url);
 };
 
-// 🌟 [수정 완료] 최신 CSS를 완벽 지원하는 html-to-image로 교체!
+// 🌟 최신 CSS를 완벽 지원하는 html-to-image로 교체
 const downloadAsImage = async (elementId: string, filename: string) => {
   const element = document.getElementById(elementId);
   if (!element) {
@@ -441,7 +441,9 @@ export default function Home() {
             <div className="space-y-6 pb-4">
               {messages.map((message, index) => {
                 const isLastMessage = index === messages.length - 1;
-                const isAssistant = message.role === "assistant";
+                
+                // 🌟 핵심 수정 1: role이 'user'가 아니면 무조건 AI(마크다운 렌더링)로 인식하게 방어 로직 추가!
+                const isAssistant = message.role !== "user"; 
                 
                 const displayContent = (!loading && isLastMessage && isAssistant && !hasSummaryTable(message.content)) 
                   ? message.content + "\n\n" 
@@ -449,37 +451,47 @@ export default function Home() {
 
                 return (
                   <div key={`${message.role}-${index}`} className={`flex gap-3 sm:gap-4 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+                    
+                    {/* AI 프로필 아이콘 (이제 무조건 보입니다!) */}
                     {isAssistant && (
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-600 mt-1 shadow-sm"><span className="text-[10px] sm:text-xs font-bold text-white">AI</span></div>
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-600 mt-1 shadow-sm">
+                        <span className="text-[10px] sm:text-xs font-bold text-white">AI</span>
+                      </div>
                     )}
+                    
                     <div className={`max-w-[90%] sm:max-w-[85%] rounded-2xl p-4 shadow-sm overflow-hidden ${message.role === "user" ? "whitespace-pre-wrap border border-gray-200 dark:border-[#444] bg-white dark:bg-[#2d2d2d] text-gray-800 dark:text-gray-200 text-sm sm:text-base" : "bg-transparent text-gray-800 dark:text-gray-300"}`}>
                       
                       <div id={`capture-area-${index}`} className="p-1 rounded-xl">
                         {isAssistant ? (
-                          // 🌟 마크다운을 예쁘게 그려주는 진짜 렌더링 엔진!
+                          // 🌟 핵심 수정 2: 마크다운 렌더러에 h4, h5 추가 및 스타일 초강력 업그레이드!
                           <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
                             components={{
-                              p: ({ ...props }) => <p className="mb-2 leading-relaxed" {...props} />,
-                              ul: ({ ...props }) => <ul className="list-disc pl-5 mb-3 space-y-1" {...props} />,
-                              ol: ({ ...props }) => <ol className="list-decimal pl-5 mb-3 space-y-1" {...props} />,
-                              li: ({ ...props }) => <li className="" {...props} />,
-                              h1: ({ ...props }) => <h1 className="text-xl font-bold mb-3 mt-5" {...props} />,
-                              h2: ({ ...props }) => <h2 className="text-lg font-bold mb-2 mt-4" {...props} />,
-                              h3: ({ ...props }) => <h3 className="text-md font-bold mb-2 mt-4" {...props} />,
-                              strong: ({ ...props }) => <strong className="font-bold text-gray-900 dark:text-white" {...props} />,
-                              a: ({ ...props }) => <a className="text-blue-600 dark:text-blue-400 hover:underline break-all" target="_blank" rel="noopener noreferrer" {...props} />,
-                              hr: ({ ...props }) => <hr className="my-4 border-gray-200 dark:border-gray-700" {...props} />,
-                              table: ({ ...props }) => (
-                                <div className="overflow-x-auto mb-4 w-full rounded-lg border border-gray-200 dark:border-gray-700">
+                              p: ({ node, ...props }) => <p className="mb-3 leading-relaxed" {...props} />,
+                              ul: ({ node, ...props }) => <ul className="list-disc pl-5 mb-4 space-y-1 marker:text-green-500" {...props} />,
+                              ol: ({ node, ...props }) => <ol className="list-decimal pl-5 mb-4 space-y-1 marker:text-green-500 font-semibold" {...props} />,
+                              li: ({ node, ...props }) => <li className="mb-1" {...props} />,
+                              h1: ({ node, ...props }) => <h1 className="text-2xl font-extrabold mb-4 mt-6 text-gray-900 dark:text-white" {...props} />,
+                              h2: ({ node, ...props }) => <h2 className="text-xl font-bold mb-3 mt-5 text-green-700 dark:text-green-400 border-b border-gray-200 dark:border-[#444] pb-2" {...props} />,
+                              h3: ({ node, ...props }) => <h3 className="text-lg font-bold mb-3 mt-4 text-gray-800 dark:text-gray-100" {...props} />,
+                              h4: ({ node, ...props }) => <h4 className="text-base font-bold mb-2 mt-4 text-gray-800 dark:text-gray-200" {...props} />,
+                              h5: ({ node, ...props }) => <h5 className="text-sm font-bold mb-2 mt-3 text-gray-800 dark:text-gray-300" {...props} />,
+                              strong: ({ node, ...props }) => <strong className="font-bold text-gray-900 dark:text-white bg-green-50 dark:bg-green-900/20 px-1.5 py-0.5 rounded" {...props} />,
+                              a: ({ node, ...props }) => <a className="text-blue-600 dark:text-blue-400 hover:underline break-all font-bold" target="_blank" rel="noopener noreferrer" {...props} />,
+                              hr: ({ node, ...props }) => <hr className="my-5 border-gray-300 dark:border-[#444]" {...props} />,
+                              table: ({ node, ...props }) => (
+                                <div className="overflow-x-auto mb-5 w-full rounded-xl border border-gray-300 dark:border-[#444] shadow-sm">
                                   <table className="min-w-full text-sm text-left" {...props} />
                                 </div>
                               ),
-                              thead: ({ ...props }) => <thead className="bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300" {...props} />,
-                              th: ({ ...props }) => <th className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 font-bold whitespace-nowrap" {...props} />,
-                              td: ({ ...props }) => <td className="px-4 py-3 border-b border-gray-200 dark:border-gray-700" {...props} />,
-                              pre: ({ ...props }) => <pre className="bg-gray-100 dark:bg-[#2a2a2a] p-3 rounded-lg overflow-x-auto text-sm font-mono mb-3" {...props} />,
-                              code: ({ className, ...props }) => <code className={`${className || ''} bg-gray-100 dark:bg-[#2a2a2a] text-pink-600 dark:text-pink-400 px-1.5 py-0.5 rounded text-sm font-mono`} {...props} />,
+                              thead: ({ node, ...props }) => <thead className="bg-gray-100 dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-300" {...props} />,
+                              th: ({ node, ...props }) => <th className="px-4 py-3 border-b border-gray-300 dark:border-[#444] font-bold whitespace-nowrap" {...props} />,
+                              td: ({ node, ...props }) => <td className="px-4 py-3 border-b border-gray-200 dark:border-[#444]" {...props} />,
+                              pre: ({ node, ...props }) => <pre className="bg-gray-100 dark:bg-[#2a2a2a] p-4 rounded-xl overflow-x-auto text-sm font-mono mb-4 border border-gray-200 dark:border-[#444]" {...props} />,
+                              code: ({ node, className, ...props }) => {
+                                const isInline = !className;
+                                return <code className={`${className || ''} ${isInline ? 'bg-gray-100 dark:bg-[#2a2a2a] text-pink-600 dark:text-pink-400 px-1.5 py-0.5 rounded text-sm font-mono font-bold' : ''}`} {...props} />
+                              },
                             }}
                           >
                             {displayContent}
@@ -589,7 +601,7 @@ export default function Home() {
               <div>
                 <strong className="text-green-600 dark:text-green-400 block mb-1">1️⃣ 나의 기본 정보 입력하기</strong>
                 좌측 메뉴(모바일은 상단)에서 거주지와 출생연도를 선택해 주세요.<br/>
-               <p className="mb-3 text-gray-300 leading-relaxed text-sm">
+                <p className="mb-3 text-gray-300 leading-relaxed text-sm">
           추가 정보 칸에 현재 상황(예: <em className="text-gray-400">대학교 4학년, 1인가구 무주택, 취업 준비 중</em>)을{' '}
           <span className="font-bold text-blue-300 bg-blue-900/40 px-1.5 py-0.5 rounded">
             구체적으로 입력할수록 AI가 더 많고 정확한 정책을 찾아옵니다.
