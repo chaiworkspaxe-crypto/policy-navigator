@@ -731,9 +731,9 @@ def extract_and_save_to_db(text: str):
                         INSERT INTO policies (
                             id, title, provider, target_audience, deadline, summary, url, 
                             embedding, created_at, updated_at, is_active
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE)
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::vector, %s, %s, TRUE)
                         """,
-                        (policy_id, title, provider, target_audience, deadline, block.strip(), url, vector, now, now)
+                        (policy_id, title, provider, target_audience, deadline, block.strip(), url, str(vector), now, now)
                     )
                     print(f"✨ [V3.0 파싱 완료] {title} (기관: {provider}) DB 각방 적재 성공! 🚀")
                     saved_count += 1
