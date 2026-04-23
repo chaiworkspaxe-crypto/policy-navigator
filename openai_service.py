@@ -96,20 +96,35 @@ def naver_web_search(query: str) -> str:
 
 @tool
 def global_web_search(query: str) -> str:
-    """네이버 검색에서 찾지 못한 대한민국 정부 공식 문서나 심층 정책 정보를 교차 검증할 때 사용합니다."""
-    localized_query = f"대한민국 {query} (site:go.kr OR site:kr)"
+    """네이버 검색에서 찾지 못한 대한민국 정부 공식 문서, 지원 자격, 또는 '2026년 최신 신청 일정(마감일)'을 심층 교차 검증할 때 사용합니다."""
+    
+    # 💡 AI가 의도한 query(검색어)를 그대로 살리되, 최신성을 위해 '2026년'과 '대한민국'만 살짝 얹어줌!
+    # (예: AI가 마감일이 궁금하면 query로 "청년월세지원 마감일"을 보낼 것이고, 자격이 궁금하면 "청년월세지원 소득조건"을 보낼 것임)
+    localized_query = f"2026년 대한민국 {query}"
     
     try:
         from langchain_community.tools import DuckDuckGoSearchResults
+        
+        # 1순위: 덕덕고(DDG) 선봉대 출동! (비용 0원)
         search = DuckDuckGoSearchResults(backend="web", region="kr-kr", max_results=5)
-        return search.invoke(localized_query)
-    except Exception:
+        ddg_result = search.invoke(localized_query)
+        
+        if not ddg_result or "No good DuckDuckGo Search Result" in ddg_result:
+            raise Exception("덕덕고 검색 결과 없음")
+            
+        return ddg_result
+        
+    except Exception as e:
+        print(f"⚠️ 덕덕고 실패/결과없음 ({e}). 타빌리(Tavily)로 백업 검색 시도.")
         try:
             from langchain_community.tools.tavily_search import TavilySearchResults
+            
+            # 2순위: 비장의 무기 타빌리 출동! (비용 절약을 위해 max_results=3)
             tavily_search = TavilySearchResults(max_results=3)
             return tavily_search.invoke(localized_query)
+            
         except Exception:
-            return "글로벌 검색 엔진 차단됨. 현재 지식과 수집된 정보로 최선을 다해 답변하세요."
+            return "글로벌 검색 엔진이 모두 차단되었습니다. 현재 지식과 DB 정보만으로 최선을 다해 답변하세요."
 
 SYSTEM_PROMPT = """
 당신은 대한민국 국민 모두의 '정보 비대칭'을 완벽하게 해소해 주는 최고의 '전국민 맞춤형 복지/지원금 내비게이터(Universal Policy Navigator)'입니다.
@@ -141,6 +156,9 @@ SYSTEM_PROMPT = """
    - 오늘 날짜와 신청 마감일을 반드시 비교하세요.
    - 이미 마감일이 지났거나 신청 기한이 끝난 공고는 리스트에서 제거하세요.
    - 검색 결과가 모두 마감되었다면 검색어를 바꿔 현재 신청 가능한 정책이 나올 때까지 다시 탐색하세요.
+   - 🚨 [가장 중요] DB 검색 결과에 정확한 '2026년 신청 마감일(예: 2026-05-10)'이 적혀있지 않다면, 대충 "공고별 상이"라고 넘기지 마세요! 
+   - 반드시 `naver_web_search` 또는 `global_web_search` 도구를 즉시 호출하여 "2026년 [해당 정책명] 신청기간"을 집요하게 검색해서 팩트 체크하세요.
+   - 검색 도구를 모두 사용해 봐도 명확한 올해의 날짜가 진짜 없을 때만 "현재 미정(공고 확인 필요)" 등으로 기재하세요.   
    - 명확한 날짜가 없다면 "상시 모집" 또는 "예산 소진 시까지" 등으로 기재하세요.
    - 공식 링크가 없거나, 신청 가능 여부가 충분히 확인되지 않은 항목은 과감히 제외하세요.
 
