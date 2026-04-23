@@ -152,7 +152,12 @@ def build_agent_messages(previous_messages: list, current_user_message: str) -> 
     return agent_messages
 
 def persist_thread_inputs_if_present(user_id, thread_id, city, district, dong, birth_year, extra_info):
+    # 💡 [핵심 방어막] city가 없거나 "선택하세요"면 아무 짓도 안 하고 조용히 종료 (DB 저장 안 함)
+    if not city or city.strip() == "선택하세요":
+        return
+
     if not any([city, district, dong, birth_year, extra_info]): return
+    
     save_thread_inputs(
         user_id=user_id, thread_id=thread_id,
         selected_city=(city or "").strip() or "선택하세요",
@@ -212,7 +217,7 @@ def admin_policies_api():
     """프론트엔드 대시보드 '정책 DB 관리' 탭에서 호출할 API"""
     return {"ok": True, "data": get_admin_policies_list(limit=200)}
 
-# 🌟 [신규 추가] Streamlit/Next.js를 위한 HTTP 기반 실시간 스트리밍 엔드포인트
+# 🌟 [신규 추가] Stream কমলা 기반 실시간 스트리밍 엔드포인트
 @app.post("/chat/stream")
 async def chat_stream(request: ChatRequest, http_request: Request):
     """프론트엔드와 직접 연결되어 타자 치듯 실시간으로 데이터를 내려주는 엔드포인트"""
