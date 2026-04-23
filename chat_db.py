@@ -298,31 +298,27 @@ def get_latest_thread_id(cur, user_id: str) -> str:
     row = cur.fetchone()
     return row["thread_id"] if row else ""
 
+# 🌟 [추가 1] 스레드가 DB에 없으면 그때서야 비로소 INSERT를 수행하는 경호원 함수!
+def ensure_thread_exists(cur, user_id: str, thread_id: str, title: str = "새 대화"):
+    """스레드가 DB에 없으면 그때서야 비로소 INSERT를 수행하는 경호원 함수 🛡️"""
+    cur.execute("SELECT thread_id FROM chat_threads WHERE user_id = %s AND thread_id = %s", (user_id, thread_id))
+    if not cur.fetchone():
+        now = now_text()
+        cur.execute(
+            "INSERT INTO chat_threads (thread_id, user_id, title, created_at, updated_at) VALUES (%s, %s, %s, %s, %s)",
+            (thread_id, user_id, sanitize_thread_title(title), now, now)
+        )
+
 
 def create_thread(user_id: str, title: str = "새 대화", set_active: bool = True) -> str:
+    # 🌟 [수정 2] DB에 방을 만드는(INSERT) 코드 싹 지우기! ID만 발급하게 변경!
     thread_id = str(uuid.uuid4())
     now = now_text()
-    default_inputs = get_default_thread_inputs()
 
     with db_session() as conn:
         with conn.cursor() as cur:
             ensure_session_row(cur, user_id)
             
-            cur.execute(
-                "INSERT INTO chat_threads (thread_id, user_id, title, created_at, updated_at) VALUES (%s, %s, %s, %s, %s)",
-                (thread_id, user_id, sanitize_thread_title(title), now, now)
-            )
-            
-            cur.execute(
-                """
-                INSERT INTO chat_thread_inputs 
-                (thread_id, user_id, selected_city, selected_district, selected_dong, birth_year, extra_info, updated_at) 
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (thread_id, user_id, default_inputs["selected_city"], default_inputs["selected_district"], 
-                 default_inputs["selected_dong"], default_inputs["birth_year"], default_inputs["extra_info"], now)
-            )
-
             if set_active:
                 cur.execute("UPDATE chat_sessions SET active_thread_id = %s, updated_at = %s WHERE user_id = %s", (thread_id, now, user_id))
             else:
@@ -408,6 +404,10 @@ def save_chat_message(user_id: str, thread_id: str, role: str, content: str, mes
     with db_session() as conn:
         with conn.cursor(cursor_factory=DictCursor) as cur:
             ensure_session_row(cur, user_id)
+            
+            # 🌟 [수정 3] 메시지를 DB에 넣기 직전에, 방금 만든 경호원을 세워두기!
+            ensure_thread_exists(cur, user_id, thread_id)
+            
             cur.execute("SELECT title FROM chat_threads WHERE user_id = %s AND thread_id = %s", (user_id, thread_id))
             thread_row = cur.fetchone()
             
