@@ -6,6 +6,7 @@ import { api, ChatMessage, extractApiErrorMessage, ThreadInputs, ThreadItem } fr
 import { CITY_TO_DISTRICTS, DONG_MAP } from "@/lib/regionData";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw'; // 🌟 1. HTML 렌더링 핵심 부품 임포트 추가!
 import { 
   MessageSquare, Plus, Send, Loader2, MapPin, Search, AlertCircle, 
   Menu, X, Trash2, Sun, Moon, Coffee, ChevronUp, ChevronDown, 
@@ -466,6 +467,7 @@ export default function Home() {
                           // 🌟 핵심 수정 2: 마크다운 렌더러에 h4, h5 추가 및 스타일 초강력 업그레이드!
                           <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
+                            rehypePlugins={[rehypeRaw]} // 🌟 2. 마크다운에 HTML 렌더링 플러그인 추가!
                             components={{
                               p: ({ node, ...props }) => <p className="mb-3 leading-relaxed" {...props} />,
                               ul: ({ node, ...props }) => <ul className="list-disc pl-5 mb-4 space-y-1 marker:text-green-500" {...props} />,
