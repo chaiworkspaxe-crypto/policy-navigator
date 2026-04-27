@@ -210,12 +210,18 @@ export async function POST(req: Request) {
     // ==============================================================================
     // 🌟 커스텀 JSON 스트리밍 엔진
     // ==============================================================================
+   // ... 생략 ...
     let fullAnswer = "";
     const customStream = new ReadableStream({
       async start(controller) {
         for await (const part of result.fullStream) {
+          
           if (part.type === 'tool-call') {
             const toolName = part.toolName;
+            
+            // 🌟 [로그 추가] Vercel Logs 창에 어떤 도구를 호출했는지 실시간으로 찍습니다!
+            console.log(`[🤖 AI 도구 호출] ${toolName} 실행 중... 파라미터:`, part.args);
+
             let friendlyMsg = "하나라도 더 찾아내려고 AI가 풀야근 중입니다! 쪼~금만 더 기다려주세요 😭🌙";
             
             if (toolName === "search_internal_db") friendlyMsg = "정부 정책 창고 셔터 올리는 중! 먼지가 쫌 날려도(쿨럭) 싹 다 찾아올게요 😷💨";
@@ -224,15 +230,27 @@ export async function POST(req: Request) {
             else if (toolName === "get_current_time") friendlyMsg = "이미 끝난 공고 주면 혼나니까! 실시간 마감일 깐깐하게 비교 중입니다 🗓️⏳";
 
             controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'status', message: `🔍 ${friendlyMsg}` }) + '\n'));
-          } else if (part.type === 'text-delta') {
+          } 
+          
+          else if (part.type === 'tool-result') {
+            // 🌟 [로그 추가] 도구가 찾아온 결과의 길이나 상태를 찍어볼 수도 있어!
+            console.log(`[✅ 도구 응답 완료] ${part.toolName} 결과 수신 완료`);
+          }
+
+          else if (part.type === 'text-delta') {
             fullAnswer += part.textDelta;
             controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'content', delta: part.textDelta }) + '\n'));
           }
         }
+        
+        // 🌟 [로그 추가] AI가 최종 답변을 다 만들었을 때 로그를 남깁니다.
+        console.log(`[🏁 AI 스트리밍 종료] 응답 완료! (총 길이: ${fullAnswer.length}자)`);
+        
         controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'done', full_content: fullAnswer }) + '\n'));
         controller.close();
       }
     });
+    // ... 생략 ...
 
     return new Response(customStream, {
       headers: { 'Content-Type': 'application/x-ndjson', 'Cache-Control': 'no-cache' }
