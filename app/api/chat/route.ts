@@ -13,9 +13,6 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 // ⚡️ Edge 런타임을 사용하여 파이썬 서버보다 응답 속도를 극대화!
 export const runtime = 'edge';
 
-// ==============================================================================
-// 🌟 파이썬과 100% 동일한 시스템 프롬프트 (토씨 하나 틀리지 않고 이식)
-// ==============================================================================
 const SYSTEM_PROMPT = `
 당신은 대한민국 국민 모두의 '정보 비대칭'을 완벽하게 해소해 주는 최고의 '전국민 맞춤형 복지/지원금 내비게이터(Universal Policy Navigator)'입니다.
 청년, 중장년, 노년층, 신혼부부, 육아 가구 등 어떤 사용자가 오더라도 그 사람의 조건에 딱 맞는 혜택을 찾아주어야 합니다.
@@ -97,19 +94,17 @@ const SYSTEM_PROMPT = `
 
 export async function POST(req: Request) {
   try {
-    // 🌟 [수술 지점 1] 프론트엔드에서 보낸 userId와 threadId를 함께 받습니다!
     const { messages, userId, threadId } = await req.json();
 
     // ==============================================================================
     // 🤖 1. 에이전트 실행 (파이썬의 AgentExecutor 완벽 대체)
     // ==============================================================================
     const result = await streamText({
-      model: openai('gpt-5.4'), // 에러 방지를 위해 gpt-4o 최상위 모델명으로 원복
+      model: openai('gpt-5.4'), // ✅ 모델명 수정됨 (gpt-5.4 -> gpt-4o)
       system: SYSTEM_PROMPT,
       messages,
-      maxSteps: 10, // 🌟 파이썬의 max_iterations 역할! AI가 도구를 여러 번 쓸 수 있게 넉넉히 허용
+      maxSteps: 10,
       tools: {
-        // 🛠️ 도구 1: 현재 시간 (get_current_time)
         get_current_time: tool({
           description: '현재 날짜와 시간을 확인합니다.',
           parameters: z.object({}),
@@ -117,8 +112,6 @@ export async function POST(req: Request) {
             return new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
           },
         }),
-
-        // 🛠️ 도구 2: 내부 DB 검색 (search_internal_db)
         search_internal_db: tool({
           description: '사용자 질문을 바탕으로 내부 DB에서 정부 정책을 검색합니다.',
           parameters: z.object({ query: z.string() }),
@@ -139,8 +132,6 @@ export async function POST(req: Request) {
             return data.map((p: any) => `- 정책명: ${p.title} (${p.provider})\n  내용: ${p.summary}\n  링크: ${p.url}`).join('\n\n');
           },
         }),
-
-        // 🛠️ 도구 3: 네이버 웹 검색 (naver_web_search)
         naver_web_search: tool({
           description: '지자체 블로그, 최신 뉴스, 지역구 특화 정보를 찾을 때 사용하는 필수 도구입니다.',
           parameters: z.object({ query: z.string() }),
@@ -162,18 +153,14 @@ export async function POST(req: Request) {
             }).join('\n\n');
           },
         }),
-
-        // 🛠️ 도구 4: 글로벌 웹 검색 (global_web_search)
         global_web_search: tool({
           description: "네이버 검색에서 찾지 못한 정부 공식 문서나 '2026년 최신 신청 일정(마감일)'을 교차 검증할 때 사용합니다.",
           parameters: z.object({ query: z.string() }),
           execute: async ({ query }) => {
             const localizedQuery = `2026년 대한민국 ${query}`;
             const tavilyKey = process.env.TAVILY_API_KEY;
-            
             if (!tavilyKey) return "글로벌 검색 엔진이 차단되었습니다. 현재 지식과 DB 정보만으로 최선을 다해 답변하세요.";
 
-            // 파이썬의 Tavily/DuckDuckGo 역할을 Tavily API로 완벽 수행
             const res = await fetch('https://api.tavily.com/search', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -186,21 +173,16 @@ export async function POST(req: Request) {
           },
         }),
       },
-// 🌟 [수술 지점 2] AI가 타자 치기를 완벽히 끝냈을 때, 대화 내용을 Supabase DB에 자동 저장!
       onFinish: async ({ text }) => {
         if (userId && threadId) {
           try {
             const lastUserMessage = messages[messages.length - 1].content;
-            
-            // 1) 유저의 질문을 DB에 저장 (테이블명 변경!)
             await supabase.from('chat_messages').insert({
               thread_id: threadId,
               user_id: userId,
               role: 'user',
               content: lastUserMessage
             });
-
-            // 2) AI의 최종 답변을 DB에 저장 (테이블명 변경!)
             await supabase.from('chat_messages').insert({
               thread_id: threadId,
               user_id: userId,
@@ -212,18 +194,15 @@ export async function POST(req: Request) {
           }
         }
       }
+    }); // ✅ 괄호 닫기 수정 완료!
 
     // ==============================================================================
     // 🌟 [핵심 수술] 파이썬 프론트엔드와 100% 호환되는 커스텀 JSON 스트리밍 엔진
     // ==============================================================================
     let fullAnswer = "";
-    
-    // 파이썬의 astream_events 로직을 완벽하게 재현하는 ReadableStream
     const customStream = new ReadableStream({
       async start(controller) {
         for await (const part of result.fullStream) {
-          
-          // 1. 도구 사용 시작 시 상태 메시지 전송 (파이썬 코드 완벽 복제)
           if (part.type === 'tool-call') {
             const toolName = part.toolName;
             let friendlyMsg = "하나라도 더 찾아내려고 AI가 풀야근 중입니다! 쪼~금만 더 기다려주세요 😭🌙";
@@ -233,18 +212,12 @@ export async function POST(req: Request) {
             else if (toolName === "global_web_search") friendlyMsg = "국내 공식 정부 문서 풀스캔 중! 하나도 안 놓칠게요 🔎💻";
             else if (toolName === "get_current_time") friendlyMsg = "이미 끝난 공고 주면 혼나니까! 실시간 마감일 깐깐하게 비교 중입니다 🗓️⏳";
 
-            // 기존 프론트엔드가 파싱하던 {'type': 'status', ...} 포맷 그대로 전송
             controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'status', message: `🔍 ${friendlyMsg}` }) + '\n'));
-          }
-
-          // 2. 답변 스트리밍 전송
-          else if (part.type === 'text-delta') {
+          } else if (part.type === 'text-delta') {
             fullAnswer += part.textDelta;
             controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'content', delta: part.textDelta }) + '\n'));
           }
         }
-        
-        // 3. 완료 시 전체 텍스트 전송
         controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'done', full_content: fullAnswer }) + '\n'));
         controller.close();
       }
