@@ -3,6 +3,7 @@ import time
 import requests
 import hashlib # 🌟 데이터 지문(Hash)을 만들기 위한 필수 라이브러리
 import urllib.parse # 🌟 [핵심 추가] 복지로 API 키 이중 인코딩 방지용
+from datetime import datetime, timedelta # 🌟 실제 시간 생성을 위해 추가
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from langchain_openai import OpenAIEmbeddings
@@ -15,10 +16,10 @@ PUBLIC_DATA_KEY = os.getenv("PUBLIC_DATA_PORTAL_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
-# 🌟 보조금24 및 복지로 API 엔드포인트 세팅
+# 🌟 보조금24 엔드포인트 세팅 (기존 유지)
 BOJOGEUM_URL = "https://api.odcloud.kr/api/gov24/v3/serviceList"
-# 🚨 [치명적 오타 수정 완료] Welfatedata -> Welfaredata 로 변경했습니다!
-BOKJIRO_URL = "http://apis.data.go.kr/B554287/NationalWelfareInformations/NationalWelfaredata"
+# 🚨 [복지로 수술 완료] Welfatedata 오타 수정 + HTTPS 적용 + V001 최신화!
+BOKJIRO_URL = "https://apis.data.go.kr/B554287/NationalWelfareInformationsV001/NationalWelfarelistV001"
 
 # 3. Supabase 클라이언트 초기화
 supabase: Client = None
@@ -35,7 +36,6 @@ def cleanup_zombie_policies(total_saved):
     if not supabase: return
         
     try:
-        from datetime import datetime, timedelta
         three_days_ago = (datetime.utcnow() - timedelta(days=3)).isoformat()
         
         response = supabase.table("policies").delete().lt("updated_at", three_days_ago).execute()
@@ -55,6 +55,9 @@ def sync_to_supabase(policies):
 
     formatted_data = []
     api_ids = []
+    
+    # 🌟 [에러 방어] DB가 튕겨내지 않도록 "now()" 문자열 대신 파이썬의 실제 리얼타임을 찍어줍니다!
+    now_iso = datetime.utcnow().isoformat()
 
     # 1️⃣ 데이터 규격화 및 '디지털 지문(Hash)' 생성
     for p in policies:
@@ -76,8 +79,8 @@ def sync_to_supabase(policies):
             "summary": summary,
             "category": category,
             "url": url,
-            "content_hash": content_hash, # Supabase에 추가한 새 컬럼!
-            "updated_at": "now()"
+            "content_hash": content_hash, 
+            "updated_at": now_iso # 🚨 실제 시간 적용 완료!
         })
         if pid: api_ids.append(pid)
 
@@ -147,7 +150,7 @@ def sync_to_supabase(policies):
     return True # 일부 조각이 실패했어도 전체 스크립트를 터뜨리지 않고 다음 페이지로 넘김!
 
 # ==============================================================================
-# 🟢 1. 보조금24 데이터 수집 함수
+# 🟢 1. 보조금24 데이터 수집 함수 (기존 100% 유지)
 # ==============================================================================
 def fetch_bojogeum24_data() -> int:
     print("\n🚀 [STAGE 1] 보조금24 데이터 수집을 시작합니다...")
@@ -183,12 +186,12 @@ def fetch_bojogeum24_data() -> int:
             consecutive_fails += 1
             if consecutive_fails >= 3:
                 print("🚨 [긴급 제동] 보조금24 3페이지 연속 수집 실패! 서버 장애로 판단하여 수집을 강제 종료합니다.")
-                break # 무한 루프 강제 탈출
+                break 
             print(f"❌ {page}페이지 수집 실패. 건너뜁니다.")
             page += 1
             continue
         else:
-            consecutive_fails = 0 # 성공하면 카운터 초기화!
+            consecutive_fails = 0 
 
         policies = data.get("data", [])
         if not policies:
@@ -209,14 +212,14 @@ def fetch_bojogeum24_data() -> int:
     return saved_count
 
 # ==============================================================================
-# 🔵 2. 복지로 데이터 수집 함수
+# 🔵 2. 복지로 데이터 수집 함수 (HTTPS, 오타 수정 적용)
 # ==============================================================================
 def fetch_bokjiro_data() -> int:
     print("\n🚀 [STAGE 2] 복지로 데이터 수집을 시작합니다...")
     page = 1
     per_page = 100
     saved_count = 0
-    consecutive_fails = 0 # 🌟 [긴급 제동 장치] 연속 실패 카운터
+    consecutive_fails = 0 
     
     # 🌟 [이중 인코딩 방지] 복지로의 500 에러를 막기 위해 API 키를 미리 해독합니다.
     decoded_key = urllib.parse.unquote(PUBLIC_DATA_KEY) if PUBLIC_DATA_KEY else ""
@@ -224,7 +227,7 @@ def fetch_bokjiro_data() -> int:
     while True:
         print(f"🔄 복지로 - {page}페이지 수집 요청 중...")
         params = {
-            "serviceKey": decoded_key, "pageNo": page, "numOfRows": per_page, # 🌟 PUBLIC_DATA_KEY 대신 해독된 키 사용!
+            "serviceKey": decoded_key, "pageNo": page, "numOfRows": per_page, 
             "callTp": "L", "returnType": "json" 
         }
         
@@ -245,19 +248,19 @@ def fetch_bokjiro_data() -> int:
                 print(f"⚠️ API 오류 (시도: {attempt + 1}/{max_retries}): {e}")
                 if attempt < max_retries - 1: time.sleep(5)
 
-        # 🌟 무한 루프 방지 로직 적용
         if not fetch_success or not data:
             consecutive_fails += 1
             if consecutive_fails >= 3:
-                print("🚨 [긴급 제동] 복지로 3페이지 연속 500 에러 발생! 서버 장애로 판단하여 수집을 강제 종료합니다.")
-                break # 97페이지까지 무한정 넘어가는 걸 여기서 막아줍니다!
+                print("🚨 [긴급 제동] 복지로 3페이지 연속 500 에러 발생! 서버 장애/한도 초과로 판단하여 강제 종료합니다.")
+                break 
             print(f"❌ {page}페이지 수집 실패. 건너뜁니다.")
             page += 1
             continue
         else:
-            consecutive_fails = 0 # 성공하면 카운터 초기화!
+            consecutive_fails = 0 
 
-        raw_policies = data.get("servList", [])
+        # 🌟 V001 API 응답 구조 반영 (servList 혹은 welfarelist)
+        raw_policies = data.get("servList") or data.get("welfarelist", [])
         if not raw_policies:
             print("🏁 복지로 데이터를 모두 긁어왔습니다!")
             break
@@ -272,7 +275,6 @@ def fetch_bokjiro_data() -> int:
             
         is_success = sync_to_supabase(mapped_policies)
         
-        # 🌟 [에러 방어] 복지로도 저장이 실패해도 절대 break(종료) 하지 않음!
         if is_success: 
             saved_count += len(mapped_policies)
         else: 
