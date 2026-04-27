@@ -35,13 +35,15 @@ jobs:
         run: |
           python scripts/sync_welfare.py
 
-      # ✅ STAGE 2: 온라인청년센터 수집 (새로 추가!)
+      # ✅ STAGE 2: 온라인청년센터 수집
       - name: Run Youth Policy Sync
+        # 🌟 (시니어 꿀팁) 만약 Stage 1에서 치명적인 파이썬 에러가 나도, Stage 2는 무조건 실행하게 만드는 마법의 옵션!
+        if: always() 
         env:
-          # 🌟 청년정책 전용 API 키를 꼭 GitHub Secrets에 등록해줘야 해!
           YOUTH_POLICY_API_KEY: ${{ secrets.YOUTH_POLICY_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          python scripts/fetch_youth_data.py
+          # 🌟 파일명을 실제 창현이가 만든 이름으로 수정 완료!
+          python scripts/sync_youth.py
