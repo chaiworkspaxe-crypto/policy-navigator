@@ -186,22 +186,22 @@ export async function POST(req: Request) {
           },
         }),
       },
-      // 🌟 [수술 지점 2] AI가 타자 치기를 완벽히 끝냈을 때, 대화 내용을 Supabase DB에 자동 저장!
+// 🌟 [수술 지점 2] AI가 타자 치기를 완벽히 끝냈을 때, 대화 내용을 Supabase DB에 자동 저장!
       onFinish: async ({ text }) => {
         if (userId && threadId) {
           try {
             const lastUserMessage = messages[messages.length - 1].content;
             
-            // 1) 유저의 질문을 DB에 저장
-            await supabase.from('messages').insert({
+            // 1) 유저의 질문을 DB에 저장 (테이블명 변경!)
+            await supabase.from('chat_messages').insert({
               thread_id: threadId,
               user_id: userId,
               role: 'user',
               content: lastUserMessage
             });
 
-            // 2) AI의 최종 답변을 DB에 저장
-            await supabase.from('messages').insert({
+            // 2) AI의 최종 답변을 DB에 저장 (테이블명 변경!)
+            await supabase.from('chat_messages').insert({
               thread_id: threadId,
               user_id: userId,
               role: 'assistant',
@@ -212,7 +212,6 @@ export async function POST(req: Request) {
           }
         }
       }
-    });
 
     // ==============================================================================
     // 🌟 [핵심 수술] 파이썬 프론트엔드와 100% 호환되는 커스텀 JSON 스트리밍 엔진
