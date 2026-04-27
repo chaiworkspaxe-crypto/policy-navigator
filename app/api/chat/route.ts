@@ -97,13 +97,14 @@ const SYSTEM_PROMPT = `
 
 export async function POST(req: Request) {
   try {
-    const { messages } = await req.json();
+    // 🌟 [수술 지점 1] 프론트엔드에서 보낸 userId와 threadId를 함께 받습니다!
+    const { messages, userId, threadId } = await req.json();
 
     // ==============================================================================
     // 🤖 1. 에이전트 실행 (파이썬의 AgentExecutor 완벽 대체)
     // ==============================================================================
     const result = await streamText({
-      model: openai('gpt-5.4'), // 파이썬의 강력함을 유지하기 위해 gpt-4o 최상위 모델 사용
+      model: openai('gpt-4o'), // 에러 방지를 위해 gpt-4o 최상위 모델명으로 원복
       system: SYSTEM_PROMPT,
       messages,
       maxSteps: 10, // 🌟 파이썬의 max_iterations 역할! AI가 도구를 여러 번 쓸 수 있게 넉넉히 허용
@@ -185,6 +186,32 @@ export async function POST(req: Request) {
           },
         }),
       },
+      // 🌟 [수술 지점 2] AI가 타자 치기를 완벽히 끝냈을 때, 대화 내용을 Supabase DB에 자동 저장!
+      onFinish: async ({ text }) => {
+        if (userId && threadId) {
+          try {
+            const lastUserMessage = messages[messages.length - 1].content;
+            
+            // 1) 유저의 질문을 DB에 저장
+            await supabase.from('messages').insert({
+              thread_id: threadId,
+              user_id: userId,
+              role: 'user',
+              content: lastUserMessage
+            });
+
+            // 2) AI의 최종 답변을 DB에 저장
+            await supabase.from('messages').insert({
+              thread_id: threadId,
+              user_id: userId,
+              role: 'assistant',
+              content: text
+            });
+          } catch (dbError) {
+            console.error("DB 저장 중 에러 발생:", dbError);
+          }
+        }
+      }
     });
 
     // ==============================================================================
