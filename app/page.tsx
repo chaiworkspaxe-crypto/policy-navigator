@@ -227,6 +227,7 @@ export default function Home() {
     return "";
   };
 
+  // 🌟 [수정된 부분] handleSearch 통신 로직 교체
   const handleSearch = async (isFollowUp = false, overridePrompt?: string) => {
     setErrorMessage(""); setAiStatus("");
 
@@ -250,19 +251,22 @@ export default function Home() {
     const followUpText = overridePrompt || query.trim();
     const optimisticUserMessage = isFollowUp ? followUpText : `📍 ${city} ${district} ${dong !== DEFAULT_DONG ? dong : ""} | 🎂 ${birthYear}년생 | 📝 ${extraInfo}`;
 
+    // 1. 새로운 메시지 배열 생성
+    const newMessages = [...messages, { role: "user", content: optimisticUserMessage }];
+
     setLoading(true);
-    setMessages((prev) => [...prev, { role: "user", content: optimisticUserMessage }, { role: "assistant", content: "" }]);
+    setMessages([...newMessages, { role: "assistant", content: "" }]);
     if (isFollowUp && !overridePrompt) setQuery("");
 
     try {
       await api.saveThreadInputs(userId, targetThreadId, { selected_city: city, selected_district: district, selected_dong: dong, birth_year: birthYear, extra_info: extraInfo });
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/chat/stream`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+      // 🌟 2. /api/chat 내부 주소로 변경 및 messages 배열 전달
+      const response = await fetch(`/api/chat`, {
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_id: userId, thread_id: targetThreadId, city: isFollowUp ? undefined : city, district: isFollowUp ? undefined : district,
-          dong: isFollowUp ? undefined : dong === DEFAULT_DONG ? "" : dong, birth_year: isFollowUp ? undefined : birthYear,
-          extra_info: isFollowUp ? undefined : extraInfo, query: isFollowUp ? followUpText : undefined,
+          messages: newMessages
         }),
       });
 
@@ -273,6 +277,7 @@ export default function Home() {
       }
       if (!response.ok) throw new Error("서버 통신 오류");
 
+      // 🌟 3. 스트리밍 데이터 파싱 로직 안정화
       const reader = response.body?.getReader();
       const decoder = new TextDecoder("utf-8");
       let accumulatedContent = "";
@@ -288,26 +293,25 @@ export default function Home() {
           buffer = lines.pop() || ""; 
 
           for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              const dataStr = line.substring(6).trim();
-              if (!dataStr) continue;
+            // 'data: ' 접두사가 있든 없든 깔끔하게 JSON만 파싱하도록 처리
+            const dataStr = line.replace(/^data:\s*/, '').trim(); 
+            if (!dataStr) continue;
 
-              try {
-                const data = JSON.parse(dataStr);
-                if (data.type === "content") {
-                  accumulatedContent += data.delta;
-                  setMessages((prev) => {
-                    const next = [...prev];
-                    next[next.length - 1] = { ...next[next.length - 1], content: accumulatedContent };
-                    return next;
-                  });
-                  setAiStatus(""); 
-                } else if (data.type === "status") {
-                  setAiStatus(data.message);
-                }
-              } catch (e) {
-                // Ignore
+            try {
+              const data = JSON.parse(dataStr);
+              if (data.type === "content") {
+                accumulatedContent += data.delta;
+                setMessages((prev) => {
+                  const next = [...prev];
+                  next[next.length - 1] = { ...next[next.length - 1], content: accumulatedContent };
+                  return next;
+                });
+                setAiStatus(""); 
+              } else if (data.type === "status") {
+                setAiStatus(data.message);
               }
+            } catch (e) {
+              // 불완전한 JSON 청크 무시
             }
           }
         }
