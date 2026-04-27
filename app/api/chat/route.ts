@@ -176,30 +176,35 @@ export async function POST(req: Request) {
           },
         }),
       },
+            // 🌟 [수술 지점] 메시지 저장할 때도 현재 시간을 쾅 찍어줍니다!
       onFinish: async ({ text }) => {
         if (userId && threadId) {
           try {
             const lastUserMessage = messages[messages.length - 1].content;
+            const now = new Date().toISOString(); // 현재 시간 생성!
             
             await supabase.from('chat_messages').insert({
               thread_id: threadId,
               user_id: userId,
               role: 'user',
-              content: lastUserMessage
+              content: lastUserMessage,
+              created_at: now
             });
             
             await supabase.from('chat_messages').insert({
               thread_id: threadId,
               user_id: userId,
               role: 'assistant',
-              content: text
+              content: text,
+              created_at: now
             });
           } catch (dbError) {
             console.error("DB 저장 중 에러 발생:", dbError);
           }
         }
       }
-    }); // 🚨🚨 이 부분이 아까 빠져있었어! 여기서 streamText 객체가 완벽하게 닫힘! 🚨🚨
+    }); // <-- streamText 끝나는 곳
+
 
     // ==============================================================================
     // 🌟 커스텀 JSON 스트리밍 엔진
