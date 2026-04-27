@@ -13,6 +13,9 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 // ⚡️ Edge 런타임을 사용하여 파이썬 서버보다 응답 속도를 극대화!
 export const runtime = 'edge';
 
+// ==============================================================================
+// 🌟 파이썬과 100% 동일한 시스템 프롬프트
+// ==============================================================================
 const SYSTEM_PROMPT = `
 당신은 대한민국 국민 모두의 '정보 비대칭'을 완벽하게 해소해 주는 최고의 '전국민 맞춤형 복지/지원금 내비게이터(Universal Policy Navigator)'입니다.
 청년, 중장년, 노년층, 신혼부부, 육아 가구 등 어떤 사용자가 오더라도 그 사람의 조건에 딱 맞는 혜택을 찾아주어야 합니다.
@@ -100,7 +103,7 @@ export async function POST(req: Request) {
     // 🤖 1. 에이전트 실행 (파이썬의 AgentExecutor 완벽 대체)
     // ==============================================================================
     const result = await streamText({
-      model: openai('gpt-5.4'), // ✅ 모델명 수정됨 (gpt-5.4 -> gpt-4o)
+      model: openai('gpt-5.4'),
       system: SYSTEM_PROMPT,
       messages,
       maxSteps: 10,
@@ -177,12 +180,14 @@ export async function POST(req: Request) {
         if (userId && threadId) {
           try {
             const lastUserMessage = messages[messages.length - 1].content;
+            
             await supabase.from('chat_messages').insert({
               thread_id: threadId,
               user_id: userId,
               role: 'user',
               content: lastUserMessage
             });
+            
             await supabase.from('chat_messages').insert({
               thread_id: threadId,
               user_id: userId,
@@ -194,10 +199,10 @@ export async function POST(req: Request) {
           }
         }
       }
-    }); // ✅ 괄호 닫기 수정 완료!
+    }); // 🚨🚨 이 부분이 아까 빠져있었어! 여기서 streamText 객체가 완벽하게 닫힘! 🚨🚨
 
     // ==============================================================================
-    // 🌟 [핵심 수술] 파이썬 프론트엔드와 100% 호환되는 커스텀 JSON 스트리밍 엔진
+    // 🌟 커스텀 JSON 스트리밍 엔진
     // ==============================================================================
     let fullAnswer = "";
     const customStream = new ReadableStream({
