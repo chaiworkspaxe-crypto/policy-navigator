@@ -1,11 +1,8 @@
 import axios from 'axios';
 
-// 🌟 [체크포인트] Vercel 환경변수에 NEXT_PUBLIC_API_BASE_URL 이 잘 들어가 있는지 꼭 확인해!
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://policy-navigator-1.onrender.com';
-
+// 🌟 [핵심 수술 1] 파이썬 외부 주소를 버리고, Next.js 내부 API(/api)로 연결!
 const apiClient = axios.create({
-  baseURL: API_BASE_URL,
-  // AI 응답 대기 시간을 위해 5분(300000ms)으로 세팅 (아주 좋은 설정!)
+  baseURL: '/api', 
   timeout: 300000, 
 });
 
@@ -32,6 +29,7 @@ export interface ThreadInputs {
 }
 
 export const api = {
+  // 🌟 [핵심 수술 2] 복잡했던 주소들을 직관적인 쿼리 파라미터 구조로 단순화!
   listThreads: async (userId: string): Promise<ThreadItem[]> => {
     const res = await apiClient.get("/threads", { params: { user_id: userId } });
     return res.data.threads || [];
@@ -43,41 +41,25 @@ export const api = {
   },
 
   loadMessages: async (userId: string, threadId: string): Promise<ChatMessage[]> => {
-    const res = await apiClient.get(`/threads/${threadId}/messages`, {
-      params: { user_id: userId },
-    });
+    const res = await apiClient.get("/messages", { params: { user_id: userId, thread_id: threadId } });
     return res.data.messages || [];
   },
 
   loadThreadInputs: async (userId: string, threadId: string): Promise<ThreadInputs | null> => {
-    const res = await apiClient.get(`/threads/${threadId}/inputs`, {
-      params: { user_id: userId },
-    });
+    const res = await apiClient.get("/inputs", { params: { user_id: userId, thread_id: threadId } });
     return res.data.inputs || null;
   },
 
-  saveThreadInputs: async (
-    userId: string,
-    threadId: string,
-    payload: Partial<ThreadInputs>,
-  ): Promise<void> => {
-    await apiClient.post(`/threads/${threadId}/inputs`, {
-      user_id: userId,
-      selected_city: payload.selected_city,
-      selected_district: payload.selected_district,
-      selected_dong: payload.selected_dong,
-      birth_year: payload.birth_year,
-      extra_info: payload.extra_info,
-    });
+  saveThreadInputs: async (userId: string, threadId: string, payload: Partial<ThreadInputs>): Promise<void> => {
+    await apiClient.post("/inputs", { user_id: userId, thread_id: threadId, ...payload });
   },
 
   deleteThread: async (userId: string, threadId: string): Promise<void> => {
-    await apiClient.delete(`/threads/${threadId}`, { params: { user_id: userId } });
+    await apiClient.delete("/threads", { params: { user_id: userId, thread_id: threadId } });
   },
 
-  // 🌟 [추가] 전체 대화 삭제 API
   deleteAllThreads: async (userId: string): Promise<void> => {
-    await apiClient.delete(`/threads/all`, { params: { user_id: userId } });
+    await apiClient.delete("/threads", { params: { user_id: userId, delete_all: 'true' } });
   },
 
   getAdminStats: async (): Promise<any> => {
@@ -85,26 +67,17 @@ export const api = {
     return res.data.data;
   },
 
-  // 🌟 [신규 추가] 관리자 대시보드 - 분리된 정책 리스트 가져오기
   getAdminPolicies: async (): Promise<any> => {
     const res = await apiClient.get("/admin/policies");
-    return res.data; // { ok: true, data: { official: [], agent_collected: [] } } 형태
+    return res.data;
   },
-
-  // 🌟 [최적화] 더 이상 사용하지 않는 옛날 getAiResponse 함수 삭제 완료!
 };
 
 export function extractApiErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
     const detail = error.response?.data?.detail;
-    if (typeof detail === "string" && detail.trim()) {
-      return detail;
-    }
-
-    if (typeof error.message === "string" && error.message.trim()) {
-      return error.message;
-    }
+    if (typeof detail === "string" && detail.trim()) return detail;
+    if (typeof error.message === "string" && error.message.trim()) return error.message;
   }
-
   return "클라우드 통신 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
 }
