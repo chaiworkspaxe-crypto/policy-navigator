@@ -97,7 +97,7 @@ def sync_to_supabase(policies):
                 on_conflict="id"
             ).execute()
             
-            print(f"   ㄴ 조각 저장 완료: {min(i + CHUNK_SIZE, total_data)} / {total_data}")
+            print(f"    ㄴ 조각 저장 완료: {min(i + CHUNK_SIZE, total_data)} / {total_data}")
             
             # DB가 인덱스를 갱신할 시간을 충분히 주기 위해 2초 휴식!
             time.sleep(2)
@@ -134,39 +134,65 @@ def fetch_all_data():
             "returnType": "JSON"
         }
 
-        try:
-            response = requests.get(BOJOGEUM_URL, headers=headers, params=params, timeout=15)
-            
-            if response.status_code == 400:
-                print("⚠️ 서버에서 400 에러를 보냈습니다. API 키나 파라미터를 확인하세요.")
-                break
+        # ==============================================================================
+        # 🌟 [시니어의 비법 적용] API 통신 실패 시 좀비처럼 살아나는 Retry 로직 추가!
+        # ==============================================================================
+        max_retries = 3
+        fetch_success = False
+        data = None
+        fatal_error = False
 
-            response.raise_for_status()
-            data = response.json()
-            
-            policies = data.get("data", [])
-            
-            if not policies:
-                print("🏁 모든 데이터를 긁어왔습니다. 수집을 종료합니다!")
-                break
+        for attempt in range(max_retries):
+            try:
+                # 타임아웃 45초로 넉넉하게 연장!
+                response = requests.get(BOJOGEUM_URL, headers=headers, params=params, timeout=45)
                 
-            print(f"✅ {page}페이지에서 {len(policies)}개의 데이터를 찾았습니다. DB로 전송 중...")
-            
-            is_success = sync_to_supabase(policies)
-            
-            if is_success:
-                total_saved += len(policies)
-                print(f"✨ 현재까지 총 {total_saved}개 저장 완료")
-            else:
-                print("⚠️ DB 저장 단계에서 실패했습니다. 작업을 중단합니다.")
-                break
+                if response.status_code == 400:
+                    print("⚠️ 서버에서 400 에러를 보냈습니다. API 키나 파라미터를 확인하세요.")
+                    fatal_error = True
+                    break  # 400 에러는 재시도해도 안 되니까 즉시 포기
 
-            time.sleep(1.2)
+                response.raise_for_status()
+                data = response.json()
+                fetch_success = True
+                break  # 🌟 성공하면 재시도 루프(for문) 즉시 탈출!
+
+            except requests.exceptions.RequestException as e:
+                print(f"⚠️ API 통신 오류 발생 (시도 횟수: {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    print("⏳ 5초 뒤에 다시 찔러봅니다...")
+                    time.sleep(5)  # 5초 숨 고르고 다시 요청
+                else:
+                    print(f"❌ 3번이나 재시도했지만 {page}페이지 수집에 실패했습니다. 이 페이지는 건너뜁니다.")
+
+        # ==============================================================================
+
+        if fatal_error:
+            break  # 전체 반복문(while문) 종료
+
+        if not fetch_success or not data:
             page += 1
+            continue  # 에러 난 페이지는 스킵하고 다음 페이지(page + 1)로 쿨하게 넘어감!
 
-        except Exception as e:
-            print(f"❌ 통신 중 오류 발생: {e}")
+        policies = data.get("data", [])
+        
+        if not policies:
+            print("🏁 모든 데이터를 긁어왔습니다. 수집을 종료합니다!")
             break
+            
+        print(f"✅ {page}페이지에서 {len(policies)}개의 데이터를 찾았습니다. DB로 전송 중...")
+        
+        is_success = sync_to_supabase(policies)
+        
+        if is_success:
+            total_saved += len(policies)
+            print(f"✨ 현재까지 총 {total_saved}개 저장 완료")
+        else:
+            print("⚠️ DB 저장 단계에서 실패했습니다. 작업을 중단합니다.")
+            break
+
+        time.sleep(1.2)
+        page += 1
 
     print(f"\n🎉 [최종 결과] 총 {total_saved}개의 정책 데이터가 임베딩과 함께 DB에 동기화되었습니다!")
     
