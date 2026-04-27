@@ -21,7 +21,10 @@
     "remark-gfm": "^4.0.1",
     "uuid": "^13.0.0",
     "html-to-image": "^1.11.11",
-    "rehype-raw": "^7.0.0"
+    "rehype-raw": "^7.0.0",
+    "@ai-sdk/openai": "latest",
+    "ai": "latest",
+    "zod": "latest"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
