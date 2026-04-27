@@ -12,15 +12,12 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   const { thread_id, user_id, ...inputs } = await req.json();
-  const now = new Date().toISOString();
   
-  // 🌟 [수술 지점] 정보 저장 시에도 created_at, updated_at 필수 기입!
+  // 🌟 [수술 지점] DB 테이블에 없는 시간 데이터(created_at, updated_at)를 제거했습니다!
   const { error } = await supabase.from('chat_thread_inputs').upsert({
     thread_id,
     user_id,
-    ...inputs,
-    created_at: now,
-    updated_at: now
+    ...inputs
   }, { onConflict: 'thread_id' });
   
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
