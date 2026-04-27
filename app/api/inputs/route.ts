@@ -6,7 +6,7 @@ const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const threadId = searchParams.get('thread_id');
-  const { data } = await supabase.from('thread_inputs').select('*').eq('thread_id', threadId).single();
+  const { data } = await supabase.from('chat_thread_inputs').select('*').eq('thread_id', threadId).single();
   return NextResponse.json({ inputs: data || null });
 }
 
@@ -14,7 +14,7 @@ export async function POST(req: Request) {
   const { thread_id, user_id, ...inputs } = await req.json();
   
   // Upsert (있으면 덮어쓰기, 없으면 생성)
-  const { error } = await supabase.from('thread_inputs').upsert({
+  const { error } = await supabase.from('chat_thread_inputs').upsert({
     thread_id,
     user_id,
     ...inputs,
