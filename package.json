@@ -24,7 +24,9 @@
     "rehype-raw": "^7.0.0",
     "@ai-sdk/openai": "latest",
     "ai": "latest",
-    "zod": "latest"
+    "zod": "latest",
+    "openai": "latest",
+    "@supabase/supabase-js": "latest"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
