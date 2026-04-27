@@ -16,7 +16,15 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const { user_id } = await req.json();
   const thread_id = uuidv4();
-  const { error } = await supabase.from('chat_threads').insert({ thread_id, user_id, title: '새 대화' });
+  
+  // 🌟 [핵심 수술] DB가 삐지지 않게 현재 시간(created_at)을 직접 찍어서 보냅니다!
+  const { error } = await supabase.from('chat_threads').insert({ 
+    thread_id, 
+    user_id, 
+    title: '새 대화',
+    created_at: new Date().toISOString() 
+  });
+  
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ thread_id });
 }
