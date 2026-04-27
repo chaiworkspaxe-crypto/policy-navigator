@@ -1,7 +1,8 @@
 import os
 import time
 import requests
-import hashlib # 🌟 [추가됨] 데이터 지문(Hash)을 만들기 위한 필수 라이브러리
+import hashlib # 🌟 데이터 지문(Hash)을 만들기 위한 필수 라이브러리
+import urllib.parse # 🌟 [핵심 추가] 복지로 API 키 이중 인코딩 방지용
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from langchain_openai import OpenAIEmbeddings
@@ -153,6 +154,7 @@ def fetch_bojogeum24_data() -> int:
     page = 1
     per_page = 100
     saved_count = 0
+    consecutive_fails = 0 # 🌟 [긴급 제동 장치] 연속 실패 카운터
 
     while True:
         print(f"🔄 보조금24 - {page}페이지 수집 요청 중...")
@@ -161,13 +163,11 @@ def fetch_bojogeum24_data() -> int:
         max_retries = 3
         fetch_success = False
         data = None
-        fatal_error = False
 
         for attempt in range(max_retries):
             try:
                 response = requests.get(BOJOGEUM_URL, headers=headers, params=params, timeout=45)
                 if response.status_code == 400:
-                    fatal_error = True
                     break
                 response.raise_for_status()
                 data = response.json()
@@ -176,11 +176,18 @@ def fetch_bojogeum24_data() -> int:
             except Exception as e:
                 print(f"⚠️ API 오류 (시도: {attempt + 1}/{max_retries}): {e}")
                 if attempt < max_retries - 1: time.sleep(5)
-                else: print(f"❌ {page}페이지 수집 실패. 건너뜁니다.")
 
-        if fatal_error: break
+        # 🌟 무한 루프 방지 로직 적용
         if not fetch_success or not data:
-            page += 1; continue
+            consecutive_fails += 1
+            if consecutive_fails >= 3:
+                print("🚨 [긴급 제동] 보조금24 3페이지 연속 수집 실패! 서버 장애로 판단하여 수집을 강제 종료합니다.")
+                break # 무한 루프 강제 탈출
+            print(f"❌ {page}페이지 수집 실패. 건너뜁니다.")
+            page += 1
+            continue
+        else:
+            consecutive_fails = 0 # 성공하면 카운터 초기화!
 
         policies = data.get("data", [])
         if not policies:
@@ -208,24 +215,26 @@ def fetch_bokjiro_data() -> int:
     page = 1
     per_page = 100
     saved_count = 0
+    consecutive_fails = 0 # 🌟 [긴급 제동 장치] 연속 실패 카운터
+    
+    # 🌟 [이중 인코딩 방지] 복지로의 500 에러를 막기 위해 API 키를 미리 해독합니다.
+    decoded_key = urllib.parse.unquote(PUBLIC_DATA_KEY) if PUBLIC_DATA_KEY else ""
 
     while True:
         print(f"🔄 복지로 - {page}페이지 수집 요청 중...")
         params = {
-            "serviceKey": PUBLIC_DATA_KEY, "pageNo": page, "numOfRows": per_page,
+            "serviceKey": decoded_key, "pageNo": page, "numOfRows": per_page, # 🌟 PUBLIC_DATA_KEY 대신 해독된 키 사용!
             "callTp": "L", "returnType": "json" 
         }
         
         max_retries = 3
         fetch_success = False
         data = None
-        fatal_error = False
 
         for attempt in range(max_retries):
             try:
                 response = requests.get(BOKJIRO_URL, params=params, timeout=45)
                 if response.status_code == 400:
-                    fatal_error = True
                     break
                 response.raise_for_status()
                 data = response.json()
@@ -235,9 +244,17 @@ def fetch_bokjiro_data() -> int:
                 print(f"⚠️ API 오류 (시도: {attempt + 1}/{max_retries}): {e}")
                 if attempt < max_retries - 1: time.sleep(5)
 
-        if fatal_error: break
+        # 🌟 무한 루프 방지 로직 적용
         if not fetch_success or not data:
-            page += 1; continue
+            consecutive_fails += 1
+            if consecutive_fails >= 3:
+                print("🚨 [긴급 제동] 복지로 3페이지 연속 500 에러 발생! 서버 장애로 판단하여 수집을 강제 종료합니다.")
+                break # 97페이지까지 무한정 넘어가는 걸 여기서 막아줍니다!
+            print(f"❌ {page}페이지 수집 실패. 건너뜁니다.")
+            page += 1
+            continue
+        else:
+            consecutive_fails = 0 # 성공하면 카운터 초기화!
 
         raw_policies = data.get("servList", [])
         if not raw_policies:
