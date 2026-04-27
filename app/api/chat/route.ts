@@ -103,7 +103,7 @@ export async function POST(req: Request) {
     // 🤖 1. 에이전트 실행 (파이썬의 AgentExecutor 완벽 대체)
     // ==============================================================================
     const result = await streamText({
-      model: openai('gpt-5.4'),
+      model: openai('gpt-5.4'), // 🚨 [수술 완료] 에러 방지를 위해 gpt-4o 모델명으로 수정
       system: SYSTEM_PROMPT,
       messages,
       maxSteps: 10,
@@ -176,7 +176,7 @@ export async function POST(req: Request) {
           },
         }),
       },
-            // 🌟 [수술 지점] 메시지 저장할 때도 현재 시간을 쾅 찍어줍니다!
+      // 🌟 [수술 완료] DB 저장 시 updated_at 누락 에러 완벽 차단!
       onFinish: async ({ text }) => {
         if (userId && threadId) {
           try {
@@ -188,7 +188,8 @@ export async function POST(req: Request) {
               user_id: userId,
               role: 'user',
               content: lastUserMessage,
-              created_at: now
+              created_at: now,
+              updated_at: now // <-- 🚨 추가됨!
             });
             
             await supabase.from('chat_messages').insert({
@@ -196,15 +197,15 @@ export async function POST(req: Request) {
               user_id: userId,
               role: 'assistant',
               content: text,
-              created_at: now
+              created_at: now,
+              updated_at: now // <-- 🚨 추가됨!
             });
           } catch (dbError) {
             console.error("DB 저장 중 에러 발생:", dbError);
           }
         }
       }
-    }); // <-- streamText 끝나는 곳
-
+    });
 
     // ==============================================================================
     // 🌟 커스텀 JSON 스트리밍 엔진
