@@ -104,7 +104,7 @@ export async function POST(req: Request) {
     // 🤖 1. 에이전트 실행 (파이썬의 AgentExecutor 완벽 대체)
     // ==============================================================================
     const result = await streamText({
-      model: openai('gpt-4o'), // 에러 방지를 위해 gpt-4o 최상위 모델명으로 원복
+      model: openai('gpt-5.4'), // 에러 방지를 위해 gpt-4o 최상위 모델명으로 원복
       system: SYSTEM_PROMPT,
       messages,
       maxSteps: 10, // 🌟 파이썬의 max_iterations 역할! AI가 도구를 여러 번 쓸 수 있게 넉넉히 허용
