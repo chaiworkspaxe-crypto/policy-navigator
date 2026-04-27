@@ -17,7 +17,8 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
 # 🌟 보조금24 및 복지로 API 엔드포인트 세팅
 BOJOGEUM_URL = "https://api.odcloud.kr/api/gov24/v3/serviceList"
-BOKJIRO_URL = "http://apis.data.go.kr/B554287/NationalWelfareInformations/NationalWelfatedata"
+# 🚨 [치명적 오타 수정 완료] Welfatedata -> Welfaredata 로 변경했습니다!
+BOKJIRO_URL = "http://apis.data.go.kr/B554287/NationalWelfareInformations/NationalWelfaredata"
 
 # 3. Supabase 클라이언트 초기화
 supabase: Client = None
