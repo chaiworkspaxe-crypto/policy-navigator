@@ -22,11 +22,11 @@
     "uuid": "^13.0.0",
     "html-to-image": "^1.11.11",
     "rehype-raw": "^7.0.0",
-    "@ai-sdk/openai": "latest",
-    "ai": "latest",
-    "zod": "latest",
-    "openai": "latest",
-    "@supabase/supabase-js": "latest"
+    "@ai-sdk/openai": "^1.0.0",
+    "ai": "^4.0.0",
+    "zod": "^3.23.0",
+    "openai": "^4.70.0",
+    "@supabase/supabase-js": "^2.45.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
