@@ -8,7 +8,7 @@ on:
 jobs:
   update-db:
     runs-on: ubuntu-latest
-    timeout-minutes: 180 
+    timeout-minutes: 180
 
     steps:
       - name: Checkout repository
@@ -34,7 +34,7 @@ jobs:
           python scripts/sync_welfare.py
 
       - name: Run Youth Policy Sync
-        if: always() 
+        if: always()
         env:
           YOUTH_POLICY_API_KEY: ${{ secrets.YOUTH_POLICY_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
