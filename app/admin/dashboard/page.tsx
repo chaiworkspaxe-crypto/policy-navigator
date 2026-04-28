@@ -89,6 +89,34 @@ export default function AdminDashboardPage() {
     }
   };
 
+  // 🌟 CRUD 핸들러 추가
+  const handleDeletePolicy = async (id: string) => {
+    if (!confirm('이 정책을 비활성화하시겠습니까?')) return;
+    const res = await fetch(`/api/admin/policies/${id}`, { method: 'DELETE' });
+    if (res.ok) {
+      alert('비활성화 완료');
+      fetchPolicies();
+    } else alert('실패');
+  };
+
+  const handleSavePolicy = async () => {
+    const id = formData.id || formData.policy_id;
+    if (!id) {
+      alert('새 정책 등록은 다음 PR에서');  // POST는 별도 작업
+      return;
+    }
+    const res = await fetch(`/api/admin/policies/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(formData),
+    });
+    if (res.ok) {
+      alert('저장 완료');
+      setShowForm(false);
+      fetchPolicies();
+    } else alert('실패');
+  };
+
   useEffect(() => {
     const password = window.prompt("관리자 비밀번호를 입력하세요.");
     if (password === "8011") {
@@ -348,7 +376,12 @@ export default function AdminDashboardPage() {
                           <td className="px-6 py-4 text-gray-500 text-xs">{p.updated_at?.split(' ')[0]}</td>
                           <td className="px-6 py-4 text-right space-x-3">
                             <button className="text-blue-400 hover:text-blue-300 transition-colors" onClick={() => { setFormData(p); setShowForm(true); }}><Edit size={18} className="inline" /></button>
-                            <button className="text-red-400 hover:text-red-300 transition-colors"><Trash2 size={18} className="inline" /></button>
+                            <button 
+                              className="text-red-400 hover:text-red-300 transition-colors"
+                              onClick={() => handleDeletePolicy(p.id || p.policy_id || '')}
+                            >
+                              <Trash2 size={18} className="inline" />
+                            </button>
                           </td>
                         </tr>
                       ))
@@ -420,7 +453,10 @@ export default function AdminDashboardPage() {
 
             <div className="p-6 border-t border-gray-800 bg-[#1a1a1a] rounded-b-2xl flex justify-end gap-3">
               <button onClick={() => setShowForm(false)} className="px-5 py-2.5 rounded-xl font-bold text-gray-400 hover:text-white hover:bg-gray-800 transition-colors">취소</button>
-              <button onClick={() => alert("다음 단계에서 수정/삭제 백엔드 API 연결할게! 😎")} className="bg-green-600 hover:bg-green-500 text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 shadow-lg transition-transform active:scale-95">
+              <button 
+                onClick={handleSavePolicy}
+                className="bg-green-600 hover:bg-green-500 text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 shadow-lg transition-transform active:scale-95"
+              >
                 <Save size={18} /> 저장하기
               </button>
             </div>
