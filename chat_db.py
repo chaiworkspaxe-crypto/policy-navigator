@@ -1,8 +1,11 @@
 import os
 import uuid
+import re
+import hashlib
 from datetime import datetime, timedelta # 🌟 timedelta 추가!
 from zoneinfo import ZoneInfo
 from contextlib import contextmanager
+from urllib.parse import urlparse  # 🌟 도메인 검증용 추가
 
 import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
@@ -12,9 +15,23 @@ from dotenv import load_dotenv
 
 # 🌟 [에러 해결 핵심] Supabase 모듈 임포트 및 클라이언트 초기화
 from supabase import create_client, Client
+from langchain_openai import OpenAIEmbeddings
 
 # .env 환경변수 로드
 load_dotenv()
+
+# 🌟 도메인 필터 강화 헬퍼 추가
+OFFICIAL_HOSTS_SUFFIX = (".go.kr",)
+PUBLIC_HOSTS_SUFFIX = (".or.kr",)
+
+def is_trusted_source(url: str) -> bool:
+    """정부 공식(.go.kr) 또는 공공기관(.or.kr) 도메인만 신뢰."""
+    host = (urlparse(url).hostname or "").lower()
+    if host.endswith(OFFICIAL_HOSTS_SUFFIX):
+        return True
+    if host.endswith(PUBLIC_HOSTS_SUFFIX):
+        return True
+    return False
 
 # Supabase 객체 생성 (name 'supabase' is not defined 에러 완벽 차단!)
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
@@ -204,7 +221,7 @@ def upsert_policy(policy_data: dict):
 
 
 # 🌟 [롤백 완료] 예전처럼 벡터(숫자 리스트)를 받아서 Dict 리스트를 반환합니다.
-def search_policies(query_embedding: list, limit: int = 10):
+def search_policies(query_embedding: list, limit: int = 30):
     with db_session() as conn:
         register_vector(conn)
         with conn.cursor(cursor_factory=DictCursor) as cur:
@@ -214,6 +231,7 @@ def search_policies(query_embedding: list, limit: int = 10):
                        age_req, income_req, region_req, summary, url, deadline
                 FROM policies
                 WHERE is_active = TRUE
+                  AND id NOT LIKE 'auto_%%'
                 ORDER BY embedding <=> %s::vector
                 LIMIT %s
                 """,
@@ -534,7 +552,8 @@ def get_daily_request_status(user_id: str, daily_limit: int) -> dict:
 # 카운트가 0에서부터 자동으로 다시 시작됩니다! (완벽한 구조 💯)
 def consume_daily_request_quota(user_id: str, daily_limit: int) -> dict:
     if not user_id:
-        return { "allowed": False, "daily_limit": daily_limit, "used": 0, "remaining": 0 if daily_limit > 0 else None, "usage_date": today_text() }
+        return {"allowed": False, "daily_limit": daily_limit, "used": 0,
+                "remaining": 0, "usage_date": today_text()}
 
     target_date = today_text()
     now = now_text()
@@ -542,20 +561,43 @@ def consume_daily_request_quota(user_id: str, daily_limit: int) -> dict:
     with db_session() as conn:
         with conn.cursor(cursor_factory=DictCursor) as cur:
             ensure_session_row(cur, user_id)
-            cur.execute("SELECT request_count FROM daily_request_usage WHERE user_id = %s AND usage_date = %s", (user_id, target_date))
-            row = cur.fetchone()
-            current_count = int(row["request_count"]) if row else 0
+            
+            # ✅ 단일 atomic 쿼리: 증가 + 새 값 반환
+            cur.execute(
+                """
+                INSERT INTO daily_request_usage 
+                    (user_id, usage_date, request_count, created_at, updated_at)
+                VALUES (%s, %s, 1, %s, %s)
+                ON CONFLICT (user_id, usage_date)
+                DO UPDATE SET 
+                    request_count = daily_request_usage.request_count + 1,
+                    updated_at = EXCLUDED.updated_at
+                RETURNING request_count
+                """,
+                (user_id, target_date, now, now)
+            )
+            new_count = cur.fetchone()["request_count"]
+            
+            # ✅ 한도 초과 시 차감 롤백
+            if daily_limit > 0 and new_count > daily_limit:
+                cur.execute(
+                    """
+                    UPDATE daily_request_usage 
+                    SET request_count = request_count - 1, updated_at = %s
+                    WHERE user_id = %s AND usage_date = %s
+                    """,
+                    (now, user_id, target_date)
+                )
+                return {
+                    "allowed": False, "daily_limit": daily_limit,
+                    "used": daily_limit, "remaining": 0, "usage_date": target_date
+                }
 
-            if daily_limit > 0 and current_count >= daily_limit:
-                return { "allowed": False, "daily_limit": daily_limit, "used": current_count, "remaining": 0, "usage_date": target_date }
-
-            next_count = current_count + 1
-            if row:
-                cur.execute("UPDATE daily_request_usage SET request_count = %s, updated_at = %s WHERE user_id = %s AND usage_date = %s", (next_count, now, user_id, target_date))
-            else:
-                cur.execute("INSERT INTO daily_request_usage (user_id, usage_date, request_count, created_at, updated_at) VALUES (%s, %s, %s, %s, %s)", (user_id, target_date, next_count, now, now))
-
-    return { "allowed": True, "daily_limit": daily_limit, "used": next_count, "remaining": max(daily_limit - next_count, 0) if daily_limit > 0 else None, "usage_date": target_date }
+    return {
+        "allowed": True, "daily_limit": daily_limit, "used": new_count,
+        "remaining": max(daily_limit - new_count, 0) if daily_limit > 0 else None,
+        "usage_date": target_date
+    }
 
 
 def refund_daily_request_quota(user_id: str, usage_date: str = "") -> bool:
@@ -672,9 +714,6 @@ def get_admin_dashboard_stats() -> dict:
 # ==============================================================================
 # 🌟 [V3.0 스텔스 자동 학습 기능] AI 답변을 파싱(쪼개기)하여 DB 컬럼에 맞게 적재합니다.
 # ==============================================================================
-import re
-import hashlib
-from langchain_openai import OpenAIEmbeddings
 
 def extract_and_save_to_db(text: str):
     """AI의 답변(text)에서 세부 정보(기관, 조건 등)를 쪼개서 몰래 DB에 적재하는 V3.0 닌자 함수 🥷"""
@@ -697,8 +736,8 @@ def extract_and_save_to_db(text: str):
                     title = link_match.group(1).strip()
                     url = link_match.group(2).strip()
                     
-                    # 3. 공식 정부/지자체 사이트(.go.kr, .or.kr, .kr) 필터링
-                    if not (".go.kr" in url or ".or.kr" in url or ".kr" in url):
+                    # 3. 공식 정부/지자체 사이트(.go.kr, .or.kr) 필터링 (신규 헬퍼 적용)
+                    if not is_trusted_source(url):
                         continue
 
                     # 🌟 [V3.0 핵심] 파이썬 정규식(Regex)으로 세부 텍스트 예쁘게 잘라내기!
