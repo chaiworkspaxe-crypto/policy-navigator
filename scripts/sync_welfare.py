@@ -3,7 +3,7 @@ import time
 import requests
 import hashlib 
 import urllib.parse 
-import xml.etree.ElementTree as ET # 🌟 [수술 핵심] XML 데이터를 해독하기 위한 통역기 추가!
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from supabase import create_client, Client
 from dotenv import load_dotenv
@@ -19,7 +19,8 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
 # 🌟 보조금24 & 복지로 API 엔드포인트 세팅
 BOJOGEUM_URL = "https://api.odcloud.kr/api/gov24/v3/serviceList"
-BOKJIRO_URL = "https://apis.data.go.kr/B554287/NationalWelfareInformationsV001/NationalWelfarelistV001"
+# 🚨 HTTPS 에러를 피하기 위해 HTTP로 통일하고 V001 최신 주소 적용
+BOKJIRO_URL = "http://apis.data.go.kr/B554287/NationalWelfareInformationsV001/NationalWelfarelistV001"
 
 # 3. Supabase 클라이언트 초기화
 supabase: Client = None
@@ -27,7 +28,6 @@ if SUPABASE_URL and SUPABASE_KEY:
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def cleanup_zombie_policies(total_saved):
-    """업데이트 된 지 3일 이상 지난(API에서 사라진) 마감 정책을 DB에서 삭제합니다."""
     if total_saved < 100:
         print("⚠️ [안전장치 작동] 오늘 수집된 데이터가 너무 적어 청소를 생략합니다.")
         return
@@ -67,14 +67,9 @@ def sync_to_supabase(policies):
         content_hash = hashlib.md5(content_str.encode('utf-8')).hexdigest()
 
         formatted_data.append({
-            "id": pid,
-            "title": title,
-            "provider": provider,
-            "summary": summary,
-            "category": category,
-            "url": url,
-            "content_hash": content_hash, 
-            "updated_at": now_iso 
+            "id": pid, "title": title, "provider": provider,
+            "summary": summary, "category": category, "url": url,
+            "content_hash": content_hash, "updated_at": now_iso 
         })
         if pid: api_ids.append(pid)
 
@@ -102,9 +97,7 @@ def sync_to_supabase(policies):
         embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
         texts_to_embed = [f"정책명: {d['title']} 주관: {d['provider']} 카테고리: {d['category']} 내용: {d['summary']}" for d in needs_embedding]
         vectors = embeddings.embed_documents(texts_to_embed)
-        
-        for i, d in enumerate(needs_embedding):
-            d["embedding"] = vectors[i]
+        for i, d in enumerate(needs_embedding): d["embedding"] = vectors[i]
     except Exception as e:
         print(f"❌ 임베딩 변환 실패!: {e}")
         return False
@@ -135,15 +128,12 @@ def sync_to_supabase(policies):
     return True 
 
 # ==============================================================================
-# 🟢 1. 보조금24 데이터 수집 함수 (JSON 방식 - 완벽 작동 중!)
+# 🟢 1. 보조금24 데이터 수집 함수 (기존 유지 - 완벽 작동)
 # ==============================================================================
 def fetch_bojogeum24_data() -> int:
     print("\n🚀 [STAGE 1] 보조금24 데이터 수집을 시작합니다...")
     headers = { "accept": "application/json", "Authorization": f"Infuser {PUBLIC_DATA_KEY}" }
-    page = 1
-    per_page = 100
-    saved_count = 0
-    consecutive_fails = 0 
+    page, per_page, saved_count, consecutive_fails = 1, 100, 0, 0 
 
     while True:
         print(f"🔄 보조금24 - {page}페이지 수집 요청 중...")
@@ -156,8 +146,7 @@ def fetch_bojogeum24_data() -> int:
         for attempt in range(max_retries):
             try:
                 response = requests.get(BOJOGEUM_URL, headers=headers, params=params, timeout=45)
-                if response.status_code == 400:
-                    break
+                if response.status_code == 400: break
                 response.raise_for_status()
                 data = response.json()
                 fetch_success = True
@@ -181,10 +170,8 @@ def fetch_bojogeum24_data() -> int:
             print("🏁 보조금24 데이터를 모두 긁어왔습니다!")
             break
             
-        if sync_to_supabase(policies): 
-            saved_count += len(policies)
-        else: 
-            print(f"⚠️ {page}페이지 저장 중 일부 에러 발생.")
+        if sync_to_supabase(policies): saved_count += len(policies)
+        else: print(f"⚠️ {page}페이지 저장 중 일부 에러 발생.")
 
         time.sleep(1.2)
         page += 1
@@ -192,24 +179,18 @@ def fetch_bojogeum24_data() -> int:
     return saved_count
 
 # ==============================================================================
-# 🔵 2. 복지로 데이터 수집 함수 (🌟 XML 파싱으로 완벽 수정!)
+# 🔵 2. 복지로 데이터 수집 함수 (🚨 이중 인코딩 완전 차단 버전!)
 # ==============================================================================
 def fetch_bokjiro_data() -> int:
     print("\n🚀 [STAGE 2] 복지로 데이터 수집을 시작합니다...")
-    page = 1
-    per_page = 100
-    saved_count = 0
-    consecutive_fails = 0 
+    page, per_page, saved_count, consecutive_fails = 1, 100, 0, 0 
     
-    decoded_key = urllib.parse.unquote(PUBLIC_DATA_KEY) if PUBLIC_DATA_KEY else ""
-
     while True:
         print(f"🔄 복지로 - {page}페이지 수집 요청 중...")
-        # 🌟 returnType="json"을 보내도 정부 서버가 무시하므로 아예 뺐습니다.
-        params = {
-            "serviceKey": decoded_key, "pageNo": page, "numOfRows": per_page, 
-            "callTp": "L" 
-        }
+        
+        # 🌟 필살기: 파이썬이 키를 변형하지 못하게 URL을 직접 텍스트로 합쳐버립니다!
+        query_str = f"?serviceKey={PUBLIC_DATA_KEY}&pageNo={page}&numOfRows={per_page}&callTp=L"
+        full_url = BOKJIRO_URL + query_str
         
         max_retries = 3
         fetch_success = False
@@ -217,12 +198,11 @@ def fetch_bokjiro_data() -> int:
 
         for attempt in range(max_retries):
             try:
-                response = requests.get(BOKJIRO_URL, params=params, timeout=45)
-                if response.status_code == 400:
-                    break
+                # params 인자를 쓰지 않고, 조립된 full_url을 직접 쏩니다.
+                response = requests.get(full_url, timeout=45)
+                if response.status_code == 400: break
                 response.raise_for_status()
                 
-                # 🌟 [핵심 수술] JSON(.json()) 대신 XML 텍스트로 읽어서 해독합니다!
                 xml_data = response.text
                 root = ET.fromstring(xml_data)
                 fetch_success = True
@@ -234,15 +214,27 @@ def fetch_bokjiro_data() -> int:
         if not fetch_success or root is None:
             consecutive_fails += 1
             if consecutive_fails >= 3:
-                print("🚨 [긴급 제동] 복지로 3페이지 연속 실패! 서버 장애로 판단하여 종료합니다.")
+                print("🚨 [긴급 제동] 복지로 3페이지 연속 실패! 강제 종료합니다.")
                 break 
-            print(f"❌ {page}페이지 수집 실패. 건너뜁니다.")
             page += 1
             continue
         else:
             consecutive_fails = 0 
 
-        # 🌟 창현이가 준 '복지로예시.xml' 파일 구조대로 <servList> 태그를 찾습니다!
+        # 🌟 디버깅용: 공공데이터포털 서버가 데이터를 안 주고 '인증키 에러'를 보냈는지 잡아냅니다.
+        err_msg = root.find(".//errMsg")
+        if err_msg is not None:
+            print(f"🚨 [정부 API 에러 발견!] 사유: {err_msg.text}")
+            break
+            
+        result_code = root.find(".//resultCode")
+        if result_code is not None and result_code.text not in ["0", "00"]:
+            result_msg = root.find(".//resultMessage")
+            msg = result_msg.text if result_msg is not None else ""
+            print(f"🚨 [정부 API 응답 에러] 코드: {result_code.text}, 메시지: {msg}")
+            break
+
+        # 정상 데이터 추출
         raw_policies = root.findall(".//servList")
         if not raw_policies:
             print("🏁 복지로 데이터를 모두 긁어왔습니다!")
