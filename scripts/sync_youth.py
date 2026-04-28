@@ -19,6 +19,7 @@ YOUTH_API_KEY = os.getenv("YOUTH_POLICY_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
+# 🌟 새로운 JSON API 엔드포인트
 YOUTH_CENTER_URL = "https://www.youthcenter.go.kr/opi/empList.do"
 
 # 3. Supabase 클라이언트 초기화
@@ -40,7 +41,6 @@ def sync_to_supabase(policies):
 
     for p in policies:
         pid = p.get("id", "").strip()
-        # 🌟 창현 피드백 반영 2️⃣: ID가 없으면 치명적 DB 충돌 발생. 가차 없이 버림!
         if not pid:
             continue
 
@@ -92,7 +92,6 @@ def sync_to_supabase(policies):
         print(f"❌ 임베딩 변환 실패!: {e}")
         return False
 
-    # 🌟 창현 피드백 반영 3️⃣: 5개는 너무 느림! 50개로 올려서 10배 광속 DB 저장!
     CHUNK_SIZE = 50  
     total_new_data = len(needs_embedding)
     
@@ -133,13 +132,20 @@ def fetch_youth_data():
     total_saved = 0
     consecutive_fails = 0 
 
+    # 🌟 피드백 반영: 헤더 추가 (403 Forbidden 및 접근 거부 방어)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+
     while True:
         print(f"\n🔄 청년정책 {page}페이지 수집 중...")
         
+        # 🌟 피드백 반영: returnType json 명시
         params = {
             "openApiVcyKey": YOUTH_API_KEY, 
             "display": display, 
-            "pageIndex": page
+            "pageIndex": page,
+            "returnType": "json"
         }
 
         max_retries = 3
@@ -148,25 +154,29 @@ def fetch_youth_data():
 
         for attempt in range(max_retries):
             try:
-                response = requests.get(YOUTH_CENTER_URL, params=params, timeout=45)
+                # 헤더 장착 완료
+                response = requests.get(YOUTH_CENTER_URL, params=params, headers=headers, timeout=45)
                 
                 if response.status_code == 200:
+                    # 🌟 피드백 반영: 무엇을 뱉어내는지 RAW 데이터부터 무조건 확인!
+                    print("🔍 RAW RESPONSE (최초 500자):", response.text[:500])
+                    
                     try:
                         data = response.json() 
                         
                         if not isinstance(data, dict):
-                            print(f"⚠️ JSON 형식이 아님: {response.text[:100]}")
+                            print(f"⚠️ JSON 형식이 아님 (HTML 반환 의심됨): {response.text[:100]}")
                             continue
                             
-                        if "result" not in data:
+                        # 🌟 피드백 반영: 데이터 구조 엄격 검증
+                        if "result" not in data and "youthPolicyList" not in data:
                             print(f"⚠️ 예상과 다른 응답 구조 (API 파라미터 확인 필요): {str(data)[:200]}")
                             continue
 
                         fetch_success = True
                         break
                     except Exception as e:
-                        print(f"⚠️ JSON 파싱 에러: {e}")
-                        print(f"응답 텍스트: {response.text[:200]}")
+                        print(f"⚠️ JSON 파싱 에러 (XML이나 HTML을 줬을 확률 높음): {e}")
                 elif response.status_code == 403:
                     print("❌ 403 Forbidden: 서버 접근 차단!")
                     break
@@ -181,22 +191,21 @@ def fetch_youth_data():
             print(f"❌ {page}페이지 수집 실패.")
             consecutive_fails += 1
             if consecutive_fails >= 3:
-                print("🚨 3회 연속 실패. 서버 장애 판단 후 수집 종료")
+                print("🚨 3회 연속 실패. 서버 장애 혹은 구조 변경 판단 후 수집 종료")
                 break
             page += 1
             continue
         else:
             consecutive_fails = 0
             
-            result_data = data.get("result", {})
-            youth_list = result_data.get("youthPolicyList", [])
+            # API마다 키 구조가 다를 수 있으므로 유연하게 대처
+            if "result" in data:
+                youth_list = data["result"].get("youthPolicyList", [])
+            else:
+                youth_list = data.get("youthPolicyList", [])
             
-            # 🌟 창현 피드백 반영 1️⃣: 데이터가 비어있으면 원본 구조를 강제로 찍어본다!
             if not youth_list:
-                print("🏁 청년정책 데이터가 비어있습니다. 수집 종료.")
-                print(f"🔍 [디버깅] API 원본 데이터 키값 확인: {list(data.keys())}")
-                if "result" in data:
-                    print(f"🔍 [디버깅] result 내부 키값 확인: {list(data['result'].keys())}")
+                print("🏁 청년정책 데이터가 비어있습니다. (수집 완료 또는 API 파라미터 문제)")
                 break
                 
             policies = []
