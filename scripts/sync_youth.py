@@ -1,25 +1,25 @@
-print("🚀 청년정책 스크립트 시작됨")
 import os
-print("KEY:", os.getenv("YOUTH_POLICY_API_KEY"))
-
-print("파일 실행 정상")
 import time
 import requests
-import hashlib 
+import hashlib
 from datetime import datetime, timedelta
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from langchain_openai import OpenAIEmbeddings
 
-# 1. 환경 변수 로드
+# 맨 처음 환경변수부터 로드해야 API 키를 정상적으로 읽어옵니다.
 load_dotenv()
+
+print("🚀 청년정책 스크립트 시작됨")
+print("KEY 유무 확인:", "존재함" if os.getenv("YOUTH_POLICY_API_KEY") else "없음")
+print("파일 실행 정상")
 
 # 2. 인증키 및 DB 설정 가져오기
 YOUTH_API_KEY = os.getenv("YOUTH_POLICY_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
-# 🌟 새로운 JSON API 엔드포인트 (필요시 최신 주소로 변경하세요)
+# 🌟 새로운 JSON API 엔드포인트
 YOUTH_CENTER_URL = "https://www.youthcenter.go.kr/opi/empList.do"
 
 # 3. Supabase 클라이언트 초기화
@@ -137,16 +137,16 @@ def fetch_youth_data():
     page = 1
     display = 100  
     total_saved = 0
+    consecutive_fails = 0 # 🌟 연속 실패 카운터
 
     while True:
         print(f"\n🔄 청년정책 {page}페이지 수집 중...")
         
-        # 🌟 API 파라미터 세팅 (문서에 따라 pageNum, pageSize 등 이름이 다를 수 있으니 유의)
+        # 🌟 API 파라미터 세팅
         params = {
             "openApiVcyKey": YOUTH_API_KEY, 
             "display": display, 
-            "pageIndex": page,
-            # "returnType": "json" # 필요한 경우 주석 해제
+            "pageIndex": page
         }
 
         max_retries = 3
@@ -155,13 +155,16 @@ def fetch_youth_data():
 
         for attempt in range(max_retries):
             try:
-                # 🌟 urllib 대신 강력하고 편한 requests로 통신 엔진 교체 (SSL 에러 자동 방어)
                 response = requests.get(YOUTH_CENTER_URL, params=params, timeout=45, verify=False)
                 
                 if response.status_code == 200:
-                    data = response.json() # 🌟 XML이 아닌 JSON으로 해독!
-                    fetch_success = True
-                    break
+                    try:
+                        data = response.json() 
+                        fetch_success = True
+                        break
+                    except Exception as e:
+                        print(f"⚠️ JSON 파싱 실패: {e}")
+                        print(response.text[:200])
                 elif response.status_code == 403:
                     print("❌ 403 Forbidden: 서버 접근 차단!")
                     break
@@ -169,61 +172,64 @@ def fetch_youth_data():
                     print(f"⚠️ 비정상 응답 코드: {response.status_code}")
                     
             except Exception as e:
-                print(f"⚠️ API 오류 (시도: {attempt + 1}/{max_retries}): {e}")
-                if attempt < max_retries - 1:
-                    time.sleep(5)
+                print(f"⚠️ API 오류 (시도 {attempt + 1}): {e}")
+                time.sleep(5)
 
+        # 🚨 들여쓰기(Indentation) 완벽하게 수정됨
         if not fetch_success or not data:
-            print(f"❌ {page}페이지 수집 실패. 다음으로 넘어갑니다.")
+            print(f"❌ {page}페이지 수집 실패.")
+            consecutive_fails += 1
+            if consecutive_fails >= 3:
+                print("🚨 3회 연속 실패. 종료")
+                break
             page += 1
             continue
-
-        # 🌟 창현이가 준 '예시 결과 JSON.js' 구조 반영
-        result_data = data.get("result", {})
-        youth_list = result_data.get("youthPolicyList", [])
-        
-        if not youth_list:
-            print("🏁 청년정책 데이터를 모두 긁어왔습니다!")
-            break
-            
-        policies = []
-        for p in youth_list:
-            # CSV 코드표 반영: 제공기관그룹코드(pvsnInstGroupCd) 0054001=중앙부처, 0054002=지자체
-            provider_code = p.get("pvsnInstGroupCd", "")
-            provider_name = "중앙부처" if provider_code == "0054001" else ("지자체" if provider_code == "0054002" else "청년정책")
-            
-            # 대분류 + 중분류 합쳐서 카테고리 생성
-            category_name = f"{p.get('lclsfNm', '')} > {p.get('mclsfNm', '')}".strip(" > ")
-
-            policies.append({
-                "id": p.get("plcyNo", ""),                        
-                "title": p.get("plcyNm", "이름 없음"),      
-                "provider": provider_name, 
-                "category": category_name or "청년정책",          
-                "target_audience": p.get("ptcpPrpTrgtCn", ""), 
-                "age_req": p.get("ageInfo", ""),                
-                "income_req": "",                               
-                "region_req": "",                
-                # 정책설명(plcyExplnCn)과 지원내용(plcySprtCn) 통합
-                "summary": f"{p.get('plcyExplnCn', '')}\n\n[지원내용]\n{p.get('plcySprtCn', '')}".strip(), 
-                "url": p.get("rqutUrla", ""),                    
-                "deadline": p.get("aplyPrdSeCd", "상시/기간확인"),              
-                "is_active": True,                              
-                "updated_at": datetime.utcnow().isoformat() # 🌟 치명적 DB 에러 방지!                            
-            })
-
-        is_success = sync_to_supabase(policies)
-        if is_success:
-            total_saved += len(policies)
         else:
-            print(f"⚠️ {page}페이지 DB 저장 중 일부 문제가 발생했지만 수집을 계속합니다.")
+            consecutive_fails = 0
+            
+            # 🌟 창현이가 준 '예시 결과 JSON.js' 구조 반영
+            result_data = data.get("result", {})
+            youth_list = result_data.get("youthPolicyList", [])
+            
+            if not youth_list:
+                print("🏁 청년정책 데이터를 모두 긁어왔습니다!")
+                break
+                
+            policies = []
+            for p in youth_list:
+                provider_code = p.get("pvsnInstGroupCd", "")
+                provider_name = "중앙부처" if provider_code == "0054001" else ("지자체" if provider_code == "0054002" else "청년정책")
+                
+                category_name = f"{p.get('lclsfNm', '')} > {p.get('mclsfNm', '')}".strip(" > ")
 
-        time.sleep(1.5)
-        page += 1
+                policies.append({
+                    "id": p.get("plcyNo", ""),                        
+                    "title": p.get("plcyNm", "이름 없음"),      
+                    "provider": provider_name, 
+                    "category": category_name or "청년정책",          
+                    "target_audience": p.get("ptcpPrpTrgtCn", ""), 
+                    "age_req": p.get("ageInfo", ""),                
+                    "income_req": "",                               
+                    "region_req": "",                
+                    "summary": f"{p.get('plcyExplnCn', '')}\n\n[지원내용]\n{p.get('plcySprtCn', '')}".strip(), 
+                    "url": p.get("rqutUrla", ""),                    
+                    "deadline": p.get("aplyPrdSeCd", "상시/기간확인"),              
+                    "is_active": True,                              
+                    "updated_at": datetime.utcnow().isoformat() 
+                })
+
+            is_success = sync_to_supabase(policies)
+            if is_success:
+                total_saved += len(policies)
+            else:
+                print(f"⚠️ {page}페이지 DB 저장 중 일부 문제가 발생했지만 수집을 계속합니다.")
+
+            time.sleep(1.5)
+            page += 1
 
     print(f"🎉 [청년 파이프라인] 총 {total_saved}개 동기화 완료!\n")
 
 if __name__ == "__main__":
     import urllib3
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning) # SSL 경고 무시
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning) 
     fetch_youth_data()
