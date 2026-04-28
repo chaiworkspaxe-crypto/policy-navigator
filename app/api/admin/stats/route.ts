@@ -1,54 +1,55 @@
+// app/api/admin/stats/route.ts — 전체 교체
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { checkAdmin } from '@/app/api/admin/_lib/checkAdmin';
 
-const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
-
-// 🌟 관리자 권한 체크 헬퍼 함수
-function checkAdmin(req: Request) {
-  // TODO: 실제 서비스에서는 쿠키(Cookie)나 Authorization 헤더를 통한 토큰 검증 로직을 구현하세요.
-  // 예: return req.headers.get('authorization') === `Bearer ${process.env.ADMIN_SECRET}`;
-  
-  // 현재 프론트엔드(AdminDashboard)에서 별도의 헤더 없이 호출하고 있으므로 임시로 true를 반환합니다.
-  return true; 
-}
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!, 
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
 
 export async function GET(req: Request) {
-  // 🌟 관리자 권한 검증 적용
   if (!checkAdmin(req)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
   try {
-    // 1. 전체 유저 수 (중복 제거)
-    const { count: userCount } = await supabase
-      .from('chat_threads')
-      .select('user_id', { count: 'exact', head: true });
+    const todayKST = new Date().toLocaleDateString('ko-KR', { 
+      timeZone: 'Asia/Seoul',
+      year: 'numeric', month: '2-digit', day: '2-digit'
+    }).replace(/\./g, '-').replace(/ /g, '').replace(/-$/, '');
 
-    // 2. 전체 대화방 수
-    const { count: threadCount } = await supabase
-      .from('chat_threads')
-      .select('*', { count: 'exact', head: true });
-
-    // 3. 전체 메시지 수
-    const { count: messageCount } = await supabase
-      .from('chat_messages')
-      .select('*', { count: 'exact', head: true });
-
-    // 4. 최근 7일간 활성 유저 (예시 로직)
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    const { count: activeUserCount } = await supabase
-      .from('chat_threads')
-      .select('user_id', { count: 'exact', head: true })
-      .gte('created_at', sevenDaysAgo.toISOString());
+    // 병렬 쿼리 (Promise.all로 동시 실행 — 응답 속도 ↑)
+    const [
+      { data: distinctUsers },
+      { count: threadCount },
+      { data: blockedToday },
+      { data: avgDepth },
+      { data: regionRanking },
+      { data: ageDistribution },
+      { data: timeTraffic },
+    ] = await Promise.all([
+      supabase.rpc('admin_distinct_users'),
+      supabase.from('chat_threads').select('*', { count: 'exact', head: true }),
+      supabase.rpc('admin_blocked_today', { p_limit: 4 }),
+      supabase.rpc('admin_avg_depth'),
+      supabase.rpc('admin_region_ranking'),
+      supabase.rpc('admin_age_distribution'),
+      supabase.rpc('admin_time_traffic'),
+    ]);
 
     return NextResponse.json({
       ok: true,
       data: {
-        total_users: userCount || 0,
+        total_users: Number(distinctUsers) || 0,
         total_threads: threadCount || 0,
-        total_messages: messageCount || 0,
-        active_users_7d: activeUserCount || 0,
+        blocked_today: Number(blockedToday) || 0,
+        today_date: todayKST,
+        avg_conversation_depth: Number(avgDepth) || 0,
+        region_ranking: regionRanking || [],
+        age_distribution: ageDistribution || [],
+        time_traffic: timeTraffic || [],
+        top_keywords: [],   // Phase 2에서 user_message 분석으로 추가 예정
       }
     });
   } catch (error: any) {
