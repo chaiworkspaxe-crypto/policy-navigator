@@ -122,9 +122,12 @@ export default function Home() {
     document.documentElement.classList.add('dark');
   }, []);
 
+  // 🌟 [수정된 부분] loading 중엔 자동 새로고침 안 함 (race condition 방어)
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && currentThreadId && userId) {
+      if (document.visibilityState === 'visible' 
+          && currentThreadId && userId 
+          && !loading) {  // ← 스트리밍 중엔 새로고침 금지
         api.loadMessages(userId, currentThreadId)
           .then((reloadedMessages) => {
             if (reloadedMessages.length > 0) setMessages(reloadedMessages);
@@ -134,11 +137,18 @@ export default function Home() {
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, [currentThreadId, userId]);
+  }, [currentThreadId, userId, loading]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, aiStatus]);
+
+  // 🌟 [신규 추가] 사용자가 답변 받기 시작하면 백그라운드에서 html-to-image 미리 로드 (딜레이 방지)
+  useEffect(() => {
+    if (messages.length > 0) {
+      import("html-to-image");  // prefetch (await 없이)
+    }
+  }, [messages.length]);
 
   const toggleTheme = () => {
     setIsDarkMode(!isDarkMode);
