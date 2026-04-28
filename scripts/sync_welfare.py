@@ -216,6 +216,8 @@ def fetch_bokjiro_data() -> int:
         for attempt in range(max_retries):
             try:
                 response = requests.get(BOKJIRO_URL, params=params, timeout=45)
+                print("응답 상태:", response.status_code)
+                print("응답 내용:", response.text[:500])
                 if response.status_code == 400:
                     break
                 response.raise_for_status()
