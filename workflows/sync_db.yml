@@ -1,8 +1,8 @@
-name: Daily Welfare Data Sync
+name: Daily Welfare & Youth Data Sync
 
 on:
   schedule:
-    - cron: '0 19 * * *'
+    - cron: '0 19 * * *'   # 매일 KST 새벽 4시
   workflow_dispatch:
 
 jobs:
@@ -22,7 +22,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests supabase python-dotenv langchain-openai duckduckgo-search
+          pip install requests supabase python-dotenv langchain-openai openai
 
       - name: Run Welfare Sync (Bojogeum & Bokjiro)
         env:
@@ -34,7 +34,7 @@ jobs:
           python scripts/sync_welfare.py
 
       - name: Run Youth Policy Sync
-        if: always()
+        if: always()              # welfare 실패해도 youth는 실행
         env:
           YOUTH_POLICY_API_KEY: ${{ secrets.YOUTH_POLICY_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
