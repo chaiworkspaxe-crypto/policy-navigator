@@ -99,6 +99,25 @@ export async function POST(req: Request) {
   try {
     const { messages, userId, threadId } = await req.json();
 
+    // ✅ user 메시지를 요청 시작 시점에 즉시 저장 (스트리밍과 별개)
+    if (userId && threadId && messages.length > 0) {
+      const lastUserMessage = messages[messages.length - 1].content;
+      const now = new Date().toISOString();
+      try {
+        await supabase.from('chat_messages').insert({
+          thread_id: threadId,
+          user_id: userId,
+          role: 'user',
+          content: lastUserMessage,
+          created_at: now,
+          updated_at: now,
+        });
+      } catch (e) {
+        console.error('user msg save failed:', e);
+        // 사용자 경험을 위해 에러로 막진 않음 — 채팅은 계속 진행
+      }
+    }
+
     // ==============================================================================
     // 🤖 1. 에이전트 실행 (파이썬의 AgentExecutor 완벽 대체)
     // ==============================================================================
@@ -178,27 +197,17 @@ export async function POST(req: Request) {
       },
       // 🌟 [수술 완료] DB 저장 시 updated_at 누락 에러 완벽 차단!
       onFinish: async ({ text }) => {
-        if (userId && threadId) {
+        if (userId && threadId && text) {
+          // ✅ 이제 assistant 메시지만 저장
+          const now = new Date().toISOString(); // 현재 시간 생성!
           try {
-            const lastUserMessage = messages[messages.length - 1].content;
-            const now = new Date().toISOString(); // 현재 시간 생성!
-            
-            await supabase.from('chat_messages').insert({
-              thread_id: threadId,
-              user_id: userId,
-              role: 'user',
-              content: lastUserMessage,
-              created_at: now,
-              updated_at: now // <-- 🚨 추가됨!
-            });
-            
             await supabase.from('chat_messages').insert({
               thread_id: threadId,
               user_id: userId,
               role: 'assistant',
               content: text,
               created_at: now,
-              updated_at: now // <-- 🚨 추가됨!
+              updated_at: now 
             });
           } catch (dbError) {
             console.error("DB 저장 중 에러 발생:", dbError);
@@ -210,7 +219,6 @@ export async function POST(req: Request) {
     // ==============================================================================
     // 🌟 커스텀 JSON 스트리밍 엔진
     // ==============================================================================
-   // ... 생략 ...
     let fullAnswer = "";
     const customStream = new ReadableStream({
       async start(controller) {
@@ -250,7 +258,6 @@ export async function POST(req: Request) {
         controller.close();
       }
     });
-    // ... 생략 ...
 
     return new Response(customStream, {
       headers: { 'Content-Type': 'application/x-ndjson', 'Cache-Control': 'no-cache' }
