@@ -206,6 +206,7 @@ def fetch_bokjiro_data() -> int:
             "srchKeyCode": "001",   # ✅ 필수 파라미터 추가 (제목 기준 전체 목록 조회)
             "pageNo": page,
             "numOfRows": 100,
+            "_type": "xml"
         }
         
         max_retries = 3
