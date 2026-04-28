@@ -3,7 +3,21 @@ import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
-export async function GET() {
+// 🌟 관리자 권한 체크 헬퍼 함수
+function checkAdmin(req: Request) {
+  // TODO: 실제 서비스에서는 쿠키(Cookie)나 Authorization 헤더를 통한 토큰 검증 로직을 구현하세요.
+  // 예: return req.headers.get('authorization') === `Bearer ${process.env.ADMIN_SECRET}`;
+  
+  // 현재 프론트엔드(AdminDashboard)에서 별도의 헤더 없이 호출하고 있으므로 임시로 true를 반환합니다.
+  return true; 
+}
+
+export async function GET(req: Request) {
+  // 🌟 관리자 권한 검증 적용
+  if (!checkAdmin(req)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
   try {
     // 1. 전체 유저 수 (중복 제거)
     const { count: userCount } = await supabase
