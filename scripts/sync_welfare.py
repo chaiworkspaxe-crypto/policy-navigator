@@ -193,7 +193,7 @@ def fetch_bokjiro_data() -> int:
     saved_count = 0
     consecutive_fails = 0 
     
-    decoded_key = urllib.parse.unquote(PUBLIC_DATA_KEY) if PUBLIC_DATA_KEY else ""
+    decoded_key = PUBLIC_DATA_KEY
 
     while True:
         print(f"🔄 복지로 - {page}페이지 수집 요청 중...")
@@ -202,9 +202,10 @@ def fetch_bokjiro_data() -> int:
         # 수정 후: L(목록 조회) 타입 명시
         params = {
             "serviceKey": decoded_key,
-            "callTp": "L",          # 가이드라인에 따른 필수 파라미터 추가
+            "callTp": "L",          # ✅ 필수 파라미터 복원 (에러 코드 10의 원인이었음)
+            "srchKeyCode": "001",   # ✅ 필수 파라미터 추가 (제목 기준 전체 목록 조회)
             "pageNo": page,
-            "numOfRows": 100
+            "numOfRows": 100,
         }
         
         max_retries = 3
