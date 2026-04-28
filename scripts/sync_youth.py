@@ -2,6 +2,7 @@ import os
 import time
 import requests
 import hashlib
+import xml.etree.ElementTree as ET  # 🌟 피드백 반영: XML 파싱용 라이브러리 추가
 from datetime import datetime, timedelta
 from supabase import create_client, Client
 from dotenv import load_dotenv
@@ -19,7 +20,6 @@ YOUTH_API_KEY = os.getenv("YOUTH_POLICY_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
-# 🌟 새로운 JSON API 엔드포인트
 YOUTH_CENTER_URL = "https://www.youthcenter.go.kr/opi/empList.do"
 
 # 3. Supabase 클라이언트 초기화
@@ -121,7 +121,7 @@ def sync_to_supabase(policies):
 # 🟢 메인 수집 함수
 # ==============================================================================
 def fetch_youth_data():
-    print("🚀 [청년 파이프라인] 온라인청년센터 데이터 수집 시작 (JSON 스마트 모드)")
+    print("🚀 [청년 파이프라인] 온라인청년센터 데이터 수집 시작 (JSON/XML 하이브리드 모드)")
     
     if not YOUTH_API_KEY:
         print("❌ YOUTH_POLICY_API_KEY가 없습니다.")
@@ -131,16 +131,12 @@ def fetch_youth_data():
     display = 100  
     total_saved = 0
     consecutive_fails = 0 
-
-    # 🌟 피드백 반영: 헤더 추가 (403 Forbidden 및 접근 거부 방어)
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
+    empty_page_count = 0  # 🌟 무한루프 방지용 (빈 페이지 연속 카운터)
 
     while True:
         print(f"\n🔄 청년정책 {page}페이지 수집 중...")
         
-        # 🌟 피드백 반영: returnType json 명시
+        # 🌟 피드백 반영 1: returnType json 추가
         params = {
             "openApiVcyKey": YOUTH_API_KEY, 
             "display": display, 
@@ -150,33 +146,58 @@ def fetch_youth_data():
 
         max_retries = 3
         fetch_success = False
-        data = None
+        youth_list = []
 
         for attempt in range(max_retries):
             try:
-                # 헤더 장착 완료
-                response = requests.get(YOUTH_CENTER_URL, params=params, headers=headers, timeout=45)
+                response = requests.get(YOUTH_CENTER_URL, params=params, timeout=45)
                 
                 if response.status_code == 200:
-                    # 🌟 피드백 반영: 무엇을 뱉어내는지 RAW 데이터부터 무조건 확인!
-                    print("🔍 RAW RESPONSE (최초 500자):", response.text[:500])
+                    # 🌟 피드백 반영 2: 로그 도배 방지 (1페이지에서만 RAW 출력)
+                    if page == 1:
+                        print("🔍 1페이지 RAW RESPONSE:", response.text[:500])
                     
                     try:
-                        data = response.json() 
-                        
-                        if not isinstance(data, dict):
-                            print(f"⚠️ JSON 형식이 아님 (HTML 반환 의심됨): {response.text[:100]}")
-                            continue
-                            
-                        # 🌟 피드백 반영: 데이터 구조 엄격 검증
-                        if "result" not in data and "youthPolicyList" not in data:
-                            print(f"⚠️ 예상과 다른 응답 구조 (API 파라미터 확인 필요): {str(data)[:200]}")
-                            continue
-
+                        # 1차 시도: JSON 파싱
+                        data = response.json()
+                        if "result" in data:
+                            youth_list = data["result"].get("youthPolicyList", [])
+                        else:
+                            youth_list = data.get("youthPolicyList", [])
                         fetch_success = True
                         break
-                    except Exception as e:
-                        print(f"⚠️ JSON 파싱 에러 (XML이나 HTML을 줬을 확률 높음): {e}")
+                        
+                    except Exception as json_err:
+                        # 🌟 피드백 반영 3: JSON 실패 시 XML 파싱(Fallback) 완벽 구현
+                        print("⚠️ JSON 파싱 실패 → XML 파싱 시도로 전환!")
+                        try:
+                            root = ET.fromstring(response.text)
+                            youth_list = []
+                            
+                            # API XML 구조에 따라 <emp> 또는 <youthPolicyList> 로 반복
+                            # 온라인청년센터 공식 XML 태그 기준: <emp> 태그 내부에 정책들이 있음
+                            items = root.findall(".//emp") if root.findall(".//emp") else root.findall(".//youthPolicyList")
+                            
+                            for item in items:
+                                youth_list.append({
+                                    "pvsnInstGroupCd": item.findtext("pvsnInstGroupCd", ""),
+                                    "lclsfNm": item.findtext("lclsfNm", ""),
+                                    "mclsfNm": item.findtext("mclsfNm", ""),
+                                    "plcyNo": item.findtext("plcyNo", ""),
+                                    "plcyNm": item.findtext("plcyNm", "이름 없음"),
+                                    "ptcpPrpTrgtCn": item.findtext("ptcpPrpTrgtCn", ""),
+                                    "ageInfo": item.findtext("ageInfo", ""),
+                                    "plcyExplnCn": item.findtext("plcyExplnCn", ""),
+                                    "plcySprtCn": item.findtext("plcySprtCn", ""),
+                                    "rqutUrla": item.findtext("rqutUrla", ""),
+                                    "aplyPrdSeCd": item.findtext("aplyPrdSeCd", "상시/기간확인")
+                                })
+                            
+                            fetch_success = True
+                            break
+                        except Exception as xml_err:
+                            print(f"❌ XML 파싱도 실패: {xml_err}")
+                
                 elif response.status_code == 403:
                     print("❌ 403 Forbidden: 서버 접근 차단!")
                     break
@@ -187,26 +208,29 @@ def fetch_youth_data():
                 print(f"⚠️ API 통신 오류 (시도 {attempt + 1}): {e}")
                 time.sleep(5)
 
-        if not fetch_success or not data:
-            print(f"❌ {page}페이지 수집 실패.")
+        if not fetch_success:
+            print(f"❌ {page}페이지 통신 및 파싱 최종 실패.")
             consecutive_fails += 1
             if consecutive_fails >= 3:
-                print("🚨 3회 연속 실패. 서버 장애 혹은 구조 변경 판단 후 수집 종료")
+                print("🚨 3회 연속 실패. 수집을 강제 종료합니다.")
                 break
             page += 1
             continue
         else:
             consecutive_fails = 0
             
-            # API마다 키 구조가 다를 수 있으므로 유연하게 대처
-            if "result" in data:
-                youth_list = data["result"].get("youthPolicyList", [])
-            else:
-                youth_list = data.get("youthPolicyList", [])
-            
+            # 🌟 피드백 반영 4: 공격적인 종료 방지 (빈 페이지 무시하고 다음 페이지로)
             if not youth_list:
-                print("🏁 청년정책 데이터가 비어있습니다. (수집 완료 또는 API 파라미터 문제)")
-                break
+                empty_page_count += 1
+                print(f"⚠️ 빈 페이지 발견 ({empty_page_count}/3) → 다음 페이지 확인")
+                if empty_page_count >= 3:
+                    # 빈 페이지가 3번 연속 나오면 진짜 데이터가 끝났다고 판단하여 무한루프 탈출
+                    print("🏁 3회 연속 빈 페이지. 청년정책 수집을 최종 완료합니다!")
+                    break
+                page += 1
+                continue
+            else:
+                empty_page_count = 0  # 데이터가 있으면 카운터 초기화
                 
             policies = []
             for p in youth_list:
