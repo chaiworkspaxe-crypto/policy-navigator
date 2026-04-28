@@ -272,9 +272,13 @@ export default function Home() {
     try {
       await api.saveThreadInputs(userId, targetThreadId, { selected_city: city, selected_district: district, selected_dong: dong, birth_year: birthYear, extra_info: extraInfo });
 
+      const abortController = new AbortController();
+      const timeoutId = setTimeout(() => abortController.abort(), 90000); // 90초
+
       // 🌟 2. /api/chat 내부 주소로 변경 및 messages, userId, threadId 전달
       const response = await fetch(`/api/chat`, {
         method: 'POST', 
+        signal: abortController.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: newMessages,
@@ -282,6 +286,8 @@ export default function Home() {
           threadId: targetThreadId  // 🌟 추가됨: 현재 대화방 ID
         }),
       });
+
+      clearTimeout(timeoutId);
 
       if (response.status === 403) {
         const errorData = await response.json();
