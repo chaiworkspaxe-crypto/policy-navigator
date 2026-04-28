@@ -1,4 +1,3 @@
-// app/api/admin/policies/[id]/route.ts (신규)
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { checkAdmin } from '@/app/api/admin/_lib/checkAdmin';
@@ -9,31 +8,39 @@ const supabase = createClient(
 );
 
 // 비활성화 (soft delete)
+// 🌟 Next.js 15+ 문법: params를 Promise로 감쌉니다.
 export async function DELETE(
   req: Request, 
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   if (!checkAdmin(req)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
   
+  // 🌟 비동기로 파라미터를 꺼냅니다.
+  const { id } = await params;
+
   const { error } = await supabase
     .from('policies')
     .update({ is_active: false, updated_at: new Date().toISOString() })
-    .eq('id', params.id);
+    .eq('id', id); // 🌟 params.id 대신 추출한 id 사용
     
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });
 }
 
 // 수정
+// 🌟 Next.js 15+ 문법: params를 Promise로 감쌉니다.
 export async function PATCH(
   req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   if (!checkAdmin(req)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
+  
+  // 🌟 비동기로 파라미터를 꺼냅니다.
+  const { id } = await params;
   
   const body = await req.json();
   // 안전한 필드만 화이트리스트
@@ -47,7 +54,7 @@ export async function PATCH(
   const { error } = await supabase
     .from('policies')
     .update(update)
-    .eq('id', params.id);
+    .eq('id', id); // 🌟 params.id 대신 추출한 id 사용
     
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });
