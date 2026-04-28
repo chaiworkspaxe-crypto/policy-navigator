@@ -193,7 +193,7 @@ def fetch_bokjiro_data() -> int:
     saved_count = 0
     consecutive_fails = 0 
     
-    decoded_key = PUBLIC_DATA_KEY
+    base_url = f"{BOKJIRO_URL}?serviceKey={PUBLIC_DATA_KEY}"
 
     while True:
         print(f"🔄 복지로 - {page}페이지 수집 요청 중...")
@@ -201,12 +201,10 @@ def fetch_bokjiro_data() -> int:
         # 🌟 [수술 완료] V001 최신 API는 callTp를 받지 않습니다. 깔끔하게 지웠습니다!
         # 수정 후: L(목록 조회) 타입 명시
         params = {
-            "serviceKey": decoded_key,
-            "callTp": "L",          # ✅ 필수 파라미터 복원 (에러 코드 10의 원인이었음)
-            "srchKeyCode": "001",   # ✅ 필수 파라미터 추가 (제목 기준 전체 목록 조회)
+            "callTp": "L",
+            "srchKeyCode": "001",
             "pageNo": page,
-            "numOfRows": 100,
-            "_type": "xml"
+            "numOfRows": 100
         }
         
         max_retries = 3
@@ -215,7 +213,12 @@ def fetch_bokjiro_data() -> int:
 
         for attempt in range(max_retries):
             try:
-                response = requests.get(BOKJIRO_URL, params=params, timeout=45)
+                response = requests.get(
+                    base_url,
+                    params=params,
+                    headers={"User-Agent": "Mozilla/5.0"},
+                    timeout=45
+                )
                 print("응답 상태:", response.status_code)
                 print("응답 내용:", response.text[:500])
                 if response.status_code == 400:
@@ -223,7 +226,16 @@ def fetch_bokjiro_data() -> int:
                 response.raise_for_status()
                 
                 xml_data = response.text
-                root = ET.fromstring(xml_data)
+                if "OpenAPI_ServiceResponse" in xml_data:
+                    print("🚨 API 에러 응답:", xml_data[:300])
+                    break
+                try:
+                    root = ET.fromstring(xml_data)
+                except Exception as e:
+                    print("❌ XML 파싱 실패:", e)
+                    fetch_success = False
+                    print(xml_data[:300])
+                    break
                 fetch_success = True
                 break
             except Exception as e:
