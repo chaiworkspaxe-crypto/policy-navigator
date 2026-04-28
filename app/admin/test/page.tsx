@@ -56,11 +56,13 @@ export default function AdminTestPage() {
     else document.documentElement.classList.add('dark');
   };
 
+  // 🌟 변경: 대화방 삭제 시 과거 URL 대신 내부 api 활용
   const handleDeleteThread = async (tid: string, e: React.MouseEvent) => {
     e.stopPropagation(); 
     if (!confirm("정말 이 대화 기록을 삭제하시겠습니까?")) return;
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/threads/${tid}?user_id=${userId}`, { method: 'DELETE' });
+      await api.deleteThread(userId, tid);
+      const res = { ok: true } as Response;
       if (res.ok) {
         await loadThreads(userId);
         if (currentThreadId === tid) {
@@ -137,19 +139,24 @@ export default function AdminTestPage() {
     const followUpText = query.trim();
     const optimisticUserMessage = isFollowUp ? followUpText : `📍 ${city} ${district} ${dong !== DEFAULT_DONG ? dong : ""} | 🎂 ${birthYear}년생 | 📝 ${extraInfo}`;
 
+    // 🌟 변경: 새로운 메시지 배열 생성 로직을 /api/chat 형태에 맞춤
+    const newMessages = [...messages, { role: "user" as const, content: optimisticUserMessage }];
+
     setLoading(true);
-    setMessages((prev) => [...prev, { role: "user", content: optimisticUserMessage }, { role: "assistant", content: "" }]);
+    setMessages([...newMessages, { role: "assistant" as const, content: "" }]);
     if (isFollowUp) setQuery("");
 
     try {
       await api.saveThreadInputs(userId, targetThreadId, { selected_city: city, selected_district: district, selected_dong: dong, birth_year: birthYear, extra_info: extraInfo });
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/chat/stream`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+      // 🌟 변경: /api/chat 내부 경로로 변경 및 body 페이로드 시그니처 맞춤
+      const response = await fetch('/api/chat', {
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_id: userId, thread_id: targetThreadId, city: isFollowUp ? undefined : city, district: isFollowUp ? undefined : district,
-          dong: isFollowUp ? undefined : dong === DEFAULT_DONG ? "" : dong, birth_year: isFollowUp ? undefined : birthYear,
-          extra_info: isFollowUp ? undefined : extraInfo, query: isFollowUp ? followUpText : undefined,
+          messages: newMessages,
+          userId: userId,
+          threadId: targetThreadId,
         }),
       });
 
