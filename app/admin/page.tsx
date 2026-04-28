@@ -12,7 +12,8 @@ export default function AdminDashboard() {
   const fetchStats = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/admin/stats`);
+      // 🌟 변경 후: 상대 경로(/api/...)를 사용하여 Next.js 내부 API를 직접 호출하도록 수정 완료!
+      const res = await fetch('/api/admin/stats');
       if (res.ok) {
         const data = await res.json();
         setStats(data.data);
