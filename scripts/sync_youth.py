@@ -1,4 +1,5 @@
 print("🚀 청년정책 스크립트 시작됨")
+print("API KEY:", os.getenv("YOUTH_POLICY_API_KEY"))
 import os
 import time
 import requests
