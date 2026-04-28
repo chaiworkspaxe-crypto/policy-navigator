@@ -2,13 +2,13 @@ import os
 import time
 import requests
 import hashlib
-import xml.etree.ElementTree as ET  # 🌟 피드백 반영: XML 파싱용 라이브러리 추가
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from langchain_openai import OpenAIEmbeddings
 
-# 맨 처음 환경변수부터 로드
+# 1. 맨 처음 환경변수부터 로드
 load_dotenv()
 
 print("🚀 청년정책 스크립트 시작됨")
@@ -26,6 +26,13 @@ YOUTH_CENTER_URL = "https://www.youthcenter.go.kr/opi/empList.do"
 supabase: Client = None
 if SUPABASE_URL and SUPABASE_KEY:
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# 🌟 창현 피드백 1️⃣: 임베딩 객체를 전역(Global)으로 한 번만 생성하여 메모리/속도 최적화!
+embeddings = None
+try:
+    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+except Exception as e:
+    print(f"❌ OpenAI 초기화 에러: {e}")
 
 # ==============================================================================
 # 🌟 지문 필터링(비용 절감) + DB 불사조 로직
@@ -78,19 +85,20 @@ def sync_to_supabase(policies):
         return True 
 
     print(f"🤖 {len(policies)}개 중 변경된 {len(needs_embedding)}개만 임베딩 변환 중...")
-    try:
-        embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-        texts_to_embed = [
-            f"정책명: {d['title']} 주관: {d['provider']} 카테고리: {d['category']} 내용: {d['summary']}" 
-            for d in needs_embedding
-        ]
-        vectors = embeddings.embed_documents(texts_to_embed)
-        
-        for i, d in enumerate(needs_embedding):
-            d["embedding"] = vectors[i]
-    except Exception as e:
-        print(f"❌ 임베딩 변환 실패!: {e}")
-        return False
+    
+    if embeddings:
+        try:
+            texts_to_embed = [
+                f"정책명: {d['title']} 주관: {d['provider']} 카테고리: {d['category']} 내용: {d['summary']}" 
+                for d in needs_embedding
+            ]
+            vectors = embeddings.embed_documents(texts_to_embed)
+            
+            for i, d in enumerate(needs_embedding):
+                d["embedding"] = vectors[i]
+        except Exception as e:
+            print(f"❌ 임베딩 변환 실패!: {e}")
+            return False
 
     CHUNK_SIZE = 50  
     total_new_data = len(needs_embedding)
@@ -105,13 +113,17 @@ def sync_to_supabase(policies):
                 db_success = True
                 break
             except Exception as e:
-                print(f"    ⚠️ DB 조각 저장 지연 (시도 {db_attempt+1}/3) - 3초 후 재시도...")
-                time.sleep(3)
+                # 🌟 창현 피드백 2️⃣: 지수 백오프 적용 (1초 -> 2초 -> 4초 대기)
+                wait_time = 2 ** db_attempt
+                print(f"    ⚠️ DB 조각 저장 지연 (시도 {db_attempt+1}/3) - {wait_time}초 후 재시도...")
+                time.sleep(wait_time)
                 
         if db_success:
             print(f"    ㄴ 변경 조각 저장 완료: {min(i + CHUNK_SIZE, total_new_data)} / {total_new_data}")
         else:
-            print(f"    ❌ DB 조각 저장 최종 실패.")
+            # 🌟 창현 피드백 3️⃣: DB 실패 시 데이터 유실 방지용 로그 출력
+            failed_titles = [item.get("title", "") for item in chunk[:3]]
+            print(f"    ❌ DB 조각 저장 최종 실패! 유실 데이터 일부: {failed_titles} ... 등 {len(chunk)}개")
             
         time.sleep(2) 
         
@@ -131,12 +143,16 @@ def fetch_youth_data():
     display = 100  
     total_saved = 0
     consecutive_fails = 0 
-    empty_page_count = 0  # 🌟 무한루프 방지용 (빈 페이지 연속 카운터)
+    empty_page_count = 0  
+
+    # 🌟 창현 피드백 4️⃣: 봇 차단 방지용 User-Agent 장착
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
 
     while True:
         print(f"\n🔄 청년정책 {page}페이지 수집 중...")
         
-        # 🌟 피드백 반영 1: returnType json 추가
         params = {
             "openApiVcyKey": YOUTH_API_KEY, 
             "display": display, 
@@ -150,15 +166,13 @@ def fetch_youth_data():
 
         for attempt in range(max_retries):
             try:
-                response = requests.get(YOUTH_CENTER_URL, params=params, timeout=45)
+                response = requests.get(YOUTH_CENTER_URL, params=params, headers=headers, timeout=45)
                 
                 if response.status_code == 200:
-                    # 🌟 피드백 반영 2: 로그 도배 방지 (1페이지에서만 RAW 출력)
                     if page == 1:
                         print("🔍 1페이지 RAW RESPONSE:", response.text[:500])
                     
                     try:
-                        # 1차 시도: JSON 파싱
                         data = response.json()
                         if "result" in data:
                             youth_list = data["result"].get("youthPolicyList", [])
@@ -168,15 +182,15 @@ def fetch_youth_data():
                         break
                         
                     except Exception as json_err:
-                        # 🌟 피드백 반영 3: JSON 실패 시 XML 파싱(Fallback) 완벽 구현
                         print("⚠️ JSON 파싱 실패 → XML 파싱 시도로 전환!")
                         try:
                             root = ET.fromstring(response.text)
                             youth_list = []
                             
-                            # API XML 구조에 따라 <emp> 또는 <youthPolicyList> 로 반복
-                            # 온라인청년센터 공식 XML 태그 기준: <emp> 태그 내부에 정책들이 있음
                             items = root.findall(".//emp") if root.findall(".//emp") else root.findall(".//youthPolicyList")
+                            
+                            # 🌟 창현 피드백 6️⃣: XML 태그 탐색 결과 로그 추가
+                            print(f"🔍 [XML Fallback] 탐색된 정책 수: {len(items)}")
                             
                             for item in items:
                                 youth_list.append({
@@ -205,8 +219,10 @@ def fetch_youth_data():
                     print(f"⚠️ 비정상 응답 코드: {response.status_code}")
                     
             except Exception as e:
-                print(f"⚠️ API 통신 오류 (시도 {attempt + 1}): {e}")
-                time.sleep(5)
+                # 🌟 창현 피드백 2️⃣: 통신 장애 시 지수 백오프 적용
+                wait_time = 2 ** attempt
+                print(f"⚠️ API 통신 오류 (시도 {attempt + 1}): {e} -> {wait_time}초 대기")
+                time.sleep(wait_time)
 
         if not fetch_success:
             print(f"❌ {page}페이지 통신 및 파싱 최종 실패.")
@@ -219,25 +235,26 @@ def fetch_youth_data():
         else:
             consecutive_fails = 0
             
-            # 🌟 피드백 반영 4: 공격적인 종료 방지 (빈 페이지 무시하고 다음 페이지로)
             if not youth_list:
                 empty_page_count += 1
                 print(f"⚠️ 빈 페이지 발견 ({empty_page_count}/3) → 다음 페이지 확인")
                 if empty_page_count >= 3:
-                    # 빈 페이지가 3번 연속 나오면 진짜 데이터가 끝났다고 판단하여 무한루프 탈출
                     print("🏁 3회 연속 빈 페이지. 청년정책 수집을 최종 완료합니다!")
                     break
                 page += 1
                 continue
             else:
-                empty_page_count = 0  # 데이터가 있으면 카운터 초기화
+                empty_page_count = 0  
                 
             policies = []
             for p in youth_list:
                 provider_code = p.get("pvsnInstGroupCd", "")
                 provider_name = "중앙부처" if provider_code == "0054001" else ("지자체" if provider_code == "0054002" else "청년정책")
-                
                 category_name = f"{p.get('lclsfNm', '')} > {p.get('mclsfNm', '')}".strip(" > ")
+
+                # 🌟 창현 피드백 5️⃣: Summary(지원내용) 1000자 제한으로 임베딩 토큰 낭비 방지!
+                raw_summary = f"{p.get('plcyExplnCn', '')}\n\n[지원내용]\n{p.get('plcySprtCn', '')}".strip()
+                safe_summary = raw_summary[:1000]
 
                 policies.append({
                     "id": p.get("plcyNo", ""),                        
@@ -248,7 +265,7 @@ def fetch_youth_data():
                     "age_req": p.get("ageInfo", ""),                
                     "income_req": "",                               
                     "region_req": "",                
-                    "summary": f"{p.get('plcyExplnCn', '')}\n\n[지원내용]\n{p.get('plcySprtCn', '')}".strip(), 
+                    "summary": safe_summary, 
                     "url": p.get("rqutUrla", ""),                    
                     "deadline": p.get("aplyPrdSeCd", "상시/기간확인"),              
                     "is_active": True,                              
