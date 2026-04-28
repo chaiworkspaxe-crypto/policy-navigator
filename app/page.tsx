@@ -150,7 +150,8 @@ export default function Home() {
     e.stopPropagation(); 
     if (!confirm("정말 이 대화 기록을 삭제하시겠습니까?")) return;
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/threads/${tid}?user_id=${userId}`, { method: 'DELETE' });
+      await api.deleteThread(userId, tid);
+      const res = { ok: true } as Response;
       if (res.ok) {
         await loadThreads(userId);
         if (currentThreadId === tid) {
