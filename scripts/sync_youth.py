@@ -1,3 +1,4 @@
+print("🚀 청년정책 스크립트 시작됨")
 import os
 import time
 import requests
