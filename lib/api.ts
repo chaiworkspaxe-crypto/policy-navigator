@@ -3,7 +3,7 @@ import axios from 'axios';
 // 🌟 [핵심 수술 1] 파이썬 외부 주소를 버리고, Next.js 내부 API(/api)로 연결!
 const apiClient = axios.create({
   baseURL: '/api', 
-  timeout: 300000, 
+  timeout: 600000, 
 });
 
 export interface ThreadItem {
