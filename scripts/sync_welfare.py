@@ -199,8 +199,10 @@ def fetch_bokjiro_data() -> int:
         print(f"🔄 복지로 - {page}페이지 수집 요청 중...")
         
         # 🌟 [수술 완료] V001 최신 API는 callTp를 받지 않습니다. 깔끔하게 지웠습니다!
+        # 수정 후: L(목록 조회) 타입 명시
         params = {
             "serviceKey": decoded_key,
+            "callTp": "L",          # 가이드라인에 따른 필수 파라미터 추가
             "pageNo": page,
             "numOfRows": 100
         }
