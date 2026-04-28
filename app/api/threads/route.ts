@@ -16,12 +16,15 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const { user_id } = await req.json();
   const thread_id = uuidv4();
+  const now = new Date().toISOString(); // 🌟 현재 시간 직접 생성
   
-  // 🌟 시간 필드 빠짐 — DB가 DEFAULT now() 및 트리거로 자동 처리
+  // 🌟 DB가 튕겨내지 못하도록 시간 값을 강제로 넣어서 전송!
   const { error } = await supabase.from('chat_threads').insert({ 
     thread_id, 
     user_id, 
     title: '새 대화',
+    created_at: now, // 🌟 다시 추가
+    updated_at: now  // 🌟 다시 추가
   });
   
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
