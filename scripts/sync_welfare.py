@@ -1,9 +1,10 @@
 import os
 import time
 import requests
-import hashlib # 🌟 데이터 지문(Hash)을 만들기 위한 필수 라이브러리
-import urllib.parse # 🌟 [핵심 추가] 복지로 API 키 이중 인코딩 방지용
-from datetime import datetime, timedelta # 🌟 실제 시간 생성을 위해 추가
+import hashlib 
+import urllib.parse 
+import xml.etree.ElementTree as ET # 🌟 [수술 핵심] XML 데이터를 해독하기 위한 통역기 추가!
+from datetime import datetime, timedelta
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from langchain_openai import OpenAIEmbeddings
@@ -16,9 +17,8 @@ PUBLIC_DATA_KEY = os.getenv("PUBLIC_DATA_PORTAL_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
-# 🌟 보조금24 엔드포인트 세팅 (기존 유지)
+# 🌟 보조금24 & 복지로 API 엔드포인트 세팅
 BOJOGEUM_URL = "https://api.odcloud.kr/api/gov24/v3/serviceList"
-# 🚨 [복지로 수술 완료] Welfatedata 오타 수정 + HTTPS 적용 + V001 최신화!
 BOKJIRO_URL = "https://apis.data.go.kr/B554287/NationalWelfareInformationsV001/NationalWelfarelistV001"
 
 # 3. Supabase 클라이언트 초기화
@@ -29,7 +29,7 @@ if SUPABASE_URL and SUPABASE_KEY:
 def cleanup_zombie_policies(total_saved):
     """업데이트 된 지 3일 이상 지난(API에서 사라진) 마감 정책을 DB에서 삭제합니다."""
     if total_saved < 100:
-        print("⚠️ [안전장치 작동] 오늘 수집된 데이터가 너무 적어 청소를 생략합니다. (API 서버 확인 필요)")
+        print("⚠️ [안전장치 작동] 오늘 수집된 데이터가 너무 적어 청소를 생략합니다.")
         return
 
     print("🧹 [청소 닌자 출동] 마감된 좀비 정책 데이터 삭제를 시작합니다...")
@@ -37,29 +37,24 @@ def cleanup_zombie_policies(total_saved):
         
     try:
         three_days_ago = (datetime.utcnow() - timedelta(days=3)).isoformat()
-        
         response = supabase.table("policies").delete().lt("updated_at", three_days_ago).execute()
-        
         deleted_count = len(response.data) if response.data else 0
         print(f"✨ [청소 완료] 총 {deleted_count}개의 마감/예산소진 정책이 DB에서 영구 삭제되었습니다!")
     except Exception as e:
         print(f"❌ 청소 중 오류 발생: {e}")
 
 # ==============================================================================
-# 🌟 [핵심 수술 1&2] 지문 필터링(비용 절감) + DB 불사조 로직 융합!
+# 🌟 [핵심] 지문 필터링(비용 절감) + DB 불사조 로직
 # ==============================================================================
 def sync_to_supabase(policies):
     if not supabase:
-        print("❌ 에러: Supabase 환경변수(URL 또는 KEY)가 설정되지 않았습니다.")
+        print("❌ 에러: Supabase 환경변수 누락")
         return False
 
     formatted_data = []
     api_ids = []
-    
-    # 🌟 [에러 방어] DB가 튕겨내지 않도록 "now()" 문자열 대신 파이썬의 실제 리얼타임을 찍어줍니다!
     now_iso = datetime.utcnow().isoformat()
 
-    # 1️⃣ 데이터 규격화 및 '디지털 지문(Hash)' 생성
     for p in policies:
         pid = p.get("서비스ID") or p.get("id", "")
         title = p.get("서비스명") or p.get("title", "이름 없음")
@@ -68,7 +63,6 @@ def sync_to_supabase(policies):
         category = p.get("서비스분야") or p.get("category", "")
         url = p.get("상세조회URL") or p.get("url", "")
 
-        # 텍스트를 뭉쳐서 하나의 '지문' 생성
         content_str = f"{title}{provider}{category}{summary}"
         content_hash = hashlib.md5(content_str.encode('utf-8')).hexdigest()
 
@@ -80,20 +74,18 @@ def sync_to_supabase(policies):
             "category": category,
             "url": url,
             "content_hash": content_hash, 
-            "updated_at": now_iso # 🚨 실제 시간 적용 완료!
+            "updated_at": now_iso 
         })
         if pid: api_ids.append(pid)
 
-    # 2️⃣ Supabase DB에서 기존 지문 훑어오기
     db_hash_map = {}
     if api_ids:
         try:
             existing_records = supabase.table("policies").select("id, content_hash").in_("id", api_ids).execute()
             db_hash_map = {record["id"]: record.get("content_hash") for record in existing_records.data}
         except Exception as e:
-            print(f"⚠️ DB 지문 조회 에러 (일단 전부 업데이트합니다): {e}")
+            print(f"⚠️ DB 지문 조회 에러: {e}")
 
-    # 3️⃣ 새 데이터 or 내용이 바뀐 데이터만 필터링
     needs_embedding = []
     for data in formatted_data:
         pid = data["id"]
@@ -101,19 +93,14 @@ def sync_to_supabase(policies):
         if pid not in db_hash_map or db_hash_map[pid] != api_hash:
             needs_embedding.append(data)
 
-    # 4️⃣ 변경된 게 없다면 무료 패스!
     if not needs_embedding:
         print(f"    ⏩ {len(policies)}개 중 변경된 데이터 없음. (비용 0원 스킵!)")
-        return True # 문제없이 스킵한 것도 '성공' 처리
+        return True 
 
-    # 5️⃣ 골라낸 데이터만 OpenAI 결제(임베딩) 진행
     print(f"🤖 {len(policies)}개 중 변경된 {len(needs_embedding)}개만 임베딩 변환 중...")
     try:
         embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-        texts_to_embed = [
-            f"정책명: {d['title']} 주관: {d['provider']} 카테고리: {d['category']} 내용: {d['summary']}" 
-            for d in needs_embedding
-        ]
+        texts_to_embed = [f"정책명: {d['title']} 주관: {d['provider']} 카테고리: {d['category']} 내용: {d['summary']}" for d in needs_embedding]
         vectors = embeddings.embed_documents(texts_to_embed)
         
         for i, d in enumerate(needs_embedding):
@@ -122,7 +109,6 @@ def sync_to_supabase(policies):
         print(f"❌ 임베딩 변환 실패!: {e}")
         return False
 
-    # 6️⃣ [에러 방어] 5개씩 쪼개서 넣고, 타임아웃 나면 재시도(Retry)
     CHUNK_SIZE = 5  
     total_new_data = len(needs_embedding)
     
@@ -130,7 +116,6 @@ def sync_to_supabase(policies):
         chunk = needs_embedding[i : i + CHUNK_SIZE]
         db_success = False
         
-        # 🔥 한 조각당 3번씩 끈질기게 시도
         for db_attempt in range(3):
             try:
                 supabase.table("policies").upsert(chunk, on_conflict="id").execute()
@@ -143,14 +128,14 @@ def sync_to_supabase(policies):
         if db_success:
             print(f"    ㄴ 변경 조각 저장 완료: {min(i + CHUNK_SIZE, total_new_data)} / {total_new_data}")
         else:
-            print(f"    ❌ DB 조각 저장 최종 실패. 이 5개 데이터는 포기하고 넘어갑니다.")
+            print(f"    ❌ DB 조각 저장 최종 실패.")
             
-        time.sleep(2) # DB 숨 고르기
+        time.sleep(2) 
         
-    return True # 일부 조각이 실패했어도 전체 스크립트를 터뜨리지 않고 다음 페이지로 넘김!
+    return True 
 
 # ==============================================================================
-# 🟢 1. 보조금24 데이터 수집 함수 (기존 100% 유지)
+# 🟢 1. 보조금24 데이터 수집 함수 (JSON 방식 - 완벽 작동 중!)
 # ==============================================================================
 def fetch_bojogeum24_data() -> int:
     print("\n🚀 [STAGE 1] 보조금24 데이터 수집을 시작합니다...")
@@ -158,7 +143,7 @@ def fetch_bojogeum24_data() -> int:
     page = 1
     per_page = 100
     saved_count = 0
-    consecutive_fails = 0 # 🌟 [긴급 제동 장치] 연속 실패 카운터
+    consecutive_fails = 0 
 
     while True:
         print(f"🔄 보조금24 - {page}페이지 수집 요청 중...")
@@ -181,13 +166,11 @@ def fetch_bojogeum24_data() -> int:
                 print(f"⚠️ API 오류 (시도: {attempt + 1}/{max_retries}): {e}")
                 if attempt < max_retries - 1: time.sleep(5)
 
-        # 🌟 무한 루프 방지 로직 적용
         if not fetch_success or not data:
             consecutive_fails += 1
             if consecutive_fails >= 3:
-                print("🚨 [긴급 제동] 보조금24 3페이지 연속 수집 실패! 서버 장애로 판단하여 수집을 강제 종료합니다.")
+                print("🚨 [긴급 제동] 보조금24 3회 연속 실패 강제 종료.")
                 break 
-            print(f"❌ {page}페이지 수집 실패. 건너뜁니다.")
             page += 1
             continue
         else:
@@ -198,13 +181,10 @@ def fetch_bojogeum24_data() -> int:
             print("🏁 보조금24 데이터를 모두 긁어왔습니다!")
             break
             
-        is_success = sync_to_supabase(policies)
-        
-        # 🌟 [에러 방어] 저장이 실패해도 절대 break(종료) 하지 않음!
-        if is_success: 
+        if sync_to_supabase(policies): 
             saved_count += len(policies)
         else: 
-            print(f"⚠️ {page}페이지 DB 저장 중 일부 문제가 발생했지만 수집을 계속합니다.")
+            print(f"⚠️ {page}페이지 저장 중 일부 에러 발생.")
 
         time.sleep(1.2)
         page += 1
@@ -212,7 +192,7 @@ def fetch_bojogeum24_data() -> int:
     return saved_count
 
 # ==============================================================================
-# 🔵 2. 복지로 데이터 수집 함수 (HTTPS, 오타 수정 적용)
+# 🔵 2. 복지로 데이터 수집 함수 (🌟 XML 파싱으로 완벽 수정!)
 # ==============================================================================
 def fetch_bokjiro_data() -> int:
     print("\n🚀 [STAGE 2] 복지로 데이터 수집을 시작합니다...")
@@ -221,19 +201,19 @@ def fetch_bokjiro_data() -> int:
     saved_count = 0
     consecutive_fails = 0 
     
-    # 🌟 [이중 인코딩 방지] 복지로의 500 에러를 막기 위해 API 키를 미리 해독합니다.
     decoded_key = urllib.parse.unquote(PUBLIC_DATA_KEY) if PUBLIC_DATA_KEY else ""
 
     while True:
         print(f"🔄 복지로 - {page}페이지 수집 요청 중...")
+        # 🌟 returnType="json"을 보내도 정부 서버가 무시하므로 아예 뺐습니다.
         params = {
             "serviceKey": decoded_key, "pageNo": page, "numOfRows": per_page, 
-            "callTp": "L", "returnType": "json" 
+            "callTp": "L" 
         }
         
         max_retries = 3
         fetch_success = False
-        data = None
+        root = None
 
         for attempt in range(max_retries):
             try:
@@ -241,17 +221,20 @@ def fetch_bokjiro_data() -> int:
                 if response.status_code == 400:
                     break
                 response.raise_for_status()
-                data = response.json()
+                
+                # 🌟 [핵심 수술] JSON(.json()) 대신 XML 텍스트로 읽어서 해독합니다!
+                xml_data = response.text
+                root = ET.fromstring(xml_data)
                 fetch_success = True
                 break
             except Exception as e:
                 print(f"⚠️ API 오류 (시도: {attempt + 1}/{max_retries}): {e}")
                 if attempt < max_retries - 1: time.sleep(5)
 
-        if not fetch_success or not data:
+        if not fetch_success or root is None:
             consecutive_fails += 1
             if consecutive_fails >= 3:
-                print("🚨 [긴급 제동] 복지로 3페이지 연속 500 에러 발생! 서버 장애/한도 초과로 판단하여 강제 종료합니다.")
+                print("🚨 [긴급 제동] 복지로 3페이지 연속 실패! 서버 장애로 판단하여 종료합니다.")
                 break 
             print(f"❌ {page}페이지 수집 실패. 건너뜁니다.")
             page += 1
@@ -259,26 +242,31 @@ def fetch_bokjiro_data() -> int:
         else:
             consecutive_fails = 0 
 
-        # 🌟 V001 API 응답 구조 반영 (servList 혹은 welfarelist)
-        raw_policies = data.get("servList") or data.get("welfarelist", [])
+        # 🌟 창현이가 준 '복지로예시.xml' 파일 구조대로 <servList> 태그를 찾습니다!
+        raw_policies = root.findall(".//servList")
         if not raw_policies:
             print("🏁 복지로 데이터를 모두 긁어왔습니다!")
             break
 
         mapped_policies = []
         for p in raw_policies:
+            def get_text(tag_name):
+                node = p.find(tag_name)
+                return node.text if node is not None and node.text else ""
+
             mapped_policies.append({
-                "서비스ID": p.get("servId", ""), "서비스명": p.get("servNm", ""),
-                "소관기관명": p.get("jurMnofNm", "복지로"), "지원대상": p.get("trgterIndvdlArray", ""), 
-                "서비스분야": p.get("intrsThemaArray", ""), "상세조회URL": p.get("servDtlLink", "")
+                "서비스ID": get_text("servId"), 
+                "서비스명": get_text("servNm"),
+                "소관기관명": get_text("jurMnofNm") or "복지로", 
+                "지원대상": get_text("trgterIndvdlArray"), 
+                "서비스분야": get_text("intrsThemaArray"), 
+                "상세조회URL": get_text("servDtlLink")
             })
             
-        is_success = sync_to_supabase(mapped_policies)
-        
-        if is_success: 
+        if sync_to_supabase(mapped_policies): 
             saved_count += len(mapped_policies)
         else: 
-            print(f"⚠️ {page}페이지 DB 저장 중 일부 문제가 발생했지만 수집을 계속합니다.")
+            print(f"⚠️ {page}페이지 DB 저장 중 에러 발생.")
 
         time.sleep(1.2)
         page += 1
