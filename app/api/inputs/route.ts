@@ -13,12 +13,11 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const { thread_id, user_id, ...inputs } = await req.json();
   
-  // 🌟 [최종 수술] DB가 원하는 대로 created_at은 빼고, updated_at만 필수로 넣어줍니다!
+  // 🌟 DB 트리거가 updated_at을 자동으로 처리하므로 애플리케이션 단에서는 생략합니다.
   const { error } = await supabase.from('chat_thread_inputs').upsert({
     thread_id,
     user_id,
     ...inputs,
-    updated_at: new Date().toISOString() // 🚨 딱 이거 하나만 들어갑니다!
   }, { onConflict: 'thread_id' });
   
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
