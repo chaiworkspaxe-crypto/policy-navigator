@@ -1,28 +1,34 @@
-print("🚀 청년정책 스크립트 시작됨")
 import os
-print("KEY 유무 확인:", "존재함" if os.getenv("YOUTH_POLICY_API_KEY") else "없음")
-print("파일 실행 정상")
-
 import time
 import requests
-import hashlib 
+import hashlib
 from datetime import datetime, timedelta
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from langchain_openai import OpenAIEmbeddings
 
+# 맨 처음 환경변수부터 로드
 load_dotenv()
 
+print("🚀 청년정책 스크립트 시작됨")
+print("KEY 유무 확인:", "존재함" if os.getenv("YOUTH_POLICY_API_KEY") else "없음")
+print("파일 실행 정상")
+
+# 2. 인증키 및 DB 설정 가져오기
 YOUTH_API_KEY = os.getenv("YOUTH_POLICY_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
 YOUTH_CENTER_URL = "https://www.youthcenter.go.kr/opi/empList.do"
 
+# 3. Supabase 클라이언트 초기화
 supabase: Client = None
 if SUPABASE_URL and SUPABASE_KEY:
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# ==============================================================================
+# 🌟 지문 필터링(비용 절감) + DB 불사조 로직
+# ==============================================================================
 def sync_to_supabase(policies):
     if not supabase:
         print("❌ 에러: Supabase 설정 누락")
@@ -33,7 +39,11 @@ def sync_to_supabase(policies):
     now_iso = datetime.utcnow().isoformat()
 
     for p in policies:
-        pid = p.get("id", "")
+        pid = p.get("id", "").strip()
+        # 🌟 창현 피드백 반영 2️⃣: ID가 없으면 치명적 DB 충돌 발생. 가차 없이 버림!
+        if not pid:
+            continue
+
         title = p.get("title", "이름 없음")
         provider = p.get("provider", "주관기관 없음")
         summary = p.get("summary", "")
@@ -46,7 +56,7 @@ def sync_to_supabase(policies):
         p["updated_at"] = now_iso 
         
         formatted_data.append(p)
-        if pid: api_ids.append(pid)
+        api_ids.append(pid)
 
     db_hash_map = {}
     if api_ids:
@@ -82,7 +92,8 @@ def sync_to_supabase(policies):
         print(f"❌ 임베딩 변환 실패!: {e}")
         return False
 
-    CHUNK_SIZE = 5  
+    # 🌟 창현 피드백 반영 3️⃣: 5개는 너무 느림! 50개로 올려서 10배 광속 DB 저장!
+    CHUNK_SIZE = 50  
     total_new_data = len(needs_embedding)
     
     for i in range(0, total_new_data, CHUNK_SIZE):
@@ -107,6 +118,9 @@ def sync_to_supabase(policies):
         
     return True
 
+# ==============================================================================
+# 🟢 메인 수집 함수
+# ==============================================================================
 def fetch_youth_data():
     print("🚀 [청년 파이프라인] 온라인청년센터 데이터 수집 시작 (JSON 스마트 모드)")
     
@@ -134,16 +148,14 @@ def fetch_youth_data():
 
         for attempt in range(max_retries):
             try:
-                # 🌟 창현이 피드백 반영: verify=False 제거 (정석대로 보안 검증)
                 response = requests.get(YOUTH_CENTER_URL, params=params, timeout=45)
                 
                 if response.status_code == 200:
                     try:
                         data = response.json() 
                         
-                        # 🌟 창현이 피드백 반영: 진짜 JSON이 맞는지, 우리가 아는 구조가 맞는지 이중 검증!
                         if not isinstance(data, dict):
-                            print(f"⚠️ JSON 형식이 아님 (HTML 등 반환 의심): {response.text[:100]}")
+                            print(f"⚠️ JSON 형식이 아님: {response.text[:100]}")
                             continue
                             
                         if "result" not in data:
@@ -161,10 +173,6 @@ def fetch_youth_data():
                 else:
                     print(f"⚠️ 비정상 응답 코드: {response.status_code}")
                     
-            except requests.exceptions.SSLError as ssl_err:
-                # 정부망 SSL 에러 발생 시를 위한 명확한 로그
-                print(f"🚨 SSL 인증서 에러 발생! 정부 서버 인증서 문제일 수 있습니다: {ssl_err}")
-                break
             except Exception as e:
                 print(f"⚠️ API 통신 오류 (시도 {attempt + 1}): {e}")
                 time.sleep(5)
@@ -183,8 +191,12 @@ def fetch_youth_data():
             result_data = data.get("result", {})
             youth_list = result_data.get("youthPolicyList", [])
             
+            # 🌟 창현 피드백 반영 1️⃣: 데이터가 비어있으면 원본 구조를 강제로 찍어본다!
             if not youth_list:
-                print("🏁 데이터 리스트가 비어있습니다. 청년정책 수집을 완료합니다!")
+                print("🏁 청년정책 데이터가 비어있습니다. 수집 종료.")
+                print(f"🔍 [디버깅] API 원본 데이터 키값 확인: {list(data.keys())}")
+                if "result" in data:
+                    print(f"🔍 [디버깅] result 내부 키값 확인: {list(data['result'].keys())}")
                 break
                 
             policies = []
