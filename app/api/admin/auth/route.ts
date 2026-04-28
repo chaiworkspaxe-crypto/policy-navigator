@@ -5,7 +5,7 @@ export async function POST(req: Request) {
   const { password } = await req.json();
   const adminKey = process.env.ADMIN_PASS_KEY;
   
-  if (!adminKey || adminKey.length < 16) {
+  if (!adminKey || adminKey.length < 4) { 
     return NextResponse.json({ ok: false, reason: 'admin disabled' }, { status: 503 });
   }
   
