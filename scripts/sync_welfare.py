@@ -2,9 +2,8 @@ import os
 import time
 import requests
 import hashlib
-import urllib.parse
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone  # 🌟 timezone 추가
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from langchain_openai import OpenAIEmbeddings
@@ -26,19 +25,43 @@ supabase: Client = None
 if SUPABASE_URL and SUPABASE_KEY:
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# 임베딩 객체 전역 생성 (최적화)
+embeddings = None
+try:
+    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+except Exception as e:
+    print(f"❌ OpenAI 초기화 에러: {e}")
+
+def utc_now_iso() -> str:
+    """timezone-aware UTC ISO 문자열"""
+    return datetime.now(timezone.utc).isoformat()
+
+# ==============================================================================
+# 🌟 [소프트 삭제 적용] 좀비 정책 청소 로직
+# ==============================================================================
 def cleanup_zombie_policies(total_saved):
     if total_saved < 100:
         print("⚠️ [안전장치 작동] 오늘 수집된 데이터가 너무 적어 청소를 생략합니다.")
         return
 
-    print("🧹 [청소 닌자 출동] 마감된 좀비 정책 데이터 삭제를 시작합니다...")
+    print("🧹 [청소 닌자 출동] 마감된 좀비 정책 데이터 안전 숨김(Soft Delete) 처리를 시작합니다...")
     if not supabase: return
         
     try:
-        three_days_ago = (datetime.utcnow() - timedelta(days=3)).isoformat()
-        response = supabase.table("policies").delete().lt("updated_at", three_days_ago).execute()
-        deleted_count = len(response.data) if response.data else 0
-        print(f"✨ [청소 완료] 총 {deleted_count}개의 마감/예산소진 정책이 DB에서 영구 삭제되었습니다!")
+        three_days_ago = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+        
+        # 🌟 창현 피드백 반영: 데이터 영구 삭제(Hard Delete) 방지
+        response = (
+            supabase.table("policies")
+            .update({
+                "is_active": False, 
+                "updated_at": utc_now_iso()
+            })
+            .lt("updated_at", three_days_ago)
+            .execute()
+        )
+        deactivated_count = len(response.data) if response.data else 0
+        print(f"✨ [청소 완료] {deactivated_count}개 정책을 안전하게 숨김 처리(soft delete) 완료!")
     except Exception as e:
         print(f"❌ 청소 중 오류 발생: {e}")
 
@@ -52,25 +75,38 @@ def sync_to_supabase(policies):
 
     formatted_data = []
     api_ids = []
-    now_iso = datetime.utcnow().isoformat()
+    now_iso = utc_now_iso()
 
     for p in policies:
         pid = p.get("서비스ID") or p.get("id", "")
+        pid = pid.strip()
+        if not pid:
+            continue
+
         title = p.get("서비스명") or p.get("title", "이름 없음")
         provider = p.get("소관기관명") or p.get("provider", "기관 없음")
         summary = p.get("지원대상") or p.get("summary", "")
         category = p.get("서비스분야") or p.get("category", "")
         url = p.get("상세조회URL") or p.get("url", "")
 
-        content_str = f"{title}{provider}{category}{summary}"
-        content_hash = hashlib.md5(content_str.encode('utf-8')).hexdigest()
+        # 요약 내용은 임베딩 비용 절약 및 제한을 위해 자르기 (옵션)
+        safe_summary = summary[:1000] if summary else ""
+
+        content_str = f"{title}{provider}{category}{safe_summary}"
+        content_hash = hashlib.sha1(content_str.encode('utf-8')).hexdigest()
 
         formatted_data.append({
-            "id": pid, "title": title, "provider": provider,
-            "summary": summary, "category": category, "url": url,
-            "content_hash": content_hash, "updated_at": now_iso 
+            "id": pid, 
+            "title": title, 
+            "provider": provider,
+            "summary": safe_summary, 
+            "category": category, 
+            "url": url,
+            "content_hash": content_hash, 
+            "updated_at": now_iso,
+            "is_active": True  # 🌟 소프트 삭제됐던 정책이 다시 나타나면 부활시키기 위해 True 강제 주입!
         })
-        if pid: api_ids.append(pid)
+        api_ids.append(pid)
 
     db_hash_map = {}
     if api_ids:
@@ -92,18 +128,19 @@ def sync_to_supabase(policies):
         return True 
 
     print(f"🤖 {len(policies)}개 중 변경된 {len(needs_embedding)}개만 임베딩 변환 중...")
-    try:
-        embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-        texts_to_embed = [f"정책명: {d['title']} 주관: {d['provider']} 카테고리: {d['category']} 내용: {d['summary']}" for d in needs_embedding]
-        vectors = embeddings.embed_documents(texts_to_embed)
-        
-        for i, d in enumerate(needs_embedding):
-            d["embedding"] = vectors[i]
-    except Exception as e:
-        print(f"❌ 임베딩 변환 실패!: {e}")
-        return False
+    
+    if embeddings:
+        try:
+            texts_to_embed = [f"정책명: {d['title']} 주관: {d['provider']} 카테고리: {d['category']} 내용: {d['summary']}" for d in needs_embedding]
+            vectors = embeddings.embed_documents(texts_to_embed)
+            
+            for i, d in enumerate(needs_embedding):
+                d["embedding"] = vectors[i]
+        except Exception as e:
+            print(f"❌ 임베딩 변환 실패!: {e}")
+            return False
 
-    CHUNK_SIZE = 5  
+    CHUNK_SIZE = 50  
     total_new_data = len(needs_embedding)
     
     for i in range(0, total_new_data, CHUNK_SIZE):
@@ -116,15 +153,16 @@ def sync_to_supabase(policies):
                 db_success = True
                 break
             except Exception as e:
-                print(f"    ⚠️ DB 조각 저장 지연 (시도 {db_attempt+1}/3) - 3초 후 재시도...")
-                time.sleep(3)
+                wait_time = 2 ** db_attempt
+                print(f"    ⚠️ DB 조각 저장 지연 (시도 {db_attempt+1}/3) - {wait_time}초 후 재시도...")
+                time.sleep(wait_time)
                 
         if db_success:
             print(f"    ㄴ 변경 조각 저장 완료: {min(i + CHUNK_SIZE, total_new_data)} / {total_new_data}")
         else:
             print(f"    ❌ DB 조각 저장 최종 실패.")
             
-        time.sleep(2) 
+        time.sleep(1) 
         
     return True 
 
@@ -156,8 +194,9 @@ def fetch_bojogeum24_data() -> int:
                 fetch_success = True
                 break
             except Exception as e:
-                print(f"⚠️ API 오류 (시도: {attempt + 1}/{max_retries}): {e}")
-                if attempt < max_retries - 1: time.sleep(5)
+                wait_time = 2 ** attempt
+                print(f"⚠️ API 오류 (시도: {attempt + 1}/{max_retries}): {e} -> {wait_time}초 대기")
+                time.sleep(wait_time)
 
         if not fetch_success or not data:
             consecutive_fails += 1
@@ -185,7 +224,7 @@ def fetch_bojogeum24_data() -> int:
     return saved_count
 
 # ==============================================================================
-# 🔵 2. 복지로 데이터 수집 함수 (🚀 창현 님의 성공 로직!)
+# 🔵 2. 복지로 데이터 수집 함수
 # ==============================================================================
 def fetch_bokjiro_data() -> int:
     print("\n🚀 [STAGE 2] 복지로 데이터 수집을 시작합니다...")
@@ -198,7 +237,6 @@ def fetch_bokjiro_data() -> int:
     while True:
         print(f"🔄 복지로 - {page}페이지 수집 요청 중...")
         
-        # 수정 후: L(목록 조회) 타입 명시 및 srchKeyCode 추가
         params = {
             "callTp": "L",
             "srchKeyCode": "001",
@@ -218,28 +256,28 @@ def fetch_bokjiro_data() -> int:
                     headers={"User-Agent": "Mozilla/5.0"},
                     timeout=45
                 )
-                print("응답 상태:", response.status_code)
-                print("응답 내용:", response.text[:500])
                 if response.status_code == 400:
                     break
                 response.raise_for_status()
                 
                 xml_data = response.text
                 if "OpenAPI_ServiceResponse" in xml_data:
-                    print("🚨 API 에러 응답:", xml_data[:300])
+                    print("🚨 API 에러 응답 발견 (XML)")
                     break
+                    
                 try:
                     root = ET.fromstring(xml_data)
                 except Exception as e:
                     print("❌ XML 파싱 실패:", e)
                     fetch_success = False
-                    print(xml_data[:300])
                     break
+                    
                 fetch_success = True
                 break
             except Exception as e:
-                print(f"⚠️ API 오류 (시도: {attempt + 1}/{max_retries}): {e}")
-                if attempt < max_retries - 1: time.sleep(5)
+                wait_time = 2 ** attempt
+                print(f"⚠️ API 오류 (시도: {attempt + 1}/{max_retries}): {e} -> {wait_time}초 대기")
+                time.sleep(wait_time)
 
         if not fetch_success or root is None:
             consecutive_fails += 1
