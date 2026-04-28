@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 
 export default function InAppGuide() {
   const [isInApp, setIsInApp] = useState(false);
+  // 🌟 변경 1: 모달 닫기(무시) 상태 추가
+  const [dismissed, setDismissed] = useState(false);
   const [os, setOs] = useState<'ios' | 'android' | 'other'>('other');
   const [copied, setCopied] = useState(false);
 
@@ -37,8 +39,8 @@ export default function InAppGuide() {
     }
   };
 
-  // 인앱 브라우저가 아니면 이 화면(팝업)을 아예 그리지 않음
-  if (!isInApp) return null;
+  // 🌟 변경 2: 인앱 브라우저가 아니거나, 사용자가 '그냥 사용하기'를 눌렀다면 모달을 숨김
+  if (!isInApp || dismissed) return null;
 
   return (
     <div className="fixed inset-0 z-[9999] bg-black/80 flex flex-col items-center justify-center p-6 text-center backdrop-blur-sm">
@@ -71,6 +73,14 @@ export default function InAppGuide() {
           className="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-xl transition-colors"
         >
           {copied ? '✅ 복사 완료!' : '🌐 현재 링크 복사하기'}
+        </button>
+
+        {/* 🌟 변경 3: 강제 이탈 방지용 닫기(무시) 버튼 추가 */}
+        <button 
+          onClick={() => setDismissed(true)}
+          className="mt-4 text-sm text-gray-400 hover:text-gray-600 transition-colors underline underline-offset-2"
+        >
+          그냥 사용하기 (일부 기능 제한 가능)
         </button>
         
         <p className="text-xs text-gray-500 mt-4 break-keep">
