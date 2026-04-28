@@ -2,14 +2,12 @@ name: Daily Welfare Data Sync
 
 on:
   schedule:
-    # 매일 한국 시간 새벽 4시 (UTC 기준 19시)에 자동 실행
     - cron: '0 19 * * *'
   workflow_dispatch:
 
 jobs:
   update-db:
     runs-on: ubuntu-latest
-    # 🌟 [방어막 추가] 파이썬 스크립트가 정부 서버 대기하다가 30분을 넘기면 강제 종료! (비용 폭탄 방지)
     timeout-minutes: 180 
 
     steps:
@@ -26,7 +24,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests supabase python-dotenv langchain-openai duckduckgo-search
 
-      # ✅ STAGE 1: 보조금24 & 복지로 수집
       - name: Run Welfare Sync (Bojogeum & Bokjiro)
         env:
           PUBLIC_DATA_PORTAL_KEY: ${{ secrets.PUBLIC_DATA_PORTAL_KEY }}
@@ -36,9 +33,7 @@ jobs:
         run: |
           python scripts/sync_welfare.py
 
-      # ✅ STAGE 2: 온라인청년센터 수집
       - name: Run Youth Policy Sync
-        # 🌟 만약 Stage 1에서 치명적인 파이썬 에러가 나도, Stage 2는 무조건 실행!
         if: always() 
         env:
           YOUTH_POLICY_API_KEY: ${{ secrets.YOUTH_POLICY_API_KEY }}
