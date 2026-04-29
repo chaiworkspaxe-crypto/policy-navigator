@@ -4,6 +4,9 @@ import { z } from 'zod';
 import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
 
+// 🌟 [추가] 프로필 추출 라이브러리 임포트
+import { extractAndSaveProfile, loadUserProfile, formatProfileForLLM } from './_lib/extractProfile';
+
 // 1. API 클라이언트 초기화
 const rawOpenai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -14,7 +17,7 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 export const runtime = 'edge';
 
 // ==============================================================================
-// 🌟 파이썬과 100% 동일한 시스템 프롬프트
+// 🌟 파이썬과 100% 동일한 시스템 프롬프트 (수정 금지)
 // ==============================================================================
 const SYSTEM_PROMPT = `
 당신은 대한민국 국민 모두의 '정보 비대칭'을 완벽하게 해소해 주는 최고의 '전국민 맞춤형 복지/지원금 내비게이터(Universal Policy Navigator)'입니다.
@@ -123,7 +126,6 @@ export async function POST(req: Request) {
       
       if (quotaError) {
         console.error('quota error:', quotaError);
-        // quota 시스템 장애 시 통과시킴 (degraded mode)
       } else if (quota && !quota.allowed) {
         return new Response(
           JSON.stringify({ 
@@ -135,9 +137,9 @@ export async function POST(req: Request) {
       }
     }
 
-    // ✅ [수정 완료] User 메시지 즉시 저장 (스트리밍과 별개로 먼저 꽂아 넣음!)
+    // ✅ User 메시지 즉시 저장
     if (userId && threadId && messages.length > 0) {
-      const lastUserMessage = messages[messages.length - 1]?.content; // 옵셔널 체이닝으로 방어
+      const lastUserMessage = messages[messages.length - 1]?.content;
       if (lastUserMessage) {
         const now = new Date().toISOString();
         try {
@@ -151,17 +153,25 @@ export async function POST(req: Request) {
           });
         } catch (e) {
           console.error('user msg save failed:', e);
-          // 사용자 경험을 위해 에러로 막진 않음 — 채팅은 계속 진행
         }
       }
     }
 
     // ==============================================================================
-    // 🤖 1. 에이전트 실행 (파이썬의 AgentExecutor 완벽 대체)
+    // 🌟 [C-5-3 추가] 사용자 프로필 동적 주입 로직
+    // ==============================================================================
+    const profile = userId ? await loadUserProfile(userId) : null;
+    const profileBlock = formatProfileForLLM(profile);
+    const dynamicSystemPrompt = profileBlock 
+      ? `${SYSTEM_PROMPT}\n\n${profileBlock}` 
+      : SYSTEM_PROMPT;
+
+    // ==============================================================================
+    // 🤖 1. 에이전트 실행 (gpt-5.4 모델 고정!)
     // ==============================================================================
     const result = await streamText({
-      model: openai('gpt-5.4'), // 🚨 [수술 완료] 요청하신 대로 gpt-5.4 고정 완료!
-      system: SYSTEM_PROMPT,
+      model: openai('gpt-5.4'), 
+      system: dynamicSystemPrompt, // 🌟 동적 프롬프트 적용!
       messages,
       maxSteps: 7,
       tools: {
@@ -255,11 +265,11 @@ export async function POST(req: Request) {
           },
         }),
       },
-      // 🌟 [수정 완료] 이제 여기서 User는 무시하고 Assistant 메시지만 저장합니다.
       onFinish: async ({ text }) => {
         if (userId && threadId && text) {
           const now = new Date().toISOString();
           try {
+            // Assistant 메시지 저장
             await supabase.from('chat_messages').insert({
               thread_id: threadId,
               user_id: userId,
@@ -268,51 +278,47 @@ export async function POST(req: Request) {
               created_at: now,
               updated_at: now 
             });
+
+            // ==============================================================================
+            // 🌟 [C-5-3 추가] 답변 완료 후 사용자 프로필 백그라운드 추출 (Fire-and-forget)
+            // ==============================================================================
+            const lastUserMessage = messages[messages.length - 1]?.content;
+            if (lastUserMessage) {
+              extractAndSaveProfile(userId, lastUserMessage)
+                .catch(e => console.error('profile extract error:', e));
+            }
+
           } catch (dbError) {
-            console.error("DB 저장 중 에러 발생:", dbError);
+            console.error("DB 작업 중 에러 발생:", dbError);
           }
         }
       }
     });
 
     // ==============================================================================
-    // 🌟 커스텀 JSON 스트리밍 엔진
+    // 🌟 커스텀 JSON 스트리밍 엔진 (수정 금지)
     // ==============================================================================
     let fullAnswer = "";
     const customStream = new ReadableStream({
       async start(controller) {
         for await (const part of result.fullStream) {
-          
           if (part.type === 'tool-call') {
             const toolName = part.toolName;
-            
-            // 🌟 [로그 추가] Vercel Logs 창에 어떤 도구를 호출했는지 실시간으로 찍습니다!
             console.log(`[🤖 AI 도구 호출] ${toolName} 실행 중... 파라미터:`, part.args);
-
             let friendlyMsg = "하나라도 더 찾아내려고 AI가 풀야근 중입니다! 쪼~금만 더 기다려주세요 😭🌙";
-            
             if (toolName === "search_internal_db") friendlyMsg = "정부 정책 창고 셔터 올리는 중! 먼지가 쫌 날려도(쿨럭) 싹 다 찾아올게요 😷💨";
             else if (toolName === "naver_web_search") friendlyMsg = "동네방네 뿌려진 지자체 혜택 전단지 싹 다 긁어모으는 중! 🏃‍♂️💨🔥";
             else if (toolName === "global_web_search") friendlyMsg = "국내 공식 정부 문서 풀스캔 중! 하나도 안 놓칠게요 🔎💻";
             else if (toolName === "get_current_time") friendlyMsg = "이미 끝난 공고 주면 혼나니까! 실시간 마감일 깐깐하게 비교 중입니다 🗓️⏳";
-
             controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'status', message: `🔍 ${friendlyMsg}` }) + '\n'));
-          } 
-          
-          else if (part.type === 'tool-result') {
-            // 🌟 [로그 추가] 도구가 찾아온 결과의 길이나 상태를 찍어볼 수도 있어!
+          } else if (part.type === 'tool-result') {
             console.log(`[✅ 도구 응답 완료] ${part.toolName} 결과 수신 완료`);
-          }
-
-          else if (part.type === 'text-delta') {
+          } else if (part.type === 'text-delta') {
             fullAnswer += part.textDelta;
             controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'content', delta: part.textDelta }) + '\n'));
           }
         }
-        
-        // 🌟 [로그 추가] AI가 최종 답변을 다 만들었을 때 로그를 남깁니다.
         console.log(`[🏁 AI 스트리밍 종료] 응답 완료! (총 길이: ${fullAnswer.length}자)`);
-        
         controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'done', full_content: fullAnswer }) + '\n'));
         controller.close();
       }
