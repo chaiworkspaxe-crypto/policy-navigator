@@ -173,23 +173,45 @@ export async function POST(req: Request) {
           },
         }),
         search_internal_db: tool({
-          description: '사용자 질문을 바탕으로 내부 DB에서 정부 정책을 검색합니다.',
-          parameters: z.object({ query: z.string() }),
-          execute: async ({ query }) => {
+          description: '사용자의 자격 조건(나이/지역/가구/주거/취업)을 활용해 내부 DB에서 정책을 검색합니다.',
+          parameters: z.object({ 
+            query: z.string().describe('검색 의도 (예: "주거 지원금")'),
+            user_age: z.number().nullable().optional().describe('사용자 만 나이 (출생연도로 계산해서 전달)'),
+            user_sido: z.string().nullable().optional().describe('거주 시/도 (예: "서울특별시")'),
+            user_sigungu: z.string().nullable().optional().describe('거주 시/군/구 (예: "강남구")'),
+            user_household: z.enum(['1인가구', '신혼', '한부모', '다자녀', '일반']).nullable().optional(),
+            user_housing: z.enum(['무주택', '전세', '월세', '자가']).nullable().optional(),
+            user_employment: z.enum(['재직', '구직', '창업', '학생']).nullable().optional(),
+          }),
+          execute: async ({ query, user_age, user_sido, user_sigungu, user_household, user_housing, user_employment }) => {
             const embeddingResponse = await rawOpenai.embeddings.create({
               model: 'text-embedding-3-small',
               input: query,
             });
-            const { data, error } = await supabase.rpc('match_policies', {
+            
+            const { data, error } = await supabase.rpc('match_policies_v3', {
               query_embedding: embeddingResponse.data[0].embedding,
-              match_threshold: 0.3,
-              match_count: 5,
+              match_count: 30,
+              user_age: user_age ?? null,
+              user_sido: user_sido ?? null,
+              user_sigungu: user_sigungu ?? null,
+              user_household: user_household ?? null,
+              user_housing: user_housing ?? null,
+              user_employment: user_employment ?? null,
             });
 
-            if (error || !data || data.length === 0) {
+            if (error) {
+              console.error('match_policies_v3 error:', error);
+              return "DB 검색 중 오류가 발생했습니다. naver_web_search를 사용하세요.";
+            }
+            if (!data || data.length === 0) {
               return "내부 DB에서 일치하는 정책을 찾지 못했습니다. naver_web_search를 사용하세요.";
             }
-            return data.map((p: any) => `- 정책명: ${p.title} (${p.provider})\n  내용: ${p.summary}\n  링크: ${p.url}`).join('\n\n');
+            
+            return data.map((p: any) => {
+              const region = p.region_sigungu || p.region_sido || '전국';
+              return `- [${region}] ${p.title} (${p.provider})\n  ${p.summary}\n  링크: ${p.url}`;
+            }).join('\n\n');
           },
         }),
         naver_web_search: tool({
