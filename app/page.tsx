@@ -96,6 +96,9 @@ export default function Home() {
   const [isFormExpanded, setIsFormExpanded] = useState(true);
   const [showManual, setShowManual] = useState(false);
 
+  // 🌟 [핵심 방어선 1] 롤백되어도 절대 지워지지 않는 독립적인 '버튼 숨김' 상태
+  const [hideFollowUpButton, setHideFollowUpButton] = useState(false);
+
   const [isConfirmingDeleteAll, setIsConfirmingDeleteAll] = useState(false);
   const deleteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -110,10 +113,6 @@ export default function Home() {
 
   const availableDistricts = useMemo(() => CITY_TO_DISTRICTS[city] || [], [city]);
   const availableDongs = useMemo(() => DONG_MAP[`${city}-${district}`] || [], [city, district]);
-
-  // 🌟 [최강 방어선 1] 마지막 유저 메시지가 '이어서 계속해줘'인지 확인 (좀비 버튼 차단용)
-  const lastUserMessageStr = messages.filter(m => m.role === "user").pop()?.content || "";
-  const isRepeatedFollowUp = lastUserMessageStr.includes("답변이 끊겼어");
 
   useEffect(() => {
     let storedId = localStorage.getItem("pn_user_id");
@@ -214,7 +213,8 @@ export default function Home() {
 
   const selectThread = async (uid: string, tid: string) => {
     try {
-      setErrorMessage(""); setCurrentThreadId(tid); setMessages([]); setQuery(""); setIsSidebarOpen(false);
+      // 🌟 스레드를 바꿀 때 숨김 상태 리셋
+      setErrorMessage(""); setCurrentThreadId(tid); setMessages([]); setQuery(""); setIsSidebarOpen(false); setHideFollowUpButton(false);
       const [loadedMessages, loadedInputs] = await Promise.all([ api.loadMessages(uid, tid), api.loadThreadInputs(uid, tid) ]);
       setMessages(loadedMessages); applyInputs(loadedInputs);
       if (loadedMessages.length > 0) setIsFormExpanded(false); else setIsFormExpanded(true);
@@ -223,10 +223,12 @@ export default function Home() {
 
   const handleNewThread = async (uid = userId) => {
     try {
+      // 🌟 새 대화방 시작할 때 숨김 상태 리셋
       setErrorMessage("");
       const newThreadId = await api.createThread(uid);
       setCurrentThreadId(newThreadId); setMessages([]); setQuery(""); applyInputs(EMPTY_INPUTS);
       setIsSidebarOpen(false); setIsFormExpanded(true); setThreads(await api.listThreads(uid));
+      setHideFollowUpButton(false);
     } catch { setErrorMessage("새 대화방을 만들 수 없습니다."); }
   };
 
@@ -240,6 +242,13 @@ export default function Home() {
 
   const handleSearch = async (isFollowUp = false, overridePrompt?: string) => {
     setErrorMessage(""); setAiStatus("");
+
+    // 🌟 [핵심 해결 2] 유저가 버튼을 눌렀다는 사실 자체를 독립적인 상태로 저장 (롤백 불가)
+    if (overridePrompt) {
+      setHideFollowUpButton(true); // 버튼 클릭 즉시 영구 삭제 처리
+    } else {
+      setHideFollowUpButton(false); // 일반적인 추가 질문 시에는 다시 정상화
+    }
 
     if (!userId) return setErrorMessage("사용자 정보가 준비되지 않았습니다. 새로고침 해주세요.");
 
@@ -350,7 +359,7 @@ export default function Home() {
       clearTimeout(timeoutId);
       console.error(error);
       
-      // 🌟 [핵심] 에러 발생 시(DB 500에러 포함) 무조건 백업했던 상태로 롤백!
+      // 🌟 [핵심 해결 3] 롤백! (이로 인해 messages 배열은 과거로 돌아가지만, hideFollowUpButton은 true로 남아 버튼 증식을 막아줍니다!)
       setMessages(originalMessages); 
       
       if (error.name === 'AbortError') {
@@ -585,8 +594,8 @@ export default function Home() {
                         </div>
                       )}
 
-                      {/* 🌟 [최강 방어선 2] 한 번 '이어서 생성'을 눌렀는데도 표를 안 주면 버튼 영구 삭제! */}
-                      {!loading && isLastMessage && isAssistant && !hasSummaryTable(message.content) && !isRepeatedFollowUp && (
+                      {/* 🌟 [최강 방어선 3] hideFollowUpButton 상태 추가! 버튼을 영구적으로 숨겨서 무한 루프 원천 차단 */}
+                      {!loading && isLastMessage && isAssistant && !hasSummaryTable(message.content) && !hideFollowUpButton && (
                          <div className="mt-4 p-4 bg-gray-50 dark:bg-[#1a1a1a] rounded-xl border border-gray-200 dark:border-[#444] animate-in fade-in duration-300">
                            <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
                              <AlertCircle size={16} className="text-yellow-500" />
