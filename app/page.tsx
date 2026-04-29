@@ -242,7 +242,7 @@ export default function Home() {
     return "";
   };
 
-  // 🌟 [수정된 부분] handleSearch 통신 로직 교체
+  // 🌟 [수정된 부분] handleSearch 통신 로직 및 AbortError 핸들링
   const handleSearch = async (isFollowUp = false, overridePrompt?: string) => {
     setErrorMessage(""); setAiStatus("");
 
@@ -273,13 +273,14 @@ export default function Home() {
     setMessages([...newMessages, { role: "assistant" as const, content: "" }]);
     if (isFollowUp && !overridePrompt) setQuery("");
 
+    // 🌟 변수 선언을 try 밖으로 빼서 catch 블록에서도 clearTimeout을 안전하게 호출할 수 있게 개선!
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => abortController.abort(), 90000); // 90초 대기
+
     try {
       await api.saveThreadInputs(userId, targetThreadId, { selected_city: city, selected_district: district, selected_dong: dong, birth_year: birthYear, extra_info: extraInfo });
 
-      const abortController = new AbortController();
-      const timeoutId = setTimeout(() => abortController.abort(), 90000); // 90초
-
-      // 🌟 2. /api/chat 내부 주소로 변경 및 messages, userId, threadId 전달
+      // 🌟 2. /api/chat 내부 주소로 통신 + signal 연동
       const response = await fetch(`/api/chat`, {
         method: 'POST', 
         signal: abortController.signal,
@@ -291,6 +292,7 @@ export default function Home() {
         }),
       });
 
+      // 정상적으로 응답을 받기 시작하면 타이머 해제
       clearTimeout(timeoutId);
 
       if (response.status === 403) {
@@ -343,10 +345,19 @@ export default function Home() {
       setLoading(false);
       void api.listThreads(userId).then(setThreads);
 
-    } catch (error) {
+    } catch (error: any) {
+      // 🌟 [추가됨] 통신 실패, 혹은 Timeout이 걸렸을 때 처리
+      clearTimeout(timeoutId);
       console.error(error);
       setMessages((prev) => prev.slice(0, -1));
-      setErrorMessage("서버 상태가 불안정합니다. 잠시 후 다시 시도해 주세요.");
+      
+      // ✨ AbortError를 콕 집어내어 사용자 친화적인 메시지 노출!
+      if (error.name === 'AbortError') {
+        setErrorMessage("응답이 너무 오래 걸려 중단되었습니다. 잠시 후 다시 시도해주세요. ⏳");
+      } else {
+        setErrorMessage("서버 상태가 불안정합니다. 잠시 후 다시 시도해 주세요.");
+      }
+      
       setIsFormExpanded(true);
       setLoading(false);
     }
