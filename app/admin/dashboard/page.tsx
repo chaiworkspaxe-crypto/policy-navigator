@@ -53,7 +53,6 @@ export default function AdminDashboardPage() {
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState<Policy>(EMPTY_POLICY);
 
-  // 🌟 [핵심 1] Axios 버리고 Fetch로 'x-admin-key' 직접 전달 (403 에러 해결!)
   const fetchStats = async (pwd: string) => {
     setLoading(true);
     try {
@@ -85,37 +84,73 @@ export default function AdminDashboardPage() {
     }
   };
 
+  // 🌟 [추가된 부분 1] 정책 비활성화(삭제) 핸들러 완벽 연결
   const handleDeletePolicy = async (id: string) => {
-    if (!confirm('이 정책을 비활성화하시겠습니까?')) return;
-    const res = await fetch(`/api/admin/policies/${id}`, { 
-      method: 'DELETE',
-      headers: { 'x-admin-key': adminPassword } 
-    });
-    if (res.ok) {
-      alert('비활성화 완료');
-      fetchPolicies(adminPassword);
-    } else alert('실패');
+    if (!id) return alert('정책 ID가 없습니다');
+    if (!confirm('이 정책을 비활성화하시겠습니까? (DB에서 삭제하지 않고 숨김 처리)')) return;
+    
+    try {
+      const res = await fetch(`/api/admin/policies/${id}`, { 
+        method: 'DELETE',
+        headers: { 'x-admin-key': adminPassword }
+      });
+      if (res.ok) {
+        alert('비활성화 완료');
+        fetchPolicies(adminPassword);
+      } else {
+        const err = await res.json();
+        alert(`실패: ${err.error || '알 수 없음'}`);
+      }
+    } catch (e) {
+      alert('네트워크 오류');
+      console.error(e);
+    }
   };
 
+  // 🌟 [추가된 부분 2] 정책 수정(저장) 핸들러 완벽 연결
   const handleSavePolicy = async () => {
     const id = formData.id || formData.policy_id;
     if (!id) {
-      alert('새 정책 등록은 다음 PR에서');  
+      alert('새 정책 등록은 다음 PR에서 추가됩니다');
       return;
     }
-    const res = await fetch(`/api/admin/policies/${id}`, {
-      method: 'PATCH',
-      headers: { 
-        'Content-Type': 'application/json',
-        'x-admin-key': adminPassword 
-      },
-      body: JSON.stringify(formData),
-    });
-    if (res.ok) {
-      alert('저장 완료');
-      setShowForm(false);
-      fetchPolicies(adminPassword);
-    } else alert('실패');
+    
+    if (!formData.title || !formData.provider) {
+      alert('정책명과 제공 기관은 필수입니다');
+      return;
+    }
+    
+    try {
+      const res = await fetch(`/api/admin/policies/${id}`, {
+        method: 'PATCH',
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-admin-key': adminPassword 
+        },
+        body: JSON.stringify({
+          title: formData.title,
+          provider: formData.provider,
+          target_audience: formData.target_audience,
+          age_req: formData.age_req,
+          income_req: formData.income_req,
+          region_req: formData.region_req,
+          url: formData.url,
+          summary: formData.summary,
+        }),
+      });
+      
+      if (res.ok) {
+        alert('저장 완료');
+        setShowForm(false);
+        fetchPolicies(adminPassword);
+      } else {
+        const err = await res.json();
+        alert(`실패: ${err.error || '알 수 없음'}`);
+      }
+    } catch (e) {
+      alert('네트워크 오류');
+      console.error(e);
+    }
   };
 
   useEffect(() => {
@@ -199,7 +234,6 @@ export default function AdminDashboardPage() {
                   <div className="p-2.5 bg-blue-500/10 rounded-lg"><Users size={20} className="text-blue-500" /></div>
                   <h2 className="text-gray-400 text-sm font-semibold">총 누적 사용자</h2>
                 </div>
-                {/* 🌟 [핵심 2] nullish coalescing (?? 0) 적용 - 데이터 없을 때 크래시 방지! */}
                 <div className="text-3xl font-extrabold text-white mt-auto">{loading ? "-" : (stats?.total_users ?? 0).toLocaleString()} <span className="text-base text-gray-500 font-medium">명</span></div>
               </div>
 
@@ -366,6 +400,7 @@ export default function AdminDashboardPage() {
                           <td className="px-6 py-4 text-gray-500 text-xs">{p.updated_at?.split(' ')[0]}</td>
                           <td className="px-6 py-4 text-right space-x-3">
                             <button className="text-blue-400 hover:text-blue-300 transition-colors" onClick={() => { setFormData(p); setShowForm(true); }}><Edit size={18} className="inline" /></button>
+                            {/* 🌟 [추가된 부분 3] 삭제 버튼에 삭제 핸들러 적용 */}
                             <button 
                               className="text-red-400 hover:text-red-300 transition-colors"
                               onClick={() => handleDeletePolicy(p.id || p.policy_id || '')}
@@ -441,6 +476,7 @@ export default function AdminDashboardPage() {
 
             <div className="p-6 border-t border-gray-800 bg-[#1a1a1a] rounded-b-2xl flex justify-end gap-3">
               <button onClick={() => setShowForm(false)} className="px-5 py-2.5 rounded-xl font-bold text-gray-400 hover:text-white hover:bg-gray-800 transition-colors">취소</button>
+              {/* 🌟 [추가된 부분 4] 저장 버튼에 저장 핸들러 적용 */}
               <button 
                 onClick={handleSavePolicy}
                 className="bg-green-600 hover:bg-green-500 text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 shadow-lg transition-transform active:scale-95"
