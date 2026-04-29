@@ -111,6 +111,10 @@ export default function Home() {
   const availableDistricts = useMemo(() => CITY_TO_DISTRICTS[city] || [], [city]);
   const availableDongs = useMemo(() => DONG_MAP[`${city}-${district}`] || [], [city, district]);
 
+  // 🌟 [최강 방어선 1] 마지막 유저 메시지가 '이어서 계속해줘'인지 확인 (좀비 버튼 차단용)
+  const lastUserMessageStr = messages.filter(m => m.role === "user").pop()?.content || "";
+  const isRepeatedFollowUp = lastUserMessageStr.includes("답변이 끊겼어");
+
   useEffect(() => {
     let storedId = localStorage.getItem("pn_user_id");
     if (!storedId) { storedId = `user_${uuidv4()}`; localStorage.setItem("pn_user_id", storedId); }
@@ -581,7 +585,8 @@ export default function Home() {
                         </div>
                       )}
 
-                      {!loading && isLastMessage && isAssistant && !hasSummaryTable(message.content) && (
+                      {/* 🌟 [최강 방어선 2] 한 번 '이어서 생성'을 눌렀는데도 표를 안 주면 버튼 영구 삭제! */}
+                      {!loading && isLastMessage && isAssistant && !hasSummaryTable(message.content) && !isRepeatedFollowUp && (
                          <div className="mt-4 p-4 bg-gray-50 dark:bg-[#1a1a1a] rounded-xl border border-gray-200 dark:border-[#444] animate-in fade-in duration-300">
                            <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
                              <AlertCircle size={16} className="text-yellow-500" />
