@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic'; // 🌟 Next.js 캐싱 폭탄을 제거하는 마법의 설정
 import { openai } from '@ai-sdk/openai';
 import { streamText, tool } from 'ai';
 import { z } from 'zod';
