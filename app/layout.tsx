@@ -14,12 +14,13 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-// 🌟 [추가] 모바일 최적화: iOS 사파리에서 인풋창 클릭 시 화면 강제 확대 방지
+// 🌟 [핵심 수정] 웹 접근성(Accessibility) 향상을 위해 화면 강제 고정 해제
+// 사용자가 필요에 따라 두 손가락으로 화면을 확대할 수 있도록 허용합니다.
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
+  // maximumScale: 1,  <-- 제거됨 (시력이 낮은 사용자를 위한 배려)
+  // userScalable: false, <-- 제거됨
 };
 
 export const metadata: Metadata = {
