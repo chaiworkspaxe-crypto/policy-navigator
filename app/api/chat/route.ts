@@ -137,25 +137,7 @@ export async function POST(req: Request) {
       }
     }
 
-    // ✅ User 메시지 즉시 저장
-    if (userId && threadId && messages.length > 0) {
-      const lastUserMessage = messages[messages.length - 1]?.content;
-      if (lastUserMessage) {
-        const now = new Date().toISOString();
-        try {
-          await supabase.from('chat_messages').insert({
-            thread_id: threadId,
-            user_id: userId,
-            role: 'user',
-            content: lastUserMessage,
-            created_at: now,
-            updated_at: now,
-          });
-        } catch (e) {
-          console.error('user msg save failed:', e);
-        }
-      }
-    }
+    // 🚨 여기서 성급하게 저장하던 유저 메시지 코드는 삭제 완료! (고아 메시지 방지)
 
     // ==============================================================================
     // 🌟 [C-5-3 추가] 사용자 프로필 동적 주입 로직
@@ -268,21 +250,34 @@ export async function POST(req: Request) {
       onFinish: async ({ text }) => {
         if (userId && threadId && text) {
           const now = new Date().toISOString();
+          const lastUserMessage = messages[messages.length - 1]?.content;
+
           try {
-            // Assistant 메시지 저장
-            await supabase.from('chat_messages').insert({
-              thread_id: threadId,
-              user_id: userId,
-              role: 'assistant',
-              content: text,
-              created_at: now,
-              updated_at: now 
-            });
+            // 🌟 [핵심 해결책] 에러가 나면 롤백되도록, 유저 메시지와 AI 메시지를 "답변 성공 시 한 번에" 배열로 저장합니다!
+            if (lastUserMessage) {
+              await supabase.from('chat_messages').insert([
+                {
+                  thread_id: threadId,
+                  user_id: userId,
+                  role: 'user',
+                  content: lastUserMessage,
+                  created_at: now,
+                  updated_at: now 
+                },
+                {
+                  thread_id: threadId,
+                  user_id: userId,
+                  role: 'assistant',
+                  content: text,
+                  created_at: now,
+                  updated_at: now 
+                }
+              ]);
+            }
 
             // ==============================================================================
             // 🌟 [C-5-3 추가] 답변 완료 후 사용자 프로필 백그라운드 추출 (Fire-and-forget)
             // ==============================================================================
-            const lastUserMessage = messages[messages.length - 1]?.content;
             if (lastUserMessage) {
               extractAndSaveProfile(userId, lastUserMessage)
                 .catch(e => console.error('profile extract error:', e));
