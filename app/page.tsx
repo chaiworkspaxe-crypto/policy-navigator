@@ -6,7 +6,7 @@ import { api, ChatMessage, extractApiErrorMessage, ThreadInputs, ThreadItem } fr
 import { CITY_TO_DISTRICTS, DONG_MAP } from "@/lib/regionData";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-// 🚨 [진짜 원인 제거!] 화면을 하얗게 터뜨렸던 주범 'rehype-raw' 완전 삭제!!!
+import rehypeRaw from 'rehype-raw'; // 🌟 1. HTML 렌더링 핵심 부품 임포트 추가!
 import { 
   MessageSquare, Plus, Send, Loader2, MapPin, Search, AlertCircle, 
   Menu, X, Trash2, Sun, Moon, Coffee, ChevronUp, ChevronDown, 
@@ -17,22 +17,13 @@ const DEFAULT_CITY = "선택하세요";
 const DEFAULT_DONG = "선택 안 함";
 const EMPTY_INPUTS: ThreadInputs = { selected_city: DEFAULT_CITY, selected_district: DEFAULT_CITY, selected_dong: DEFAULT_DONG, birth_year: "", extra_info: "" };
 
-// 🌟 [백신 1] AI가 '분류', '마감일' 등으로 글자를 바꿔도 표를 무조건 찾아내는 강력한 인식기
-const extractSummaryTableText = (text?: string | null) => {
-  if (!text) return "";
+const extractSummaryTableText = (text: string) => {
   const lines = text.split('\n');
   let headerIdx = -1;
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i].includes('|') && (lines[i].includes('정책') || lines[i].includes('마감') || lines[i].includes('혜택') || lines[i].includes('분야') || lines[i].includes('분류'))) {
+    const normalized = lines[i].replace(/ /g, "");
+    if (normalized.includes("|분야|") && normalized.includes("|정책명|") && (normalized.includes("|신청마감일|") || normalized.includes("|핵심혜택|"))) {
       headerIdx = i; break;
-    }
-  }
-  // 글자가 아예 달라도 마크다운 표 구분선(|---|)이 있으면 표로 인식!
-  if (headerIdx === -1) {
-    for (let i = 0; i < lines.length - 1; i++) {
-      if (lines[i].includes('|') && lines[i+1].match(/\|[-:]/)) {
-        headerIdx = i; break;
-      }
     }
   }
   if (headerIdx === -1) return "";
@@ -42,16 +33,16 @@ const extractSummaryTableText = (text?: string | null) => {
     const line = lines[i].trim();
     if (!line) { if (tableLines.length >= 2) break; continue; }
     if (!line.includes('|')) { if (tableLines.length >= 2) break; continue; }
-    tableLines.push(line);
+    tableLines.push(lines[i]);
   }
   return tableLines.join('\n');
 };
 
-const hasSummaryTable = (text?: string | null) => {
-  if (!text) return false;
+const hasSummaryTable = (text: string) => {
   return extractSummaryTableText(text).length > 0;
 };
 
+// 🌟 텍스트 다운로드 헬퍼 함수
 const downloadTextFile = (content: string, filename: string) => {
   const blob = new Blob([content], { type: 'text/plain;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
@@ -64,6 +55,7 @@ const downloadTextFile = (content: string, filename: string) => {
   URL.revokeObjectURL(url);
 };
 
+// 🌟 최신 CSS를 완벽 지원하는 html-to-image로 교체
 const downloadAsImage = async (elementId: string, filename: string) => {
   const element = document.getElementById(elementId);
   if (!element) {
@@ -73,6 +65,7 @@ const downloadAsImage = async (elementId: string, filename: string) => {
 
   try {
     const htmlToImage = await import("html-to-image");
+    
     const isDark = document.documentElement.classList.contains('dark');
     const bgColor = isDark ? '#2d2d2d' : '#ffffff';
     
@@ -106,9 +99,6 @@ export default function Home() {
   const [isFormExpanded, setIsFormExpanded] = useState(true);
   const [showManual, setShowManual] = useState(false);
 
-  // 🌟 [백신 2] 무한 루프를 막아주는 절대 방어막 변수
-  const [hideFollowUpButton, setHideFollowUpButton] = useState(false);
-
   const [isConfirmingDeleteAll, setIsConfirmingDeleteAll] = useState(false);
   const deleteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -124,9 +114,6 @@ export default function Home() {
   const availableDistricts = useMemo(() => CITY_TO_DISTRICTS[city] || [], [city]);
   const availableDongs = useMemo(() => DONG_MAP[`${city}-${district}`] || [], [city, district]);
 
-  const lastUserMessageStr = messages.filter(m => m.role === "user").pop()?.content || "";
-  const isRepeatedFollowUp = lastUserMessageStr.includes("답변이 끊겼어");
-
   useEffect(() => {
     let storedId = localStorage.getItem("pn_user_id");
     if (!storedId) { storedId = `user_${uuidv4()}`; localStorage.setItem("pn_user_id", storedId); }
@@ -137,7 +124,7 @@ export default function Home() {
 
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && currentThreadId && userId && !loading) {
+      if (document.visibilityState === 'visible' && currentThreadId && userId) {
         api.loadMessages(userId, currentThreadId)
           .then((reloadedMessages) => {
             if (reloadedMessages.length > 0) setMessages(reloadedMessages);
@@ -147,17 +134,11 @@ export default function Home() {
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, [currentThreadId, userId, loading]);
+  }, [currentThreadId, userId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, aiStatus]);
-
-  useEffect(() => {
-    if (messages.length > 0) {
-      import("html-to-image");
-    }
-  }, [messages.length]);
 
   const toggleTheme = () => {
     setIsDarkMode(!isDarkMode);
@@ -169,18 +150,14 @@ export default function Home() {
     e.stopPropagation(); 
     if (!confirm("정말 이 대화 기록을 삭제하시겠습니까?")) return;
     try {
-      await api.deleteThread(userId, tid);
-      await loadThreads(userId);
-      if (currentThreadId === tid) {
-        setCurrentThreadId(""); 
-        setMessages([]); 
-        applyInputs(EMPTY_INPUTS); 
-        setIsFormExpanded(true);
-      }
-    } catch (err) { 
-      console.error("삭제 에러:", err);
-      alert("삭제에 실패했습니다.");
-    }
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/threads/${tid}?user_id=${userId}`, { method: 'DELETE' });
+      if (res.ok) {
+        await loadThreads(userId);
+        if (currentThreadId === tid) {
+          setCurrentThreadId(""); setMessages([]); applyInputs(EMPTY_INPUTS); setIsFormExpanded(true);
+        }
+      } else alert("삭제에 실패했습니다.");
+    } catch (err) { console.error("삭제 에러:", err); }
   };
 
   const handleDeleteAll = async () => {
@@ -226,7 +203,7 @@ export default function Home() {
 
   const selectThread = async (uid: string, tid: string) => {
     try {
-      setErrorMessage(""); setCurrentThreadId(tid); setMessages([]); setQuery(""); setIsSidebarOpen(false); setHideFollowUpButton(false);
+      setErrorMessage(""); setCurrentThreadId(tid); setMessages([]); setQuery(""); setIsSidebarOpen(false);
       const [loadedMessages, loadedInputs] = await Promise.all([ api.loadMessages(uid, tid), api.loadThreadInputs(uid, tid) ]);
       setMessages(loadedMessages); applyInputs(loadedInputs);
       if (loadedMessages.length > 0) setIsFormExpanded(false); else setIsFormExpanded(true);
@@ -239,7 +216,6 @@ export default function Home() {
       const newThreadId = await api.createThread(uid);
       setCurrentThreadId(newThreadId); setMessages([]); setQuery(""); applyInputs(EMPTY_INPUTS);
       setIsSidebarOpen(false); setIsFormExpanded(true); setThreads(await api.listThreads(uid));
-      setHideFollowUpButton(false);
     } catch { setErrorMessage("새 대화방을 만들 수 없습니다."); }
   };
 
@@ -251,14 +227,9 @@ export default function Home() {
     return "";
   };
 
+  // 🌟 [수정된 부분] handleSearch 통신 로직 교체
   const handleSearch = async (isFollowUp = false, overridePrompt?: string) => {
     setErrorMessage(""); setAiStatus("");
-
-    if (overridePrompt) {
-      setHideFollowUpButton(true); 
-    } else {
-      setHideFollowUpButton(false);
-    }
 
     if (!userId) return setErrorMessage("사용자 정보가 준비되지 않았습니다. 새로고침 해주세요.");
 
@@ -280,42 +251,35 @@ export default function Home() {
     const followUpText = overridePrompt || query.trim();
     const optimisticUserMessage = isFollowUp ? followUpText : `📍 ${city} ${district} ${dong !== DEFAULT_DONG ? dong : ""} | 🎂 ${birthYear}년생 | 📝 ${extraInfo}`;
 
-    const originalMessages = [...messages]; 
+// 1. 새로운 메시지 배열 생성 (TypeScript에게 명확한 타입 도장 찍기!)
     const newMessages = [...messages, { role: "user" as const, content: optimisticUserMessage }];
 
     setLoading(true);
     setMessages([...newMessages, { role: "assistant" as const, content: "" }]);
     if (isFollowUp && !overridePrompt) setQuery("");
 
-    const abortController = new AbortController();
-    const timeoutId = setTimeout(() => abortController.abort(), 90000); 
-
     try {
       await api.saveThreadInputs(userId, targetThreadId, { selected_city: city, selected_district: district, selected_dong: dong, birth_year: birthYear, extra_info: extraInfo });
 
+      // 🌟 2. /api/chat 내부 주소로 변경 및 messages, userId, threadId 전달
       const response = await fetch(`/api/chat`, {
         method: 'POST', 
-        signal: abortController.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: newMessages,
-          userId: userId,           
-          threadId: targetThreadId  
+          userId: userId,           // 🌟 추가됨: 현재 유저 ID
+          threadId: targetThreadId  // 🌟 추가됨: 현재 대화방 ID
         }),
       });
-
-      clearTimeout(timeoutId);
 
       if (response.status === 403) {
         const errorData = await response.json();
         setErrorMessage(errorData.detail || "오늘의 검색 횟수를 모두 사용했습니다.");
-        setMessages(originalMessages); 
-        setLoading(false); 
-        setIsFormExpanded(true); 
-        return;
+        setMessages((prev) => prev.slice(0, -2)); setLoading(false); setIsFormExpanded(true); return;
       }
       if (!response.ok) throw new Error("서버 통신 오류");
 
+      // 🌟 3. 스트리밍 데이터 파싱 로직 안정화
       const reader = response.body?.getReader();
       const decoder = new TextDecoder("utf-8");
       let accumulatedContent = "";
@@ -331,6 +295,7 @@ export default function Home() {
           buffer = lines.pop() || ""; 
 
           for (const line of lines) {
+            // 'data: ' 접두사가 있든 없든 깔끔하게 JSON만 파싱하도록 처리
             const dataStr = line.replace(/^data:\s*/, '').trim(); 
             if (!dataStr) continue;
 
@@ -348,33 +313,19 @@ export default function Home() {
                 setAiStatus(data.message);
               }
             } catch (e) {
-              // chunk 무시
+              // 불완전한 JSON 청크 무시
             }
           }
         }
       }
 
-      if (!accumulatedContent.trim()) {
-        throw new Error("EMPTY_AI_RESPONSE");
-      }
-
       setLoading(false);
       void api.listThreads(userId).then(setThreads);
 
-    } catch (error: any) {
-      clearTimeout(timeoutId);
+    } catch (error) {
       console.error(error);
-      
-      setMessages(originalMessages); 
-      
-      if (error.name === 'AbortError') {
-        setErrorMessage("응답이 너무 오래 걸려 중단되었습니다. 잠시 후 다시 시도해주세요. ⏳");
-      } else if (error.message === 'EMPTY_AI_RESPONSE') {
-        setErrorMessage("AI가 정보를 찾지 못했습니다. 잠시 후 다시 시도해주세요. 😭");
-      } else {
-        setErrorMessage("서버 상태가 불안정합니다. 잠시 후 다시 시도해 주세요.");
-      }
-      
+      setMessages((prev) => prev.slice(0, -1));
+      setErrorMessage("서버 상태가 불안정합니다. 잠시 후 다시 시도해 주세요.");
       setIsFormExpanded(true);
       setLoading(false);
     }
@@ -497,17 +448,18 @@ export default function Home() {
             <div className="space-y-6 pb-4">
               {messages.map((message, index) => {
                 const isLastMessage = index === messages.length - 1;
+                
+                // 🌟 핵심 수정 1: role이 'user'가 아니면 무조건 AI(마크다운 렌더링)로 인식하게 방어 로직 추가!
                 const isAssistant = message.role !== "user"; 
                 
-                // 🌟 [백신 3] message.content가 null이어도 .length 검사 시 터지지 않게 보호
-                const safeContent = message.content || "";
-                const displayContent = (!loading && isLastMessage && isAssistant && !hasSummaryTable(safeContent)) 
-                  ? safeContent + "\n\n" 
-                  : safeContent;
+                const displayContent = (!loading && isLastMessage && isAssistant && !hasSummaryTable(message.content)) 
+                  ? message.content + "\n\n" 
+                  : message.content;
 
                 return (
                   <div key={`${message.role}-${index}`} className={`flex gap-3 sm:gap-4 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
                     
+                    {/* AI 프로필 아이콘 (이제 무조건 보입니다!) */}
                     {isAssistant && (
                       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-600 mt-1 shadow-sm">
                         <span className="text-[10px] sm:text-xs font-bold text-white">AI</span>
@@ -518,9 +470,10 @@ export default function Home() {
                       
                       <div id={`capture-area-${index}`} className="p-1 rounded-xl">
                         {isAssistant ? (
-                          // 🚨 [진짜 원인 해결] rehypePlugins 완전 삭제 (오류 유발 차단)
+                          // 🌟 핵심 수정 2: 마크다운 렌더러에 h4, h5 추가 및 스타일 초강력 업그레이드!
                           <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
+                            rehypePlugins={[rehypeRaw]} // 🌟 2. 마크다운에 HTML 렌더링 플러그인 추가!
                             components={{
                               p: ({ node, ...props }) => <p className="mb-3 leading-relaxed" {...props} />,
                               ul: ({ node, ...props }) => <ul className="list-disc pl-5 mb-4 space-y-1 marker:text-green-500" {...props} />,
@@ -552,7 +505,7 @@ export default function Home() {
                             {displayContent}
                           </ReactMarkdown>
                         ) : (
-                          <div className="whitespace-pre-wrap leading-relaxed">{safeContent}</div>
+                          <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>
                         )}
                       </div>
                       
@@ -563,14 +516,15 @@ export default function Home() {
                         </div>
                       )}
 
-                      {!loading && isAssistant && safeContent.length > 50 && (
+                      {!loading && isAssistant && message.content.length > 50 && (
                         <div className="mt-4 pt-3 border-t border-gray-200 dark:border-[#444] flex flex-wrap justify-end gap-2 animate-in fade-in duration-300">
-                          <button onClick={() => downloadTextFile(safeContent, `정책내비게이터_전체응답.txt`)} className="text-xs font-bold bg-gray-100 dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-[#333] transition-colors flex items-center gap-1 border border-gray-200 dark:border-[#444]">
+                          
+                          <button onClick={() => downloadTextFile(message.content, `정책내비게이터_전체응답.txt`)} className="text-xs font-bold bg-gray-100 dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-[#333] transition-colors flex items-center gap-1 border border-gray-200 dark:border-[#444]">
                             <FileText size={14}/> 텍스트 저장
                           </button>
                           
-                          {hasSummaryTable(safeContent) && (
-                            <button onClick={() => downloadTextFile(extractSummaryTableText(safeContent), `정책내비게이터_요약표.txt`)} className="text-xs font-bold bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 px-3 py-1.5 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors flex items-center gap-1 border border-blue-200 dark:border-blue-800/30">
+                          {hasSummaryTable(message.content) && (
+                            <button onClick={() => downloadTextFile(extractSummaryTableText(message.content), `정책내비게이터_요약표.txt`)} className="text-xs font-bold bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 px-3 py-1.5 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors flex items-center gap-1 border border-blue-200 dark:border-blue-800/30">
                               <Download size={14}/> 표 텍스트 저장
                             </button>
                           )}
@@ -582,7 +536,7 @@ export default function Home() {
                           <button onClick={async () => {
                               const shareData = { 
                                 title: '나에게 딱 맞는 맞춤형 정부 혜택 🎁', 
-                                text: '정책 내비게이터가 찾아준 맞춤형 혜택을 확인해보세요!\n\n' + safeContent + '\n\n', 
+                                text: '정책 내비게이터가 찾아준 맞춤형 혜택을 확인해보세요!\n\n' + message.content + '\n\n', 
                                 url: window.location.href 
                               };
                               try { 
@@ -600,7 +554,7 @@ export default function Home() {
                         </div>
                       )}
 
-                      {!loading && isLastMessage && isAssistant && !hasSummaryTable(safeContent) && !hideFollowUpButton && !isRepeatedFollowUp && (
+                      {!loading && isLastMessage && isAssistant && !hasSummaryTable(message.content) && (
                          <div className="mt-4 p-4 bg-gray-50 dark:bg-[#1a1a1a] rounded-xl border border-gray-200 dark:border-[#444] animate-in fade-in duration-300">
                            <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
                              <AlertCircle size={16} className="text-yellow-500" />
@@ -617,6 +571,7 @@ export default function Home() {
                            </button>
                          </div>
                       )}
+                      
                     </div>
                   </div>
                 );
@@ -645,19 +600,21 @@ export default function Home() {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] px-4 animate-in fade-in duration-200" onClick={() => setShowManual(false)}>
           <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl shadow-xl w-full max-w-lg relative border border-gray-200 dark:border-[#333] text-left max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <button onClick={() => setShowManual(false)} className="absolute top-4 right-4 p-1.5 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"><X size={20} /></button>
+            
             <h2 className="text-xl font-bold mb-4 border-b border-gray-200 dark:border-[#333] pb-3 text-gray-800 dark:text-gray-100 flex items-center gap-2">
               🧭 정책 내비게이터 100% 활용 가이드
             </h2>
+            
             <div className="space-y-5 text-sm sm:text-base text-gray-700 dark:text-gray-300">
               <div>
                 <strong className="text-green-600 dark:text-green-400 block mb-1">1️⃣ 나의 기본 정보 입력하기</strong>
                 좌측 메뉴(모바일은 상단)에서 거주지와 출생연도를 선택해 주세요.<br/>
                 <p className="mb-3 text-gray-300 leading-relaxed text-sm">
-                  추가 정보 칸에 현재 상황(예: <em className="text-gray-400">대학교 4학년, 1인가구 무주택, 취업 준비 중</em>)을{' '}
-                  <span className="font-bold text-blue-300 bg-blue-900/40 px-1.5 py-0.5 rounded">
-                    구체적으로 입력할수록 AI가 더 많고 정확한 정책을 찾아옵니다.
-                  </span>
-                </p>
+          추가 정보 칸에 현재 상황(예: <em className="text-gray-400">대학교 4학년, 1인가구 무주택, 취업 준비 중</em>)을{' '}
+          <span className="font-bold text-blue-300 bg-blue-900/40 px-1.5 py-0.5 rounded">
+            구체적으로 입력할수록 AI가 더 많고 정확한 정책을 찾아옵니다.
+          </span>
+        </p>
                 <span className="text-red-500 dark:text-red-400 text-[13px] font-medium mt-1.5 block bg-red-50 dark:bg-red-900/20 p-2 rounded-md">※ 주의: 이름, 전화번호 등 민감한 개인정보는 절대 입력하지 마세요!</span>
               </div>
               
@@ -685,12 +642,20 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="mt-6 pt-4 border-t border-gray-700 text-center">
-              <p className="text-sm text-gray-300 mb-2">💡 더 많은 정보나 서비스 건의사항이 있으신가요?</p>
-              <a href="https://www.instagram.com/policyai.kr" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-blue-400 hover:text-blue-300 font-bold transition-colors text-sm">
-                👉 공식 인스타그램 (@policyai.kr) 바로가기
-              </a>
-            </div>
+            {/* 💡 건의사항 및 인스타 링크 섹션 */}
+        <div className="mt-6 pt-4 border-t border-gray-700 text-center">
+          <p className="text-sm text-gray-300 mb-2">
+            💡 더 많은 정보나 서비스 건의사항이 있으신가요?
+          </p>
+          <a
+            href="https://www.instagram.com/policyai.kr"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-blue-400 hover:text-blue-300 font-bold transition-colors text-sm"
+          >
+            👉 공식 인스타그램 (@policyai.kr) 바로가기
+          </a>
+        </div>
             
             <div className="mt-6 pt-4 border-t border-gray-200 dark:border-[#333]">
               <button onClick={() => setShowManual(false)} className="w-full py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl transition-colors active:scale-95 shadow-sm">
@@ -707,7 +672,7 @@ export default function Home() {
             <button onClick={() => setShowDonation(false)} className="absolute top-3 right-3 p-1 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"><X size={20} /></button>
             <div className="w-16 h-16 bg-yellow-100 dark:bg-yellow-900/30 rounded-full flex items-center justify-center mx-auto mb-4"><Coffee size={32} className="text-yellow-600 dark:text-yellow-500" /></div>
             <h2 className="text-xl font-bold mb-2 text-gray-800 dark:text-gray-100">서버 운영에 힘 보태기</h2>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-6 leading-relaxed">AI 데이터 처리 비용과 서버 인프라 유지비로 사용됩니다.<br/>여러분의 소중한 후원이 서비스 발전에 큰 힘이 됩니다. 🙌🙇‍♂️</p>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-6 leading-relaxed">더욱 정확하고 유용한 맞춤형 정책 정보를 제공하기 위해,<br/>AI 데이터 처리 비용과 서버 인프라 유지비로 사용됩니다.<br/>여러분의 소중한 후원이 서비스 발전에 큰 힘이 됩니다. 🙌🙇‍♂️</p>
             <div className="bg-gray-50 dark:bg-[#121212] border border-gray-200 dark:border-[#333] p-4 rounded-xl text-left text-sm font-medium text-gray-700 dark:text-gray-300 mb-6 space-y-1">
               <p className="flex justify-between"><span>은행</span> <span className="font-bold">케이뱅크</span></p>
               <p className="flex justify-between"><span>계좌번호</span> <span className="font-bold">100238386987</span></p>
