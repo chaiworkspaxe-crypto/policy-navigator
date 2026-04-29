@@ -63,7 +63,6 @@ const downloadAsImage = async (elementId: string, filename: string) => {
 
   try {
     const htmlToImage = await import("html-to-image");
-    
     const isDark = document.documentElement.classList.contains('dark');
     const bgColor = isDark ? '#2d2d2d' : '#ffffff';
     
@@ -335,6 +334,11 @@ export default function Home() {
         }
       }
 
+      // 🌟 [핵심 방어] 통신은 성공했는데 AI가 텅 빈 대답을 줬다면 강제로 에러를 발생시킵니다!
+      if (!accumulatedContent.trim()) {
+        throw new Error("EMPTY_AI_RESPONSE");
+      }
+
       setLoading(false);
       void api.listThreads(userId).then(setThreads);
 
@@ -347,6 +351,9 @@ export default function Home() {
       
       if (error.name === 'AbortError') {
         setErrorMessage("응답이 너무 오래 걸려 중단되었습니다. 잠시 후 다시 시도해주세요. ⏳");
+      } else if (error.message === 'EMPTY_AI_RESPONSE') {
+        // 🌟 강제 발생시킨 에러 캐치 -> 유저에게 빈 깡통임을 친절하게 알림!
+        setErrorMessage("AI가 정보를 찾지 못했습니다. (모델 오류) 잠시 후 다시 시도해주세요. 😭");
       } else {
         setErrorMessage("서버 상태가 불안정합니다. 잠시 후 다시 시도해 주세요.");
       }
