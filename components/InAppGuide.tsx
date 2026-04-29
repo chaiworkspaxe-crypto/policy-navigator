@@ -4,12 +4,17 @@ import { useEffect, useState } from 'react';
 
 export default function InAppGuide() {
   const [isInApp, setIsInApp] = useState(false);
-  // 🌟 변경 1: 모달 닫기(무시) 상태 추가
-  const [dismissed, setDismissed] = useState(false);
+  const [dismissed, setDismissed] = useState(false); // ✅ 추가: 모달 닫기 상태
   const [os, setOs] = useState<'ios' | 'android' | 'other'>('other');
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
+    // ✅ sessionStorage로 한 번 닫으면 해당 탭(세션)에서는 다시 띄우지 않음
+    if (typeof window !== 'undefined' && sessionStorage.getItem('inapp_dismissed')) {
+      setDismissed(true);
+      return;
+    }
+    
     // 1. 유저 기기 및 브라우저 정보 가져오기
     const userAgent = navigator.userAgent.toLowerCase();
     
@@ -39,7 +44,13 @@ export default function InAppGuide() {
     }
   };
 
-  // 🌟 변경 2: 인앱 브라우저가 아니거나, 사용자가 '그냥 사용하기'를 눌렀다면 모달을 숨김
+  // ✅ 사용자가 무시 버튼을 눌렀을 때
+  const handleDismiss = () => {
+    setDismissed(true);
+    sessionStorage.setItem('inapp_dismissed', '1');
+  };
+
+  // 인앱 브라우저가 아니거나, 사용자가 '그냥 사용하기'를 눌렀다면 모달을 숨김
   if (!isInApp || dismissed) return null;
 
   return (
@@ -75,12 +86,12 @@ export default function InAppGuide() {
           {copied ? '✅ 복사 완료!' : '🌐 현재 링크 복사하기'}
         </button>
 
-        {/* 🌟 변경 3: 강제 이탈 방지용 닫기(무시) 버튼 추가 */}
+        {/* ✅ 그냥 사용 옵션 (강제 이탈 방지) */}
         <button 
-          onClick={() => setDismissed(true)}
+          onClick={handleDismiss}
           className="mt-4 text-sm text-gray-400 hover:text-gray-600 transition-colors underline underline-offset-2"
         >
-          그냥 사용하기 (일부 기능 제한 가능)
+          그냥 여기서 사용하기 (일부 기능 제한 가능)
         </button>
         
         <p className="text-xs text-gray-500 mt-4 break-keep">
