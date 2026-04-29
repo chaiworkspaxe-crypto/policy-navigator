@@ -6,7 +6,7 @@ import { api, ChatMessage, extractApiErrorMessage, ThreadInputs, ThreadItem } fr
 import { CITY_TO_DISTRICTS, DONG_MAP } from "@/lib/regionData";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-// 🚨 스트리밍 중 화면 폭파의 주범인 rehype-raw 삭제! (마크다운은 remarkGfm만으로 충분함)
+import rehypeRaw from 'rehype-raw'; 
 import { 
   MessageSquare, Plus, Send, Loader2, MapPin, Search, AlertCircle, 
   Menu, X, Trash2, Sun, Moon, Coffee, ChevronUp, ChevronDown, 
@@ -17,37 +17,28 @@ const DEFAULT_CITY = "선택하세요";
 const DEFAULT_DONG = "선택 안 함";
 const EMPTY_INPUTS: ThreadInputs = { selected_city: DEFAULT_CITY, selected_district: DEFAULT_CITY, selected_dong: DEFAULT_DONG, birth_year: "", extra_info: "" };
 
-// 🌟 [핵심 방어] text가 null이거나 비어있을 때 에러 나지 않도록 강철 방어막 추가!
+// 🌟 [백신 1] AI가 단어를 맘대로 바꿔도 표를 잘 인식하도록 업그레이드!
 const extractSummaryTableText = (text?: string | null) => {
-  if (!text || typeof text !== 'string') return "";
-  
+  if (!text) return "";
   const lines = text.split('\n');
   let headerIdx = -1;
-  
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] || "";
-    if (line.includes('|') && (line.includes('정책') || line.includes('마감') || line.includes('혜택') || line.includes('분야') || line.includes('분류'))) {
-      headerIdx = i;
-      break;
+    if (lines[i].includes('|') && (lines[i].includes('정책') || lines[i].includes('마감') || lines[i].includes('혜택') || lines[i].includes('분야') || lines[i].includes('분류'))) {
+      headerIdx = i; break;
     }
   }
-  
   if (headerIdx === -1) {
     for (let i = 0; i < lines.length - 1; i++) {
-      const line = lines[i] || "";
-      const nextLine = lines[i+1] || "";
-      if (line.includes('|') && nextLine.match(/\|[-:]/)) {
-        headerIdx = i;
-        break;
+      if (lines[i].includes('|') && lines[i+1].match(/\|[-:]/)) {
+        headerIdx = i; break;
       }
     }
   }
-
   if (headerIdx === -1) return "";
   
   const tableLines = [lines[headerIdx]];
   for (let i = headerIdx + 1; i < lines.length; i++) {
-    const line = (lines[i] || "").trim();
+    const line = lines[i].trim();
     if (!line) { if (tableLines.length >= 2) break; continue; }
     if (!line.includes('|')) { if (tableLines.length >= 2) break; continue; }
     tableLines.push(line);
@@ -61,7 +52,6 @@ const hasSummaryTable = (text?: string | null) => {
 };
 
 const downloadTextFile = (content: string, filename: string) => {
-  if (!content) return;
   const blob = new Blob([content], { type: 'text/plain;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -115,6 +105,7 @@ export default function Home() {
   const [isFormExpanded, setIsFormExpanded] = useState(true);
   const [showManual, setShowManual] = useState(false);
 
+  // 🌟 [백신 2] 하얀 화면 크래시를 냈던 주범! (누락됐던 변수 선언 추가)
   const [hideFollowUpButton, setHideFollowUpButton] = useState(false);
 
   const [isConfirmingDeleteAll, setIsConfirmingDeleteAll] = useState(false);
@@ -132,7 +123,7 @@ export default function Home() {
   const availableDistricts = useMemo(() => CITY_TO_DISTRICTS[city] || [], [city]);
   const availableDongs = useMemo(() => DONG_MAP[`${city}-${district}`] || [], [city, district]);
 
-  const lastUserMessageStr = (messages.filter(m => m.role === "user").pop()?.content) || "";
+  const lastUserMessageStr = messages.filter(m => m.role === "user").pop()?.content || "";
   const isRepeatedFollowUp = lastUserMessageStr.includes("답변이 끊겼어");
 
   useEffect(() => {
@@ -262,11 +253,9 @@ export default function Home() {
   const handleSearch = async (isFollowUp = false, overridePrompt?: string) => {
     setErrorMessage(""); setAiStatus("");
 
-    if (overridePrompt) {
-      setHideFollowUpButton(true); 
-    } else {
-      setHideFollowUpButton(false);
-    }
+    // 무한 루프 롤백 방지용 상태 저장
+    if (overridePrompt) setHideFollowUpButton(true);
+    else setHideFollowUpButton(false);
 
     if (!userId) return setErrorMessage("사용자 정보가 준비되지 않았습니다. 새로고침 해주세요.");
 
@@ -507,7 +496,7 @@ export default function Home() {
                 const isLastMessage = index === messages.length - 1;
                 const isAssistant = message.role !== "user"; 
                 
-                // 🌟 [핵심 방어] message.content가 undefined/null이어도 에러 나지 않게 빈 문자열로 보정
+                // 🌟 [백신 3] message.content가 null이어도 .length 검사 시 터지지 않게 보호
                 const safeContent = message.content || "";
                 const displayContent = (!loading && isLastMessage && isAssistant && !hasSummaryTable(safeContent)) 
                   ? safeContent + "\n\n" 
@@ -528,7 +517,7 @@ export default function Home() {
                         {isAssistant ? (
                           <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
-                            // rehypePlugins 삭제 완료!
+                            rehypePlugins={[rehypeRaw]} 
                             components={{
                               p: ({ node, ...props }) => <p className="mb-3 leading-relaxed" {...props} />,
                               ul: ({ node, ...props }) => <ul className="list-disc pl-5 mb-4 space-y-1 marker:text-green-500" {...props} />,
