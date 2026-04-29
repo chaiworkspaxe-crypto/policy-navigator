@@ -13,11 +13,14 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const { thread_id, user_id, ...inputs } = await req.json();
   
-  // 🌟 DB 트리거가 updated_at을 자동으로 처리하므로 애플리케이션 단에서는 생략합니다.
+  // 🌟 현재 시간을 명시적으로 생성해서 넣어줍니다!
+  const now = new Date().toISOString();
+  
   const { error } = await supabase.from('chat_thread_inputs').upsert({
     thread_id,
     user_id,
     ...inputs,
+    updated_at: now, // ✅ 에러의 주범이었던 updated_at 강제 주입!
   }, { onConflict: 'thread_id' });
   
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
