@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
 import { Users, MessageSquare, AlertOctagon, Calendar, Activity, RefreshCw, MessageCircle, Database, Plus, Edit, Trash2, X, Save, Bot, Landmark } from "lucide-react";
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
@@ -32,38 +31,35 @@ interface Policy {
   region_req: string;
   summary?: string;
   url?: string;
-  is_auto?: boolean; // 🌟 AI 수집 여부
+  is_auto?: boolean; 
   updated_at?: string;
 }
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#ec4899'];
-
-// 기본 빈 폼 데이터
 const EMPTY_POLICY: Policy = { title: "", provider: "", target_audience: "", age_req: "", income_req: "", region_req: "", summary: "", url: "" };
 
 export default function AdminDashboardPage() {
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+  const [adminPassword, setAdminPassword] = useState(""); // 🌟 비밀번호 저장 상태 추가
   const [loading, setLoading] = useState(true);
   
-  // 메인 탭 상태
   const [activeTab, setActiveTab] = useState<'stats' | 'db'>('stats');
-  // 🌟 DB 서브 탭 상태 (공식 vs AI수집)
   const [dbSubTab, setDbSubTab] = useState<'official' | 'agent'>('official');
 
-  // 통계/데이터 상태
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [officialPolicies, setOfficialPolicies] = useState<Policy[]>([]);
   const [agentPolicies, setAgentPolicies] = useState<Policy[]>([]);
 
-  // 모달 폼 상태
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState<Policy>(EMPTY_POLICY);
 
-  // 통계 불러오기
-  const fetchStats = async () => {
+  // 🌟 [핵심] Axios를 버리고 Native Fetch로 직접 호출 (x-admin-key 헤더에 비밀번호 꽂음!)
+  const fetchStats = async (pwd: string) => {
     setLoading(true);
     try {
-      const data = await api.getAdminStats();
+      const res = await fetch('/api/admin/stats', { headers: { 'x-admin-key': pwd } });
+      if (!res.ok) throw new Error("권한 없음");
+      const data = await res.json();
       setStats(data as DashboardStats);
     } catch (error) {
       console.error("통계 불러오기 실패:", error);
@@ -72,15 +68,15 @@ export default function AdminDashboardPage() {
     }
   };
 
-  // 🌟 정책 리스트 진짜로 불러오기 (백엔드 연동)
-  const fetchPolicies = async () => {
+  const fetchPolicies = async (pwd: string) => {
     setLoading(true);
     try {
-      // lib/api.ts에 getAdminPolicies() 가 정의되어 있다고 가정!
-      const res = await api.getAdminPolicies(); 
-      if (res && res.data) {
-        setOfficialPolicies(res.data.official || []);
-        setAgentPolicies(res.data.agent_collected || []);
+      const res = await fetch('/api/admin/policies', { headers: { 'x-admin-key': pwd } });
+      if (!res.ok) throw new Error("권한 없음");
+      const data = await res.json();
+      if (data) {
+        setOfficialPolicies(data.official || []);
+        setAgentPolicies(data.agent_collected || []);
       }
     } catch (error) {
       console.error("정책 불러오기 실패:", error);
@@ -89,39 +85,46 @@ export default function AdminDashboardPage() {
     }
   };
 
-  // 🌟 CRUD 핸들러 추가
   const handleDeletePolicy = async (id: string) => {
     if (!confirm('이 정책을 비활성화하시겠습니까?')) return;
-    const res = await fetch(`/api/admin/policies/${id}`, { method: 'DELETE' });
+    const res = await fetch(`/api/admin/policies/${id}`, { 
+      method: 'DELETE',
+      headers: { 'x-admin-key': adminPassword } 
+    });
     if (res.ok) {
       alert('비활성화 완료');
-      fetchPolicies();
+      fetchPolicies(adminPassword);
     } else alert('실패');
   };
 
   const handleSavePolicy = async () => {
     const id = formData.id || formData.policy_id;
     if (!id) {
-      alert('새 정책 등록은 다음 PR에서');  // POST는 별도 작업
+      alert('새 정책 등록은 다음 PR에서');  
       return;
     }
     const res = await fetch(`/api/admin/policies/${id}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'x-admin-key': adminPassword 
+      },
       body: JSON.stringify(formData),
     });
     if (res.ok) {
       alert('저장 완료');
       setShowForm(false);
-      fetchPolicies();
+      fetchPolicies(adminPassword);
     } else alert('실패');
   };
 
+  // 🌟 로그인 화면 진입 시 비밀번호를 받고 바로 데이터 Fetch 실행
   useEffect(() => {
     const password = window.prompt("관리자 비밀번호를 입력하세요.");
-    if (password === "8011") {
+    if (password) {
+      setAdminPassword(password);
       setIsAdminAuthenticated(true);
-      fetchStats();
+      fetchStats(password); // 패스워드를 꽂아서 프리패스 요청!
       document.documentElement.classList.add('dark');
     } else {
       alert("접근 권한이 없습니다.");
@@ -129,11 +132,10 @@ export default function AdminDashboardPage() {
     }
   }, []);
 
-  // 탭 전환 핸들러
   const handleTabChange = (tab: 'stats' | 'db') => {
     setActiveTab(tab);
-    if (tab === 'db') fetchPolicies();
-    else fetchStats();
+    if (tab === 'db') fetchPolicies(adminPassword);
+    else fetchStats(adminPassword);
   };
 
   if (!isAdminAuthenticated) return null;
@@ -150,14 +152,12 @@ export default function AdminDashboardPage() {
     return null;
   };
 
-  // 현재 서브 탭에 따라 보여줄 데이터 결정
   const currentPolicies = dbSubTab === 'official' ? officialPolicies : agentPolicies;
 
   return (
     <div className="min-h-screen bg-[#121212] text-gray-100 p-4 sm:p-8 font-sans overflow-y-auto">
       <div className="max-w-6xl mx-auto space-y-6 pb-20">
         
-        {/* 헤더 섹션 */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold text-white flex items-center gap-3">
@@ -177,7 +177,6 @@ export default function AdminDashboardPage() {
           </button>
         </div>
 
-        {/* 🌟 메인 탭 네비게이션 */}
         <div className="flex gap-2 border-b border-gray-800 pt-4">
           <button 
             onClick={() => handleTabChange('stats')}
@@ -193,12 +192,8 @@ export default function AdminDashboardPage() {
           </button>
         </div>
 
-        {/* ========================================================= */}
-        {/* 탭 1: 통계 보기 (기존 그대로) */}
-        {/* ========================================================= */}
         {activeTab === 'stats' && (
           <div className="space-y-8 animate-in fade-in duration-300 pt-4">
-            {/* ... 기존 통계 UI 내용과 동일하므로 생략 없이 유지됨 ... */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="bg-[#1e1e1e] border border-gray-800 rounded-2xl p-5 shadow-lg flex flex-col transition-transform hover:-translate-y-1">
                 <div className="flex items-center gap-3 mb-3">
@@ -309,9 +304,6 @@ export default function AdminDashboardPage() {
           </div>
         )}
 
-        {/* ========================================================= */}
-        {/* 탭 2: 정책 DB 관리 (🌟 서브 탭 추가됨!) */}
-        {/* ========================================================= */}
         {activeTab === 'db' && (
           <div className="space-y-6 animate-in fade-in duration-300 pt-4">
             
@@ -330,7 +322,6 @@ export default function AdminDashboardPage() {
               </button>
             </div>
 
-            {/* 🌟 서브 탭 네비게이션 (공식 vs AI수집) */}
             <div className="flex gap-2 bg-[#1a1a1a] p-1 rounded-xl border border-gray-800 w-fit">
               <button 
                 onClick={() => setDbSubTab('official')}
@@ -346,7 +337,6 @@ export default function AdminDashboardPage() {
               </button>
             </div>
 
-            {/* 정책 리스트 테이블 */}
             <div className="bg-[#1e1e1e] rounded-2xl border border-gray-800 overflow-hidden shadow-lg">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm whitespace-nowrap">
@@ -396,7 +386,6 @@ export default function AdminDashboardPage() {
 
       </div>
 
-      {/* 🌟 정책 추가/수정 모달 (팝업창) */}
       {showForm && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
           <div className="bg-[#1e1e1e] border border-gray-700 rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl">
@@ -408,7 +397,6 @@ export default function AdminDashboardPage() {
             </div>
             
             <div className="p-6 overflow-y-auto space-y-4 flex-1 custom-scrollbar">
-              {/* ... (입력 폼 내용은 기존과 동일) ... */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-gray-400">정책명 (필수)</label>
