@@ -127,7 +127,7 @@ export async function POST(req: Request) {
       model: openai('gpt-5.4'), // 🚨 [수술 완료] 에러 방지를 위해 gpt-4o 모델명으로 수정
       system: SYSTEM_PROMPT,
       messages,
-      maxSteps: 10,
+      maxSteps: 7,
       tools: {
         get_current_time: tool({
           description: '현재 날짜와 시간을 확인합니다.',
