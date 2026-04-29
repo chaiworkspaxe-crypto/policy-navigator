@@ -266,7 +266,7 @@ export default function Home() {
     const followUpText = overridePrompt || query.trim();
     const optimisticUserMessage = isFollowUp ? followUpText : `📍 ${city} ${district} ${dong !== DEFAULT_DONG ? dong : ""} | 🎂 ${birthYear}년생 | 📝 ${extraInfo}`;
 
-// 1. 새로운 메시지 배열 생성 (TypeScript에게 명확한 타입 도장 찍기!)
+    // 1. 새로운 메시지 배열 생성 (TypeScript에게 명확한 타입 도장 찍기!)
     const newMessages = [...messages, { role: "user" as const, content: optimisticUserMessage }];
 
     setLoading(true);
