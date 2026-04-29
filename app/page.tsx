@@ -63,6 +63,7 @@ const downloadAsImage = async (elementId: string, filename: string) => {
 
   try {
     const htmlToImage = await import("html-to-image");
+    
     const isDark = document.documentElement.classList.contains('dark');
     const bgColor = isDark ? '#2d2d2d' : '#ffffff';
     
