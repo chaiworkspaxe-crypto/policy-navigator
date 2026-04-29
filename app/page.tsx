@@ -6,7 +6,7 @@ import { api, ChatMessage, extractApiErrorMessage, ThreadInputs, ThreadItem } fr
 import { CITY_TO_DISTRICTS, DONG_MAP } from "@/lib/regionData";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import rehypeRaw from 'rehype-raw'; 
+// 🚨 스트리밍 중 화면 폭파의 주범인 rehype-raw 삭제! (마크다운은 remarkGfm만으로 충분함)
 import { 
   MessageSquare, Plus, Send, Loader2, MapPin, Search, AlertCircle, 
   Menu, X, Trash2, Sun, Moon, Coffee, ChevronUp, ChevronDown, 
@@ -17,23 +17,26 @@ const DEFAULT_CITY = "선택하세요";
 const DEFAULT_DONG = "선택 안 함";
 const EMPTY_INPUTS: ThreadInputs = { selected_city: DEFAULT_CITY, selected_district: DEFAULT_CITY, selected_dong: DEFAULT_DONG, birth_year: "", extra_info: "" };
 
-// 🌟 [진짜 원인 해결!] AI가 단어를 '분류', '마감일' 등으로 맘대로 바꿔도 표를 인식할 수 있도록 대폭 개선!
-const extractSummaryTableText = (text: string) => {
+// 🌟 [핵심 방어] text가 null이거나 비어있을 때 에러 나지 않도록 강철 방어막 추가!
+const extractSummaryTableText = (text?: string | null) => {
+  if (!text || typeof text !== 'string') return "";
+  
   const lines = text.split('\n');
   let headerIdx = -1;
   
   for (let i = 0; i < lines.length; i++) {
-    // 마크다운 표의 기본 구조인 '|' 문자가 있고, 정책과 관련된 핵심 단어가 하나라도 있으면 표의 시작으로 인정!
-    if (lines[i].includes('|') && (lines[i].includes('정책') || lines[i].includes('마감') || lines[i].includes('혜택') || lines[i].includes('분야') || lines[i].includes('분류'))) {
+    const line = lines[i] || "";
+    if (line.includes('|') && (line.includes('정책') || line.includes('마감') || line.includes('혜택') || line.includes('분야') || line.includes('분류'))) {
       headerIdx = i;
       break;
     }
   }
   
-  // 혹시라도 단어가 아예 다르면, 마크다운 표 구분선(|---| 또는 |:---|) 자체를 찾아서 표로 인식시킴!
   if (headerIdx === -1) {
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].includes('|') && i + 1 < lines.length && lines[i+1].match(/\|[-:]/)) {
+    for (let i = 0; i < lines.length - 1; i++) {
+      const line = lines[i] || "";
+      const nextLine = lines[i+1] || "";
+      if (line.includes('|') && nextLine.match(/\|[-:]/)) {
         headerIdx = i;
         break;
       }
@@ -44,19 +47,21 @@ const extractSummaryTableText = (text: string) => {
   
   const tableLines = [lines[headerIdx]];
   for (let i = headerIdx + 1; i < lines.length; i++) {
-    const line = lines[i].trim();
+    const line = (lines[i] || "").trim();
     if (!line) { if (tableLines.length >= 2) break; continue; }
     if (!line.includes('|')) { if (tableLines.length >= 2) break; continue; }
-    tableLines.push(lines[i]);
+    tableLines.push(line);
   }
   return tableLines.join('\n');
 };
 
-const hasSummaryTable = (text: string) => {
+const hasSummaryTable = (text?: string | null) => {
+  if (!text) return false;
   return extractSummaryTableText(text).length > 0;
 };
 
 const downloadTextFile = (content: string, filename: string) => {
+  if (!content) return;
   const blob = new Blob([content], { type: 'text/plain;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -110,7 +115,6 @@ export default function Home() {
   const [isFormExpanded, setIsFormExpanded] = useState(true);
   const [showManual, setShowManual] = useState(false);
 
-  // 🌟 [핵심 방어선] 롤백되어도 절대 지워지지 않는 독립적인 '버튼 숨김' 상태 (유지)
   const [hideFollowUpButton, setHideFollowUpButton] = useState(false);
 
   const [isConfirmingDeleteAll, setIsConfirmingDeleteAll] = useState(false);
@@ -127,6 +131,9 @@ export default function Home() {
 
   const availableDistricts = useMemo(() => CITY_TO_DISTRICTS[city] || [], [city]);
   const availableDongs = useMemo(() => DONG_MAP[`${city}-${district}`] || [], [city, district]);
+
+  const lastUserMessageStr = (messages.filter(m => m.role === "user").pop()?.content) || "";
+  const isRepeatedFollowUp = lastUserMessageStr.includes("답변이 끊겼어");
 
   useEffect(() => {
     let storedId = localStorage.getItem("pn_user_id");
@@ -500,9 +507,11 @@ export default function Home() {
                 const isLastMessage = index === messages.length - 1;
                 const isAssistant = message.role !== "user"; 
                 
-                const displayContent = (!loading && isLastMessage && isAssistant && !hasSummaryTable(message.content)) 
-                  ? message.content + "\n\n" 
-                  : message.content;
+                // 🌟 [핵심 방어] message.content가 undefined/null이어도 에러 나지 않게 빈 문자열로 보정
+                const safeContent = message.content || "";
+                const displayContent = (!loading && isLastMessage && isAssistant && !hasSummaryTable(safeContent)) 
+                  ? safeContent + "\n\n" 
+                  : safeContent;
 
                 return (
                   <div key={`${message.role}-${index}`} className={`flex gap-3 sm:gap-4 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
@@ -519,7 +528,7 @@ export default function Home() {
                         {isAssistant ? (
                           <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
-                            rehypePlugins={[rehypeRaw]} 
+                            // rehypePlugins 삭제 완료!
                             components={{
                               p: ({ node, ...props }) => <p className="mb-3 leading-relaxed" {...props} />,
                               ul: ({ node, ...props }) => <ul className="list-disc pl-5 mb-4 space-y-1 marker:text-green-500" {...props} />,
@@ -551,7 +560,7 @@ export default function Home() {
                             {displayContent}
                           </ReactMarkdown>
                         ) : (
-                          <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>
+                          <div className="whitespace-pre-wrap leading-relaxed">{safeContent}</div>
                         )}
                       </div>
                       
@@ -562,14 +571,14 @@ export default function Home() {
                         </div>
                       )}
 
-                      {!loading && isAssistant && message.content.length > 50 && (
+                      {!loading && isAssistant && safeContent.length > 50 && (
                         <div className="mt-4 pt-3 border-t border-gray-200 dark:border-[#444] flex flex-wrap justify-end gap-2 animate-in fade-in duration-300">
-                          <button onClick={() => downloadTextFile(message.content, `정책내비게이터_전체응답.txt`)} className="text-xs font-bold bg-gray-100 dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-[#333] transition-colors flex items-center gap-1 border border-gray-200 dark:border-[#444]">
+                          <button onClick={() => downloadTextFile(safeContent, `정책내비게이터_전체응답.txt`)} className="text-xs font-bold bg-gray-100 dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-[#333] transition-colors flex items-center gap-1 border border-gray-200 dark:border-[#444]">
                             <FileText size={14}/> 텍스트 저장
                           </button>
                           
-                          {hasSummaryTable(message.content) && (
-                            <button onClick={() => downloadTextFile(extractSummaryTableText(message.content), `정책내비게이터_요약표.txt`)} className="text-xs font-bold bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 px-3 py-1.5 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors flex items-center gap-1 border border-blue-200 dark:border-blue-800/30">
+                          {hasSummaryTable(safeContent) && (
+                            <button onClick={() => downloadTextFile(extractSummaryTableText(safeContent), `정책내비게이터_요약표.txt`)} className="text-xs font-bold bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 px-3 py-1.5 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors flex items-center gap-1 border border-blue-200 dark:border-blue-800/30">
                               <Download size={14}/> 표 텍스트 저장
                             </button>
                           )}
@@ -581,7 +590,7 @@ export default function Home() {
                           <button onClick={async () => {
                               const shareData = { 
                                 title: '나에게 딱 맞는 맞춤형 정부 혜택 🎁', 
-                                text: '정책 내비게이터가 찾아준 맞춤형 혜택을 확인해보세요!\n\n' + message.content + '\n\n', 
+                                text: '정책 내비게이터가 찾아준 맞춤형 혜택을 확인해보세요!\n\n' + safeContent + '\n\n', 
                                 url: window.location.href 
                               };
                               try { 
@@ -599,8 +608,7 @@ export default function Home() {
                         </div>
                       )}
 
-                      {/* 🌟 버튼 렌더링을 완전히 제어 (표 인식도 정상화됨!) */}
-                      {!loading && isLastMessage && isAssistant && !hasSummaryTable(message.content) && !hideFollowUpButton && (
+                      {!loading && isLastMessage && isAssistant && !hasSummaryTable(safeContent) && !hideFollowUpButton && !isRepeatedFollowUp && (
                          <div className="mt-4 p-4 bg-gray-50 dark:bg-[#1a1a1a] rounded-xl border border-gray-200 dark:border-[#444] animate-in fade-in duration-300">
                            <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
                              <AlertCircle size={16} className="text-yellow-500" />
