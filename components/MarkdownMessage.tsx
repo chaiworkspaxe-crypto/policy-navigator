@@ -3,6 +3,9 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 export default function MarkdownMessage({ content }: { content: string }) {
+  // 🌟 [핵심 방어막] content가 undefined이거나 null일 때 화면이 터지는 것을 방지!
+  const safeContent = content || "";
+
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]} // 표(Table) 렌더링을 위해 필수
@@ -40,7 +43,8 @@ export default function MarkdownMessage({ content }: { content: string }) {
         a: ({ node, ...props }) => <a className="text-green-600 dark:text-green-400 underline underline-offset-2 hover:text-green-700 dark:hover:text-green-300 transition" target="_blank" rel="noopener noreferrer" {...props} />,
       }}
     >
-      {content}
+      {/* 🌟 기존 {content} 대신 절대 죽지 않는 안전한 텍스트로 교체 */}
+      {safeContent}
     </ReactMarkdown>
   );
 }
