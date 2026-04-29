@@ -248,12 +248,19 @@ export async function POST(req: Request) {
         }),
       },
       onFinish: async ({ text }) => {
-        if (userId && threadId && text) {
+        if (userId && threadId) {
+          const now = new Date();
           // 🌟 [수정] 쌍둥이 타임스탬프 버그 해결 (유저 시간은 1초 전으로!)
-          const userTime = new Date(Date.now() - 1000).toISOString(); 
-          const aiTime = new Date().toISOString();
+          const userTime = new Date(now.getTime() - 1000).toISOString(); 
+          const aiTime = now.toISOString();
           
           const lastUserMessage = messages[messages.length - 1]?.content;
+
+          // 🌟 [최강 방어선] AI가 텅 빈 대답을 주면 DB에 쓰레기 데이터 쌓기 금지!
+          if (!text || text.trim() === "") {
+            console.warn("AI가 빈 응답을 반환하여 DB 저장을 취소합니다.");
+            return; // 여기서 실행을 즉시 중단합니다. (DB 오염 원천 차단)
+          }
 
           try {
             // 🌟 [핵심 해결책] 에러가 나면 롤백되도록, 유저 메시지와 AI 메시지를 "답변 성공 시 한 번에" 배열로 저장합니다!
@@ -276,12 +283,10 @@ export async function POST(req: Request) {
                   updated_at: aiTime 
                 }
               ]);
-            }
-
-            // ==============================================================================
-            // 🌟 [C-5-3 추가] 답변 완료 후 사용자 프로필 백그라운드 추출 (Fire-and-forget)
-            // ==============================================================================
-            if (lastUserMessage) {
+              
+              // ==============================================================================
+              // 🌟 [C-5-3 추가] 답변 완료 후 사용자 프로필 백그라운드 추출 (Fire-and-forget)
+              // ==============================================================================
               extractAndSaveProfile(userId, lastUserMessage)
                 .catch(e => console.error('profile extract error:', e));
             }
