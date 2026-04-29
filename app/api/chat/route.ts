@@ -1,9 +1,11 @@
-export const dynamic = 'force-dynamic'; // 🌟 Next.js 캐싱 폭탄을 제거하는 마법의 설정
+
 import { openai } from '@ai-sdk/openai';
 import { streamText, tool } from 'ai';
 import { z } from 'zod';
 import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
+
+export const dynamic = 'force-dynamic'; // 🌟 Next.js 캐싱 폭탄을 제거하는 마법의 설정
 
 // 🌟 [추가] 프로필 추출 라이브러리 임포트
 import { extractAndSaveProfile, loadUserProfile, formatProfileForLLM } from './_lib/extractProfile';
