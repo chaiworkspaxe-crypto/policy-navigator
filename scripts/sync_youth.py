@@ -20,7 +20,10 @@ YOUTH_API_KEY = os.getenv("YOUTH_POLICY_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
-YOUTH_CENTER_URL = "https://www.youthcenter.go.kr/opi/empList.do"
+# 🌟 [URL 변경] 옛 엔드포인트 폐기 → 신규 엔드포인트
+# 기존: https://www.youthcenter.go.kr/opi/empList.do (deprecated, timeout)
+# 신규: https://www.youthcenter.go.kr/go/ythip/getPlcy
+YOUTH_CENTER_URL = "https://www.youthcenter.go.kr/go/ythip/getPlcy"
 
 # 3. Supabase 클라이언트 초기화
 supabase: Client = None
@@ -202,11 +205,15 @@ def fetch_youth_data():
     while True:
         print(f"\n🔄 청년정책 {page}페이지 수집 중...")
 
+        # 🌟 [파라미터 변경] 신규 API 스펙에 맞게 전부 교체
+        # 기존: openApiVcyKey / display / pageIndex / returnType
+        # 신규: apiKeyNm / pageSize / pageNum / rtnType / pageType
         params = {
-            "openApiVcyKey": YOUTH_API_KEY,
-            "display": display,
-            "pageIndex": page,
-            "returnType": "json",
+            "apiKeyNm": YOUTH_API_KEY,
+            "pageSize": display,
+            "pageNum": page,
+            "rtnType": "json",
+            "pageType": "1",  # 1=목록, 2=상세
         }
 
         max_retries = 3
@@ -382,28 +389,33 @@ def fetch_youth_data():
     )
 
     # 🌟 [최종 진화형 안전장치] 진짜 "비정상 API 장애"만 정밀 타격하여 발동
+    # 청년 정책 ID는 "20YYMMDD..." 정확히 20자리 숫자 패턴
+    # (이전 R% 가정은 잘못된 것으로 검증됨 — 실제 ID는 plcyNo 형식)
     if (consecutive_fails >= 3 and total_saved == 0) or (total_saved < 50 and consecutive_fails > 0):
         print(f"⚠️ 청년 API 이상 감지! (안전장치 발동)")
         print(f"   - 실제 DB 저장(변경)량: {total_saved}개")
         print(f"   - 연속 실패 횟수: {consecutive_fails}회")
         print(f"   - 실패 데이터 수: {total_failed}개")
         print(f"   - 중단된 페이지: {page}페이지")
-        
+
         try:
             if supabase:
-                # 🌟 R로 시작하면서 + 청년정책 provider인 것만 골라서 부활! (welfare 침범 원천 차단)
-                response = supabase.table("policies").update({
-                    "updated_at": utc_now_iso(),
-                    "is_active": True
-                }).like("id", "R%").in_(
-                    "provider", ["중앙부처", "지자체", "청년정책"]
-                ).execute()
-                
-                protected_count = len(response.data) if response.data else 0
-                print(f"🛡️ 생명 연장 시도 완료. 영향받은 행 수: {protected_count}개")
-                print(f"   (실제 보호 효과를 확인하려면 Supabase에서 검증을 권장합니다.)")
+                # 🌟 RPC 호출 — 정규식 ^20[0-9]{18}$ + provider 화이트리스트 이중 검증
+                # is_active=True 부활까지 한 번에 처리, 정확한 영향 행 수 반환
+                result = supabase.rpc("revive_youth_policies").execute()
+                protected_count = result.data if isinstance(result.data, int) else 0
+
+                print(f"🛡️ 생명 연장 완료. 부활된 청년 정책: {protected_count}개")
+
+                if protected_count == 0:
+                    print(f"   ℹ️ DB에 청년 정책이 0개입니다.")
+                    print(f"   → 청년 API가 아직 한 번도 성공한 적 없거나 ID 패턴이 변경됨.")
+                else:
+                    print(f"   → 청년 정책이 welfare cleanup에 의해 잘못 비활성화되는 것을 방지했습니다.")
         except Exception as e:
             print(f"⚠️ 안전장치 가동 중 오류 발생: {e}")
+            import traceback
+            print(traceback.format_exc())
 
 
 if __name__ == "__main__":
