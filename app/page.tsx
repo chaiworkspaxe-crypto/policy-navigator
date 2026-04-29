@@ -6,7 +6,7 @@ import { api, ChatMessage, extractApiErrorMessage, ThreadInputs, ThreadItem } fr
 import { CITY_TO_DISTRICTS, DONG_MAP } from "@/lib/regionData";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import rehypeRaw from 'rehype-raw'; // 🌟 1. HTML 렌더링 핵심 부품 임포트 추가!
+import rehypeRaw from 'rehype-raw'; 
 import { 
   MessageSquare, Plus, Send, Loader2, MapPin, Search, AlertCircle, 
   Menu, X, Trash2, Sun, Moon, Coffee, ChevronUp, ChevronDown, 
@@ -42,7 +42,6 @@ const hasSummaryTable = (text: string) => {
   return extractSummaryTableText(text).length > 0;
 };
 
-// 🌟 텍스트 다운로드 헬퍼 함수
 const downloadTextFile = (content: string, filename: string) => {
   const blob = new Blob([content], { type: 'text/plain;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
@@ -55,7 +54,6 @@ const downloadTextFile = (content: string, filename: string) => {
   URL.revokeObjectURL(url);
 };
 
-// 🌟 최신 CSS를 완벽 지원하는 html-to-image로 교체
 const downloadAsImage = async (elementId: string, filename: string) => {
   const element = document.getElementById(elementId);
   if (!element) {
@@ -65,7 +63,6 @@ const downloadAsImage = async (elementId: string, filename: string) => {
 
   try {
     const htmlToImage = await import("html-to-image");
-    
     const isDark = document.documentElement.classList.contains('dark');
     const bgColor = isDark ? '#2d2d2d' : '#ffffff';
     
@@ -122,12 +119,9 @@ export default function Home() {
     document.documentElement.classList.add('dark');
   }, []);
 
-  // 🌟 [수정된 부분] loading 중엔 자동 새로고침 안 함 (race condition 방어)
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' 
-          && currentThreadId && userId 
-          && !loading) {  // ← 스트리밍 중엔 새로고침 금지
+      if (document.visibilityState === 'visible' && currentThreadId && userId && !loading) {
         api.loadMessages(userId, currentThreadId)
           .then((reloadedMessages) => {
             if (reloadedMessages.length > 0) setMessages(reloadedMessages);
@@ -143,10 +137,9 @@ export default function Home() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, aiStatus]);
 
-  // 🌟 [신규 추가] 사용자가 답변 받기 시작하면 백그라운드에서 html-to-image 미리 로드 (딜레이 방지)
   useEffect(() => {
     if (messages.length > 0) {
-      import("html-to-image");  // prefetch (await 없이)
+      import("html-to-image");
     }
   }, [messages.length]);
 
@@ -156,7 +149,6 @@ export default function Home() {
     else document.documentElement.classList.add('dark');
   };
 
-  // 🌟 [수정된 부분] api.deleteThread 사용으로 완전 대체
   const handleDeleteThread = async (tid: string, e: React.MouseEvent) => {
     e.stopPropagation(); 
     if (!confirm("정말 이 대화 기록을 삭제하시겠습니까?")) return;
@@ -242,7 +234,6 @@ export default function Home() {
     return "";
   };
 
-  // 🌟 [수정된 부분] handleSearch 통신 로직 및 AbortError 핸들링
   const handleSearch = async (isFollowUp = false, overridePrompt?: string) => {
     setErrorMessage(""); setAiStatus("");
 
@@ -266,43 +257,45 @@ export default function Home() {
     const followUpText = overridePrompt || query.trim();
     const optimisticUserMessage = isFollowUp ? followUpText : `📍 ${city} ${district} ${dong !== DEFAULT_DONG ? dong : ""} | 🎂 ${birthYear}년생 | 📝 ${extraInfo}`;
 
-    // 1. 새로운 메시지 배열 생성 (TypeScript에게 명확한 타입 도장 찍기!)
+    // 🌟 [핵심] 에러 시 원상복구를 위해 현재 상태를 백업
+    const originalMessages = [...messages]; 
     const newMessages = [...messages, { role: "user" as const, content: optimisticUserMessage }];
 
     setLoading(true);
     setMessages([...newMessages, { role: "assistant" as const, content: "" }]);
     if (isFollowUp && !overridePrompt) setQuery("");
 
-    // 🌟 변수 선언을 try 밖으로 빼서 catch 블록에서도 clearTimeout을 안전하게 호출할 수 있게 개선!
     const abortController = new AbortController();
-    const timeoutId = setTimeout(() => abortController.abort(), 90000); // 90초 대기
+    const timeoutId = setTimeout(() => abortController.abort(), 90000); // 90초
 
     try {
+      // 1. 입력 조건 저장 (여기서 500 에러 나면 바로 catch로 점프!)
       await api.saveThreadInputs(userId, targetThreadId, { selected_city: city, selected_district: district, selected_dong: dong, birth_year: birthYear, extra_info: extraInfo });
 
-      // 🌟 2. /api/chat 내부 주소로 통신 + signal 연동
+      // 2. 채팅 API 호출
       const response = await fetch(`/api/chat`, {
         method: 'POST', 
         signal: abortController.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: newMessages,
-          userId: userId,           // 🌟 추가됨: 현재 유저 ID
-          threadId: targetThreadId  // 🌟 추가됨: 현재 대화방 ID
+          userId: userId,           
+          threadId: targetThreadId  
         }),
       });
 
-      // 정상적으로 응답을 받기 시작하면 타이머 해제
       clearTimeout(timeoutId);
 
       if (response.status === 403) {
         const errorData = await response.json();
         setErrorMessage(errorData.detail || "오늘의 검색 횟수를 모두 사용했습니다.");
-        setMessages((prev) => prev.slice(0, -2)); setLoading(false); setIsFormExpanded(true); return;
+        setMessages(originalMessages); // ✅ 횟수 초과 시 질문 지우고 롤백
+        setLoading(false); 
+        setIsFormExpanded(true); 
+        return;
       }
       if (!response.ok) throw new Error("서버 통신 오류");
 
-      // 🌟 3. 스트리밍 데이터 파싱 로직 안정화
       const reader = response.body?.getReader();
       const decoder = new TextDecoder("utf-8");
       let accumulatedContent = "";
@@ -318,7 +311,6 @@ export default function Home() {
           buffer = lines.pop() || ""; 
 
           for (const line of lines) {
-            // 'data: ' 접두사가 있든 없든 깔끔하게 JSON만 파싱하도록 처리
             const dataStr = line.replace(/^data:\s*/, '').trim(); 
             if (!dataStr) continue;
 
@@ -336,7 +328,7 @@ export default function Home() {
                 setAiStatus(data.message);
               }
             } catch (e) {
-              // 불완전한 JSON 청크 무시
+              // chunk 무시
             }
           }
         }
@@ -346,12 +338,12 @@ export default function Home() {
       void api.listThreads(userId).then(setThreads);
 
     } catch (error: any) {
-      // 🌟 [추가됨] 통신 실패, 혹은 Timeout이 걸렸을 때 처리
       clearTimeout(timeoutId);
       console.error(error);
-      setMessages((prev) => prev.slice(0, -1));
       
-      // ✨ AbortError를 콕 집어내어 사용자 친화적인 메시지 노출!
+      // 🌟 [핵심] 에러 발생 시(DB 500에러 포함) 무조건 백업했던 상태로 롤백!
+      setMessages(originalMessages); 
+      
       if (error.name === 'AbortError') {
         setErrorMessage("응답이 너무 오래 걸려 중단되었습니다. 잠시 후 다시 시도해주세요. ⏳");
       } else {
@@ -480,8 +472,6 @@ export default function Home() {
             <div className="space-y-6 pb-4">
               {messages.map((message, index) => {
                 const isLastMessage = index === messages.length - 1;
-                
-                // 🌟 핵심 수정 1: role이 'user'가 아니면 무조건 AI(마크다운 렌더링)로 인식하게 방어 로직 추가!
                 const isAssistant = message.role !== "user"; 
                 
                 const displayContent = (!loading && isLastMessage && isAssistant && !hasSummaryTable(message.content)) 
@@ -491,7 +481,6 @@ export default function Home() {
                 return (
                   <div key={`${message.role}-${index}`} className={`flex gap-3 sm:gap-4 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
                     
-                    {/* AI 프로필 아이콘 (이제 무조건 보입니다!) */}
                     {isAssistant && (
                       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-600 mt-1 shadow-sm">
                         <span className="text-[10px] sm:text-xs font-bold text-white">AI</span>
@@ -502,10 +491,9 @@ export default function Home() {
                       
                       <div id={`capture-area-${index}`} className="p-1 rounded-xl">
                         {isAssistant ? (
-                          // 🌟 핵심 수정 2: 마크다운 렌더러에 h4, h5 추가 및 스타일 초강력 업그레이드!
                           <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
-                            rehypePlugins={[rehypeRaw]} // 🌟 2. 마크다운에 HTML 렌더링 플러그인 추가!
+                            rehypePlugins={[rehypeRaw]} 
                             components={{
                               p: ({ node, ...props }) => <p className="mb-3 leading-relaxed" {...props} />,
                               ul: ({ node, ...props }) => <ul className="list-disc pl-5 mb-4 space-y-1 marker:text-green-500" {...props} />,
@@ -550,7 +538,6 @@ export default function Home() {
 
                       {!loading && isAssistant && message.content.length > 50 && (
                         <div className="mt-4 pt-3 border-t border-gray-200 dark:border-[#444] flex flex-wrap justify-end gap-2 animate-in fade-in duration-300">
-                          
                           <button onClick={() => downloadTextFile(message.content, `정책내비게이터_전체응답.txt`)} className="text-xs font-bold bg-gray-100 dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-[#333] transition-colors flex items-center gap-1 border border-gray-200 dark:border-[#444]">
                             <FileText size={14}/> 텍스트 저장
                           </button>
@@ -603,7 +590,6 @@ export default function Home() {
                            </button>
                          </div>
                       )}
-                      
                     </div>
                   </div>
                 );
@@ -632,21 +618,19 @@ export default function Home() {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] px-4 animate-in fade-in duration-200" onClick={() => setShowManual(false)}>
           <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl shadow-xl w-full max-w-lg relative border border-gray-200 dark:border-[#333] text-left max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <button onClick={() => setShowManual(false)} className="absolute top-4 right-4 p-1.5 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"><X size={20} /></button>
-            
             <h2 className="text-xl font-bold mb-4 border-b border-gray-200 dark:border-[#333] pb-3 text-gray-800 dark:text-gray-100 flex items-center gap-2">
               🧭 정책 내비게이터 100% 활용 가이드
             </h2>
-            
             <div className="space-y-5 text-sm sm:text-base text-gray-700 dark:text-gray-300">
               <div>
                 <strong className="text-green-600 dark:text-green-400 block mb-1">1️⃣ 나의 기본 정보 입력하기</strong>
                 좌측 메뉴(모바일은 상단)에서 거주지와 출생연도를 선택해 주세요.<br/>
                 <p className="mb-3 text-gray-300 leading-relaxed text-sm">
-          추가 정보 칸에 현재 상황(예: <em className="text-gray-400">대학교 4학년, 1인가구 무주택, 취업 준비 중</em>)을{' '}
-          <span className="font-bold text-blue-300 bg-blue-900/40 px-1.5 py-0.5 rounded">
-            구체적으로 입력할수록 AI가 더 많고 정확한 정책을 찾아옵니다.
-          </span>
-        </p>
+                  추가 정보 칸에 현재 상황(예: <em className="text-gray-400">대학교 4학년, 1인가구 무주택, 취업 준비 중</em>)을{' '}
+                  <span className="font-bold text-blue-300 bg-blue-900/40 px-1.5 py-0.5 rounded">
+                    구체적으로 입력할수록 AI가 더 많고 정확한 정책을 찾아옵니다.
+                  </span>
+                </p>
                 <span className="text-red-500 dark:text-red-400 text-[13px] font-medium mt-1.5 block bg-red-50 dark:bg-red-900/20 p-2 rounded-md">※ 주의: 이름, 전화번호 등 민감한 개인정보는 절대 입력하지 마세요!</span>
               </div>
               
@@ -674,20 +658,12 @@ export default function Home() {
               </div>
             </div>
 
-            {/* 💡 건의사항 및 인스타 링크 섹션 */}
-        <div className="mt-6 pt-4 border-t border-gray-700 text-center">
-          <p className="text-sm text-gray-300 mb-2">
-            💡 더 많은 정보나 서비스 건의사항이 있으신가요?
-          </p>
-          <a
-            href="https://www.instagram.com/policyai.kr"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-blue-400 hover:text-blue-300 font-bold transition-colors text-sm"
-          >
-            👉 공식 인스타그램 (@policyai.kr) 바로가기
-          </a>
-        </div>
+            <div className="mt-6 pt-4 border-t border-gray-700 text-center">
+              <p className="text-sm text-gray-300 mb-2">💡 더 많은 정보나 서비스 건의사항이 있으신가요?</p>
+              <a href="https://www.instagram.com/policyai.kr" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-blue-400 hover:text-blue-300 font-bold transition-colors text-sm">
+                👉 공식 인스타그램 (@policyai.kr) 바로가기
+              </a>
+            </div>
             
             <div className="mt-6 pt-4 border-t border-gray-200 dark:border-[#333]">
               <button onClick={() => setShowManual(false)} className="w-full py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl transition-colors active:scale-95 shadow-sm">
@@ -704,7 +680,7 @@ export default function Home() {
             <button onClick={() => setShowDonation(false)} className="absolute top-3 right-3 p-1 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"><X size={20} /></button>
             <div className="w-16 h-16 bg-yellow-100 dark:bg-yellow-900/30 rounded-full flex items-center justify-center mx-auto mb-4"><Coffee size={32} className="text-yellow-600 dark:text-yellow-500" /></div>
             <h2 className="text-xl font-bold mb-2 text-gray-800 dark:text-gray-100">서버 운영에 힘 보태기</h2>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-6 leading-relaxed">더욱 정확하고 유용한 맞춤형 정책 정보를 제공하기 위해,<br/>AI 데이터 처리 비용과 서버 인프라 유지비로 사용됩니다.<br/>여러분의 소중한 후원이 서비스 발전에 큰 힘이 됩니다. 🙌🙇‍♂️</p>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-6 leading-relaxed">AI 데이터 처리 비용과 서버 인프라 유지비로 사용됩니다.<br/>여러분의 소중한 후원이 서비스 발전에 큰 힘이 됩니다. 🙌🙇‍♂️</p>
             <div className="bg-gray-50 dark:bg-[#121212] border border-gray-200 dark:border-[#333] p-4 rounded-xl text-left text-sm font-medium text-gray-700 dark:text-gray-300 mb-6 space-y-1">
               <p className="flex justify-between"><span>은행</span> <span className="font-bold">케이뱅크</span></p>
               <p className="flex justify-between"><span>계좌번호</span> <span className="font-bold">100238386987</span></p>
