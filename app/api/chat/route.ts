@@ -29,7 +29,7 @@ const SYSTEM_PROMPT = `
 0.5. [매우 중요] 응답 시작 패턴 — 도구 호출 전 반드시 다음을 먼저 스트리밍:
    1) 한 줄 인사 ("OOOO년 O월 O일 기준으로 찾아드릴게요!")
    2) 검색 계획 안내 ("거주지 ___, 출생연도 ___을 토대로 다음 분야들을 한 번에 살펴볼게요:
-      💼 일자리 / 🏠 주거·금융 / 📚 교육·문화 / ❤️ 복지·건강 / 👶 양육·돌봄" / 등)
+     💼 일자리 / 🏠 주거·금융 / 📚 교육·문화 / ❤️ 복지·건강 / 👶 양육·돌봄" / 등)
    3) 그 다음에 도구 호출 시작
    
 1. 프로필 활용 — "답하면서 묻기" 패턴:
@@ -100,6 +100,40 @@ const SYSTEM_PROMPT = `
 export async function POST(req: Request) {
   try {
     const { messages, userId, threadId } = await req.json();
+
+    // 🌟 [핵심 로직 추가] 입력 검증
+    if (!userId || !threadId || !Array.isArray(messages)) {
+      return new Response(
+        JSON.stringify({ detail: '필수 파라미터 누락' }), 
+        { status: 400 }
+      );
+    }
+
+    // 🌟 [핵심 로직 추가] Quota 차감 (atomic) — 어드민 식별 후 분기
+    const adminCookie = req.headers.get('cookie')?.match(/admin_session=([^;]+)/);
+    const isAdmin = adminCookie 
+      ? decodeURIComponent(adminCookie[1]) === process.env.ADMIN_PASS_KEY 
+      : false;
+    
+    if (!isAdmin) {
+      const { data: quota, error: quotaError } = await supabase.rpc('consume_quota', {
+        p_user_id: userId,
+        p_daily_limit: 4,
+      });
+      
+      if (quotaError) {
+        console.error('quota error:', quotaError);
+        // quota 시스템 장애 시 통과시킴 (degraded mode)
+      } else if (quota && !quota.allowed) {
+        return new Response(
+          JSON.stringify({ 
+            detail: `오늘의 검색 횟수(${quota.limit}회)를 모두 사용했습니다. 내일 다시 이용해주세요.`,
+            quota: quota,
+          }), 
+          { status: 403, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+    }
 
     // ✅ user 메시지를 요청 시작 시점에 즉시 저장 (스트리밍과 별개)
     if (userId && threadId && messages.length > 0) {
