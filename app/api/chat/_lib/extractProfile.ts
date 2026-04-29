@@ -40,7 +40,7 @@ export async function extractAndSaveProfile(userId: string, userMessage: string)
   
   try {
     const response = await openai.chat.completions.create({
-      model: "gpt-5.4-nano",
+      model: "gpt-5.4",
       messages: [{
         role: "user",
         content: PROFILE_EXTRACTION_PROMPT.replace("{message}", userMessage.slice(0, 500))
