@@ -51,7 +51,7 @@ def deactivate_stale_policies(total_saved):
     try:
         three_days_ago = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
         
-        # 🌟 Hard Delete 방지 + 불필요한 중복 업데이트 방지 로직 완벽 적용!
+        # 🌟 Hard Delete 방지 + 불필요한 중복 업데이트 방지 + 청년 정책(R%) 침범 방지 로직 완벽 적용!
         response = (
             supabase.table("policies")
             .update({
@@ -60,6 +60,7 @@ def deactivate_stale_policies(total_saved):
             })
             .lt("updated_at", three_days_ago)
             .eq("is_active", True)  # 이미 비활성인 것 중복 처리 방지
+            .not_.like("id", "R%")  # 🌟 청년 정책 데이터는 건드리지 않음 (선 긋기)
             .execute()
         )
         deactivated_count = len(response.data) if response.data else 0
