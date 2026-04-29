@@ -1,4 +1,3 @@
-//app/admin/dashboard/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -41,7 +40,7 @@ const EMPTY_POLICY: Policy = { title: "", provider: "", target_audience: "", age
 
 export default function AdminDashboardPage() {
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
-  const [adminPassword, setAdminPassword] = useState(""); // 🌟 비밀번호 저장 상태 추가
+  const [adminPassword, setAdminPassword] = useState(""); 
   const [loading, setLoading] = useState(true);
   
   const [activeTab, setActiveTab] = useState<'stats' | 'db'>('stats');
@@ -54,14 +53,14 @@ export default function AdminDashboardPage() {
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState<Policy>(EMPTY_POLICY);
 
-  // 🌟 [핵심] Axios를 버리고 Native Fetch로 직접 호출 (x-admin-key 헤더에 비밀번호 꽂음!)
   const fetchStats = async (pwd: string) => {
     setLoading(true);
     try {
       const res = await fetch('/api/admin/stats', { headers: { 'x-admin-key': pwd } });
       if (!res.ok) throw new Error("권한 없음");
-      const data = await res.json();
-      setStats(data as DashboardStats);
+      const json = await res.json();
+      // 🌟 [핵심 수정 1] 백엔드가 보내준 상자(json) 안의 실제 알맹이(data)를 꺼내서 저장합니다.
+      setStats(json.data ? (json.data as DashboardStats) : (json as DashboardStats));
     } catch (error) {
       console.error("통계 불러오기 실패:", error);
     } finally {
@@ -119,13 +118,12 @@ export default function AdminDashboardPage() {
     } else alert('실패');
   };
 
-  // 🌟 로그인 화면 진입 시 비밀번호를 받고 바로 데이터 Fetch 실행
   useEffect(() => {
     const password = window.prompt("관리자 비밀번호를 입력하세요.");
     if (password) {
       setAdminPassword(password);
       setIsAdminAuthenticated(true);
-      fetchStats(password); // 패스워드를 꽂아서 프리패스 요청!
+      fetchStats(password); 
       document.documentElement.classList.add('dark');
     } else {
       alert("접근 권한이 없습니다.");
@@ -201,7 +199,8 @@ export default function AdminDashboardPage() {
                   <div className="p-2.5 bg-blue-500/10 rounded-lg"><Users size={20} className="text-blue-500" /></div>
                   <h2 className="text-gray-400 text-sm font-semibold">총 누적 사용자</h2>
                 </div>
-                <div className="text-3xl font-extrabold text-white mt-auto">{loading ? "-" : stats?.total_users.toLocaleString()} <span className="text-base text-gray-500 font-medium">명</span></div>
+                {/* 🌟 [핵심 수정 2] 값이 없을 때 화면이 터지지 않도록 (stats?.total_users || 0) 방어막을 쳤습니다. */}
+                <div className="text-3xl font-extrabold text-white mt-auto">{loading ? "-" : (stats?.total_users || 0).toLocaleString()} <span className="text-base text-gray-500 font-medium">명</span></div>
               </div>
 
               <div className="bg-[#1e1e1e] border border-gray-800 rounded-2xl p-5 shadow-lg flex flex-col transition-transform hover:-translate-y-1">
@@ -209,7 +208,7 @@ export default function AdminDashboardPage() {
                   <div className="p-2.5 bg-green-500/10 rounded-lg"><MessageSquare size={20} className="text-green-500" /></div>
                   <h2 className="text-gray-400 text-sm font-semibold">총 생성된 대화방</h2>
                 </div>
-                <div className="text-3xl font-extrabold text-white mt-auto">{loading ? "-" : stats?.total_threads.toLocaleString()} <span className="text-base text-gray-500 font-medium">개</span></div>
+                <div className="text-3xl font-extrabold text-white mt-auto">{loading ? "-" : (stats?.total_threads || 0).toLocaleString()} <span className="text-base text-gray-500 font-medium">개</span></div>
               </div>
 
               <div className="bg-[#1e1e1e] border border-purple-900/30 rounded-2xl p-5 shadow-lg flex flex-col transition-transform hover:-translate-y-1">
@@ -217,7 +216,7 @@ export default function AdminDashboardPage() {
                   <div className="p-2.5 bg-purple-500/10 rounded-lg"><MessageCircle size={20} className="text-purple-500" /></div>
                   <h2 className="text-gray-400 text-sm font-semibold">유저 평균 티키타카</h2>
                 </div>
-                <div className="text-3xl font-extrabold text-purple-400 mt-auto">{loading ? "-" : stats?.avg_conversation_depth} <span className="text-base text-purple-900/70 font-medium">턴</span></div>
+                <div className="text-3xl font-extrabold text-purple-400 mt-auto">{loading ? "-" : (stats?.avg_conversation_depth || 0)} <span className="text-base text-purple-900/70 font-medium">턴</span></div>
               </div>
 
               <div className="bg-[#1e1e1e] border border-red-900/30 rounded-2xl p-5 shadow-lg flex flex-col transition-transform hover:-translate-y-1">
@@ -225,7 +224,7 @@ export default function AdminDashboardPage() {
                   <div className="p-2.5 bg-red-500/10 rounded-lg"><AlertOctagon size={20} className="text-red-500" /></div>
                   <h2 className="text-gray-400 text-sm font-semibold">오늘 한도 초과 방어</h2>
                 </div>
-                <div className="text-3xl font-extrabold text-red-400 mt-auto">{loading ? "-" : stats?.blocked_today.toLocaleString()} <span className="text-base text-red-900/70 font-medium">건</span></div>
+                <div className="text-3xl font-extrabold text-red-400 mt-auto">{loading ? "-" : (stats?.blocked_today || 0).toLocaleString()} <span className="text-base text-red-900/70 font-medium">건</span></div>
               </div>
             </div>
 
