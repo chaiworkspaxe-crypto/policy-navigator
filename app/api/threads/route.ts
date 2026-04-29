@@ -37,14 +37,14 @@ export async function DELETE(req: Request) {
   const threadId = searchParams.get('thread_id');
   const deleteAll = searchParams.get('delete_all');
 
+  // ✅ user_id 필수 + 형식 검증
   if (!userId) {
     return NextResponse.json({ error: 'user_id required' }, { status: 400 });
   }
-
-  // user_id 형식 검증 (uuid 아니면 거부)
+  
   const uuidRegex = /^user_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (!uuidRegex.test(userId)) {
-    return NextResponse.json({ error: 'invalid user_id' }, { status: 400 });
+    return NextResponse.json({ error: 'invalid user_id format' }, { status: 400 });
   }
 
   let result;
@@ -52,9 +52,14 @@ export async function DELETE(req: Request) {
     result = await supabase.from('chat_threads').delete().eq('user_id', userId);
   } else if (threadId) {
     result = await supabase.from('chat_threads')
-      .delete().eq('user_id', userId).eq('thread_id', threadId);
+      .delete()
+      .eq('user_id', userId)
+      .eq('thread_id', threadId);
   } else {
-    return NextResponse.json({ error: 'thread_id or delete_all required' }, { status: 400 });
+    return NextResponse.json(
+      { error: 'thread_id or delete_all=true required' }, 
+      { status: 400 }
+    );
   }
 
   if (result.error) {
