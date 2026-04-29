@@ -381,6 +381,21 @@ def fetch_youth_data():
         f"saved={total_saved}, failed={total_failed}, skipped={total_skipped}\n"
     )
 
+    # 🌟 [추가된 안전장치] API 다운/장애 시 청년 정책 '좀비화' 방어 로직
+    if total_saved == 0 and consecutive_fails >= 3:
+        print("⚠️ 청년 API 연속 실패 감지! 기존 데이터가 모두 삭제(숨김)되는 것을 막기 위해 생명 연장을 시도합니다.")
+        try:
+            if supabase:
+                # 청년 정책은 보통 ID가 'R' (예: R2024...) 로 시작하는 규칙 활용
+                response = supabase.table("policies").update({
+                    "updated_at": utc_now_iso()
+                }).like("id", "R%").execute()
+                
+                protected_count = len(response.data) if response.data else 0
+                print(f"🛡️ 생명 연장 성공! 총 {protected_count}개의 청년 정책이 안전하게 보호되었습니다.")
+        except Exception as e:
+            print(f"⚠️ 안전장치 가동 중 오류 발생: {e}")
+
 
 if __name__ == "__main__":
     fetch_youth_data()
