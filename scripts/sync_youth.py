@@ -381,18 +381,21 @@ def fetch_youth_data():
         f"saved={total_saved}, failed={total_failed}, skipped={total_skipped}\n"
     )
 
-    # 🌟 [추가된 안전장치] API 다운/장애 시 청년 정책 '좀비화' 방어 로직
-    if total_saved == 0 and consecutive_fails >= 3:
-        print("⚠️ 청년 API 연속 실패 감지! 기존 데이터가 모두 삭제(숨김)되는 것을 막기 위해 생명 연장을 시도합니다.")
+    # 🌟 [추가/강화된 안전장치] API 다운/장애 시 청년 정책 '좀비화' 방어 로직
+    EXPECTED_MIN_POLICIES = 1000  # 청년정책 평균 개수 대비 넉넉한 하한선
+    if total_saved < EXPECTED_MIN_POLICIES or consecutive_fails >= 3:
+        print(f"⚠️ 청년 API 이상 감지 (수집량 {total_saved}개 미달 또는 연속 실패). 기존 청년 정책의 생명 연장(부활)을 시도합니다.")
         try:
             if supabase:
-                # 청년 정책은 보통 ID가 'R' (예: R2024...) 로 시작하는 규칙 활용
+                # 🌟 죽어버린(is_active=False) 청년 정책까지 완벽하게 부활(True)시키는 강력한 방어 로직
                 response = supabase.table("policies").update({
-                    "updated_at": utc_now_iso()
+                    "updated_at": utc_now_iso(),
+                    "is_active": True
                 }).like("id", "R%").execute()
                 
                 protected_count = len(response.data) if response.data else 0
-                print(f"🛡️ 생명 연장 성공! 총 {protected_count}개의 청년 정책이 안전하게 보호되었습니다.")
+                print(f"🛡️ 생명 연장 및 부활 완료! 영향받은 행 수: {protected_count}개")
+                print(f"   (실제 보호 효과를 확인하려면 Supabase에서 직접 검증을 권장합니다.)")
         except Exception as e:
             print(f"⚠️ 안전장치 가동 중 오류 발생: {e}")
 
