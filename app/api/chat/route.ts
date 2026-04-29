@@ -135,22 +135,24 @@ export async function POST(req: Request) {
       }
     }
 
-    // ✅ user 메시지를 요청 시작 시점에 즉시 저장 (스트리밍과 별개)
+    // ✅ [수정 완료] User 메시지 즉시 저장 (스트리밍과 별개로 먼저 꽂아 넣음!)
     if (userId && threadId && messages.length > 0) {
-      const lastUserMessage = messages[messages.length - 1].content;
-      const now = new Date().toISOString();
-      try {
-        await supabase.from('chat_messages').insert({
-          thread_id: threadId,
-          user_id: userId,
-          role: 'user',
-          content: lastUserMessage,
-          created_at: now,
-          updated_at: now,
-        });
-      } catch (e) {
-        console.error('user msg save failed:', e);
-        // 사용자 경험을 위해 에러로 막진 않음 — 채팅은 계속 진행
+      const lastUserMessage = messages[messages.length - 1]?.content; // 옵셔널 체이닝으로 방어
+      if (lastUserMessage) {
+        const now = new Date().toISOString();
+        try {
+          await supabase.from('chat_messages').insert({
+            thread_id: threadId,
+            user_id: userId,
+            role: 'user',
+            content: lastUserMessage,
+            created_at: now,
+            updated_at: now,
+          });
+        } catch (e) {
+          console.error('user msg save failed:', e);
+          // 사용자 경험을 위해 에러로 막진 않음 — 채팅은 계속 진행
+        }
       }
     }
 
@@ -158,7 +160,7 @@ export async function POST(req: Request) {
     // 🤖 1. 에이전트 실행 (파이썬의 AgentExecutor 완벽 대체)
     // ==============================================================================
     const result = await streamText({
-      model: openai('gpt-5.4'), // 🚨 [수술 완료] 에러 방지를 위해 gpt-4o 모델명으로 수정
+      model: openai('gpt-5.4'), // 🚨 [수술 완료] 요청하신 대로 gpt-5.4 고정 완료!
       system: SYSTEM_PROMPT,
       messages,
       maxSteps: 7,
@@ -231,11 +233,10 @@ export async function POST(req: Request) {
           },
         }),
       },
-      // 🌟 [수술 완료] DB 저장 시 updated_at 누락 에러 완벽 차단!
+      // 🌟 [수정 완료] 이제 여기서 User는 무시하고 Assistant 메시지만 저장합니다.
       onFinish: async ({ text }) => {
         if (userId && threadId && text) {
-          // ✅ 이제 assistant 메시지만 저장
-          const now = new Date().toISOString(); // 현재 시간 생성!
+          const now = new Date().toISOString();
           try {
             await supabase.from('chat_messages').insert({
               thread_id: threadId,
