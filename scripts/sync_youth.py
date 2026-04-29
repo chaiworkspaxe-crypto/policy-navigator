@@ -8,6 +8,9 @@ from supabase import create_client, Client
 from dotenv import load_dotenv
 from langchain_openai import OpenAIEmbeddings
 
+# 🌟 [추가] 메타데이터 추출기 임포트
+from _eligibility_extractor import extract_eligibility
+
 # 1. 환경변수 로드
 load_dotenv()
 
@@ -20,9 +23,7 @@ YOUTH_API_KEY = os.getenv("YOUTH_POLICY_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
-# 🌟 [URL 변경] 옛 엔드포인트 폐기 → 신규 엔드포인트
-# 기존: https://www.youthcenter.go.kr/opi/empList.do (deprecated, timeout)
-# 신규: https://www.youthcenter.go.kr/go/ythip/getPlcy
+# 🌟 https://m.kpedia.jp/w/9989 옛 엔드포인트 폐기 → 신규 엔드포인트
 YOUTH_CENTER_URL = "https://www.youthcenter.go.kr/go/ythip/getPlcy"
 
 # 3. Supabase 클라이언트 초기화
@@ -113,7 +114,22 @@ def sync_to_supabase(policies):
         result["success"] = True
         return result
 
-    print(f"🤖 {len(policies)}개 중 변경된 {len(needs_embedding)}개만 임베딩 변환 중...")
+    print(f"🤖 {len(policies)}개 중 변경된 {len(needs_embedding)}개만 임베딩 및 파싱 변환 중...")
+
+    # 🌟 [추가됨] 하이브리드 검색용 메타데이터 추출 로직
+    for d in needs_embedding:
+        eligibility = extract_eligibility(d)
+        d.update({
+            "age_min": eligibility.get("age_min"),
+            "age_max": eligibility.get("age_max"),
+            "region_sido": eligibility.get("region_sido"),
+            "region_sigungu": eligibility.get("region_sigungu"),
+            "household_types": eligibility.get("household_types") or [],
+            "housing_status": eligibility.get("housing_status") or [],
+            "employment_status": eligibility.get("employment_status") or [],
+            "special_status": eligibility.get("special_status") or [],
+            "deadline_date": eligibility.get("deadline_date"),
+        })
 
     # 🟢 [수정 6] 임베딩을 더 작은 청크로 격리 (1개 실패가 전체 페이지 날리는 것 방지)
     EMBED_CHUNK = 20
@@ -206,8 +222,6 @@ def fetch_youth_data():
         print(f"\n🔄 청년정책 {page}페이지 수집 중...")
 
         # 🌟 [파라미터 변경] 신규 API 스펙에 맞게 전부 교체
-        # 기존: openApiVcyKey / display / pageIndex / returnType
-        # 신규: apiKeyNm / pageSize / pageNum / rtnType / pageType
         params = {
             "apiKeyNm": YOUTH_API_KEY,
             "pageSize": display,
@@ -244,10 +258,7 @@ def fetch_youth_data():
                         print("⚠️ JSON 파싱 실패 → XML 파싱 시도로 전환!")
                         try:
                             root = ET.fromstring(response.text)
-                            # XML 태그명은 실제 응답 구조에 따라 조정 필요
-                            items = root.findall(".//emp") or root.findall(
-                                ".//youthPolicyList"
-                            )
+                            items = root.findall(".//emp") or root.findall(".//youthPolicyList")
                             print(f"🔍 [XML Fallback] 탐색된 정책 수: {len(items)}")
 
                             youth_list = []
@@ -275,17 +286,13 @@ def fetch_youth_data():
                             print(f"❌ XML 파싱도 실패: {xml_err}")
 
                 elif response.status_code == 403:
-                    # 🟢 [수정 5] 403은 IP/키 차단 신호 → 즉시 전체 종료
                     print("❌ 403 Forbidden: IP/키 차단 의심. 전체 수집 중단합니다.")
                     force_stop = True
                     break
 
                 else:
-                    # 🟢 [수정 4] 그 외 비정상 응답에도 백오프 적용
                     wait = 2 ** attempt
-                    print(
-                        f"⚠️ 비정상 응답 코드 {response.status_code} → {wait}초 후 재시도"
-                    )
+                    print(f"⚠️ 비정상 응답 코드 {response.status_code} → {wait}초 후 재시도")
                     time.sleep(wait)
 
             except Exception as e:
@@ -331,8 +338,6 @@ def fetch_youth_data():
                     f"{p.get('lclsfNm', '')} > {p.get('mclsfNm', '')}".strip(" > ")
                 )
 
-                # 🟢 [수정 1] deadline은 사람이 읽을 수 있는 신청기간 우선,
-                #            없으면 사업운영기간으로 fallback
                 deadline = p.get("aplyYmd", "").strip()
                 if not deadline:
                     bgn = p.get("bizPrdBgngYmd", "").strip()
@@ -342,7 +347,6 @@ def fetch_youth_data():
                 if not deadline:
                     deadline = "상시/기간확인"
 
-                # 🟢 [수정 5,7] 원본/잘린 summary 분리 (해시는 raw 기준)
                 raw_summary = (
                     f"{p.get('plcyExplnCn', '')}\n\n"
                     f"[지원내용]\n{p.get('plcySprtCn', '')}"
@@ -362,12 +366,9 @@ def fetch_youth_data():
                     "url": p.get("rqutUrla", ""),
                     "deadline": deadline,
                     "is_active": True,
-                    # 🟢 [수정 9] updated_at은 sync_to_supabase에서만 부여 (제거)
-                    # 해시 계산용 raw 보관 (sync 진입 시 pop)
                     "_raw_summary": raw_summary,
                 })
 
-            # 🟢 [수정 2] 정확한 성공/실패 카운트
             res = sync_to_supabase(policies)
             total_saved += res["saved"]
             total_failed += res["failed"]
@@ -389,8 +390,6 @@ def fetch_youth_data():
     )
 
     # 🌟 [최종 진화형 안전장치] 진짜 "비정상 API 장애"만 정밀 타격하여 발동
-    # 청년 정책 ID는 "20YYMMDD..." 정확히 20자리 숫자 패턴
-    # (이전 R% 가정은 잘못된 것으로 검증됨 — 실제 ID는 plcyNo 형식)
     if (consecutive_fails >= 3 and total_saved == 0) or (total_saved < 50 and consecutive_fails > 0):
         print(f"⚠️ 청년 API 이상 감지! (안전장치 발동)")
         print(f"   - 실제 DB 저장(변경)량: {total_saved}개")
@@ -400,8 +399,6 @@ def fetch_youth_data():
 
         try:
             if supabase:
-                # 🌟 RPC 호출 — 정규식 ^20[0-9]{18}$ + provider 화이트리스트 이중 검증
-                # is_active=True 부활까지 한 번에 처리, 정확한 영향 행 수 반환
                 result = supabase.rpc("revive_youth_policies").execute()
                 protected_count = result.data if isinstance(result.data, int) else 0
 
