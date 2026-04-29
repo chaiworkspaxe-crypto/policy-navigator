@@ -3,7 +3,7 @@ import time
 import requests
 import hashlib
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta, timezone  # 🌟 timezone 추가
+from datetime import datetime, timedelta, timezone  # 🌟 timezone 추가 완료
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from langchain_openai import OpenAIEmbeddings
@@ -39,7 +39,8 @@ def utc_now_iso() -> str:
 # ==============================================================================
 # 🌟 [소프트 삭제 적용] 좀비 정책 청소 로직
 # ==============================================================================
-def cleanup_zombie_policies(total_saved):
+def deactivate_stale_policies(total_saved):
+    """3일 이상 갱신 안 된 정책을 안전하게 비활성화 (soft delete)"""
     if total_saved < 100:
         print("⚠️ [안전장치 작동] 오늘 수집된 데이터가 너무 적어 청소를 생략합니다.")
         return
@@ -50,7 +51,7 @@ def cleanup_zombie_policies(total_saved):
     try:
         three_days_ago = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
         
-        # 🌟 창현 피드백 반영: 데이터 영구 삭제(Hard Delete) 방지
+        # 🌟 Hard Delete 방지 + 불필요한 중복 업데이트 방지 로직 완벽 적용!
         response = (
             supabase.table("policies")
             .update({
@@ -58,10 +59,12 @@ def cleanup_zombie_policies(total_saved):
                 "updated_at": utc_now_iso()
             })
             .lt("updated_at", three_days_ago)
+            .eq("is_active", True)  # 이미 비활성인 것 중복 처리 방지
             .execute()
         )
         deactivated_count = len(response.data) if response.data else 0
-        print(f"✨ [청소 완료] {deactivated_count}개 정책을 안전하게 숨김 처리(soft delete) 완료!")
+        print(f"✨ [청소 완료] {deactivated_count}개 정책을 안전하게 숨김 처리(soft delete)")
+        print(f"   → 복구 필요 시: UPDATE policies SET is_active = TRUE WHERE id IN (...)")
     except Exception as e:
         print(f"❌ 청소 중 오류 발생: {e}")
 
@@ -347,7 +350,8 @@ def fetch_all_data():
     total_saved = bojogeum_total + bokjiro_total
     print(f"\n🎉 [최종 결산] 보조금24({bojogeum_total}개) + 복지로({bokjiro_total}개) = 총 {total_saved}개 동기화 완료!")
     
-    cleanup_zombie_policies(total_saved)
+    # 🌟 함수 이름 변경 완벽 적용!
+    deactivate_stale_policies(total_saved)
 
 if __name__ == "__main__":
     fetch_all_data()
