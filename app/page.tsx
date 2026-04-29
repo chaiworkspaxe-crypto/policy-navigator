@@ -17,15 +17,29 @@ const DEFAULT_CITY = "선택하세요";
 const DEFAULT_DONG = "선택 안 함";
 const EMPTY_INPUTS: ThreadInputs = { selected_city: DEFAULT_CITY, selected_district: DEFAULT_CITY, selected_dong: DEFAULT_DONG, birth_year: "", extra_info: "" };
 
+// 🌟 [진짜 원인 해결!] AI가 단어를 '분류', '마감일' 등으로 맘대로 바꿔도 표를 인식할 수 있도록 대폭 개선!
 const extractSummaryTableText = (text: string) => {
   const lines = text.split('\n');
   let headerIdx = -1;
+  
   for (let i = 0; i < lines.length; i++) {
-    const normalized = lines[i].replace(/ /g, "");
-    if (normalized.includes("|분야|") && normalized.includes("|정책명|") && (normalized.includes("|신청마감일|") || normalized.includes("|핵심혜택|"))) {
-      headerIdx = i; break;
+    // 마크다운 표의 기본 구조인 '|' 문자가 있고, 정책과 관련된 핵심 단어가 하나라도 있으면 표의 시작으로 인정!
+    if (lines[i].includes('|') && (lines[i].includes('정책') || lines[i].includes('마감') || lines[i].includes('혜택') || lines[i].includes('분야') || lines[i].includes('분류'))) {
+      headerIdx = i;
+      break;
     }
   }
+  
+  // 혹시라도 단어가 아예 다르면, 마크다운 표 구분선(|---| 또는 |:---|) 자체를 찾아서 표로 인식시킴!
+  if (headerIdx === -1) {
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].includes('|') && i + 1 < lines.length && lines[i+1].match(/\|[-:]/)) {
+        headerIdx = i;
+        break;
+      }
+    }
+  }
+
   if (headerIdx === -1) return "";
   
   const tableLines = [lines[headerIdx]];
@@ -96,7 +110,7 @@ export default function Home() {
   const [isFormExpanded, setIsFormExpanded] = useState(true);
   const [showManual, setShowManual] = useState(false);
 
-  // 🌟 [핵심 방어선 1] 롤백되어도 절대 지워지지 않는 독립적인 '버튼 숨김' 상태
+  // 🌟 [핵심 방어선] 롤백되어도 절대 지워지지 않는 독립적인 '버튼 숨김' 상태 (유지)
   const [hideFollowUpButton, setHideFollowUpButton] = useState(false);
 
   const [isConfirmingDeleteAll, setIsConfirmingDeleteAll] = useState(false);
@@ -213,7 +227,6 @@ export default function Home() {
 
   const selectThread = async (uid: string, tid: string) => {
     try {
-      // 🌟 스레드를 바꿀 때 숨김 상태 리셋
       setErrorMessage(""); setCurrentThreadId(tid); setMessages([]); setQuery(""); setIsSidebarOpen(false); setHideFollowUpButton(false);
       const [loadedMessages, loadedInputs] = await Promise.all([ api.loadMessages(uid, tid), api.loadThreadInputs(uid, tid) ]);
       setMessages(loadedMessages); applyInputs(loadedInputs);
@@ -223,7 +236,6 @@ export default function Home() {
 
   const handleNewThread = async (uid = userId) => {
     try {
-      // 🌟 새 대화방 시작할 때 숨김 상태 리셋
       setErrorMessage("");
       const newThreadId = await api.createThread(uid);
       setCurrentThreadId(newThreadId); setMessages([]); setQuery(""); applyInputs(EMPTY_INPUTS);
@@ -243,11 +255,10 @@ export default function Home() {
   const handleSearch = async (isFollowUp = false, overridePrompt?: string) => {
     setErrorMessage(""); setAiStatus("");
 
-    // 🌟 [핵심 해결 2] 유저가 버튼을 눌렀다는 사실 자체를 독립적인 상태로 저장 (롤백 불가)
     if (overridePrompt) {
-      setHideFollowUpButton(true); // 버튼 클릭 즉시 영구 삭제 처리
+      setHideFollowUpButton(true); 
     } else {
-      setHideFollowUpButton(false); // 일반적인 추가 질문 시에는 다시 정상화
+      setHideFollowUpButton(false);
     }
 
     if (!userId) return setErrorMessage("사용자 정보가 준비되지 않았습니다. 새로고침 해주세요.");
@@ -270,7 +281,6 @@ export default function Home() {
     const followUpText = overridePrompt || query.trim();
     const optimisticUserMessage = isFollowUp ? followUpText : `📍 ${city} ${district} ${dong !== DEFAULT_DONG ? dong : ""} | 🎂 ${birthYear}년생 | 📝 ${extraInfo}`;
 
-    // 🌟 [핵심] 에러 시 원상복구를 위해 현재 상태를 백업
     const originalMessages = [...messages]; 
     const newMessages = [...messages, { role: "user" as const, content: optimisticUserMessage }];
 
@@ -279,13 +289,11 @@ export default function Home() {
     if (isFollowUp && !overridePrompt) setQuery("");
 
     const abortController = new AbortController();
-    const timeoutId = setTimeout(() => abortController.abort(), 90000); // 90초
+    const timeoutId = setTimeout(() => abortController.abort(), 90000); 
 
     try {
-      // 1. 입력 조건 저장 (여기서 500 에러 나면 바로 catch로 점프!)
       await api.saveThreadInputs(userId, targetThreadId, { selected_city: city, selected_district: district, selected_dong: dong, birth_year: birthYear, extra_info: extraInfo });
 
-      // 2. 채팅 API 호출
       const response = await fetch(`/api/chat`, {
         method: 'POST', 
         signal: abortController.signal,
@@ -302,7 +310,7 @@ export default function Home() {
       if (response.status === 403) {
         const errorData = await response.json();
         setErrorMessage(errorData.detail || "오늘의 검색 횟수를 모두 사용했습니다.");
-        setMessages(originalMessages); // ✅ 횟수 초과 시 질문 지우고 롤백
+        setMessages(originalMessages); 
         setLoading(false); 
         setIsFormExpanded(true); 
         return;
@@ -347,7 +355,6 @@ export default function Home() {
         }
       }
 
-      // 🌟 [핵심 방어] 통신은 성공했는데 AI가 텅 빈 대답을 줬다면 강제로 에러를 발생시킵니다!
       if (!accumulatedContent.trim()) {
         throw new Error("EMPTY_AI_RESPONSE");
       }
@@ -359,14 +366,12 @@ export default function Home() {
       clearTimeout(timeoutId);
       console.error(error);
       
-      // 🌟 [핵심 해결 3] 롤백! (이로 인해 messages 배열은 과거로 돌아가지만, hideFollowUpButton은 true로 남아 버튼 증식을 막아줍니다!)
       setMessages(originalMessages); 
       
       if (error.name === 'AbortError') {
         setErrorMessage("응답이 너무 오래 걸려 중단되었습니다. 잠시 후 다시 시도해주세요. ⏳");
       } else if (error.message === 'EMPTY_AI_RESPONSE') {
-        // 🌟 강제 발생시킨 에러 캐치 -> 유저에게 빈 깡통임을 친절하게 알림!
-        setErrorMessage("AI가 정보를 찾지 못했습니다. (모델 오류) 잠시 후 다시 시도해주세요. 😭");
+        setErrorMessage("AI가 정보를 찾지 못했습니다. 잠시 후 다시 시도해주세요. 😭");
       } else {
         setErrorMessage("서버 상태가 불안정합니다. 잠시 후 다시 시도해 주세요.");
       }
@@ -594,7 +599,7 @@ export default function Home() {
                         </div>
                       )}
 
-                      {/* 🌟 [최강 방어선 3] hideFollowUpButton 상태 추가! 버튼을 영구적으로 숨겨서 무한 루프 원천 차단 */}
+                      {/* 🌟 버튼 렌더링을 완전히 제어 (표 인식도 정상화됨!) */}
                       {!loading && isLastMessage && isAssistant && !hasSummaryTable(message.content) && !hideFollowUpButton && (
                          <div className="mt-4 p-4 bg-gray-50 dark:bg-[#1a1a1a] rounded-xl border border-gray-200 dark:border-[#444] animate-in fade-in duration-300">
                            <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
