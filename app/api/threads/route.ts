@@ -1,6 +1,8 @@
+export const dynamic = 'force-dynamic'; // 🌟 Next.js 캐싱 폭탄을 제거하는 마법의 설정
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { v4 as uuidv4 } from 'uuid';
+
 
 const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
