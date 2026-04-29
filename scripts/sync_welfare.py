@@ -8,6 +8,9 @@ from supabase import create_client, Client
 from dotenv import load_dotenv
 from langchain_openai import OpenAIEmbeddings
 
+# 🌟 [추가] 메타데이터 추출기 임포트
+from _eligibility_extractor import extract_eligibility
+
 # 1. 환경 변수 로드
 load_dotenv()
 
@@ -59,13 +62,6 @@ def deactivate_stale_policies(total_saved):
     try:
         three_days_ago = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
 
-        # 🌟 RPC 호출 — deactivate_stale_welfare(p_three_days_ago timestamptz)
-        # 내부 로직:
-        #   UPDATE policies
-        #   SET is_active = FALSE, updated_at = now()
-        #   WHERE updated_at < p_three_days_ago
-        #     AND is_active = TRUE
-        #     AND id !~ '^20[0-9]{18}$'   ← 청년 정책 침범 방지
         result = supabase.rpc("deactivate_stale_welfare", {
             "p_three_days_ago": three_days_ago
         }).execute()
@@ -103,7 +99,6 @@ def sync_to_supabase(policies):
         category = p.get("서비스분야") or p.get("category", "")
         url = p.get("상세조회URL") or p.get("url", "")
 
-        # 요약 내용은 임베딩 비용 절약 및 제한을 위해 자르기 (옵션)
         safe_summary = summary[:1000] if summary else ""
 
         content_str = f"{title}{provider}{category}{safe_summary}"
@@ -141,7 +136,22 @@ def sync_to_supabase(policies):
         print(f"    ⏩ {len(policies)}개 중 변경된 데이터 없음. (비용 0원 스킵!)")
         return True
 
-    print(f"🤖 {len(policies)}개 중 변경된 {len(needs_embedding)}개만 임베딩 변환 중...")
+    print(f"🤖 {len(policies)}개 중 변경된 {len(needs_embedding)}개만 임베딩 및 파싱 변환 중...")
+
+    # 🌟 [추가됨] 하이브리드 검색용 메타데이터 추출 로직
+    for d in needs_embedding:
+        eligibility = extract_eligibility(d)
+        d.update({
+            "age_min": eligibility.get("age_min"),
+            "age_max": eligibility.get("age_max"),
+            "region_sido": eligibility.get("region_sido"),
+            "region_sigungu": eligibility.get("region_sigungu"),
+            "household_types": eligibility.get("household_types") or [],
+            "housing_status": eligibility.get("housing_status") or [],
+            "employment_status": eligibility.get("employment_status") or [],
+            "special_status": eligibility.get("special_status") or [],
+            "deadline_date": eligibility.get("deadline_date"),
+        })
 
     if embeddings:
         try:
