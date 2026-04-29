@@ -381,21 +381,27 @@ def fetch_youth_data():
         f"saved={total_saved}, failed={total_failed}, skipped={total_skipped}\n"
     )
 
-    # 🌟 [추가/강화된 안전장치] API 다운/장애 시 청년 정책 '좀비화' 방어 로직
-    EXPECTED_MIN_POLICIES = 1000  # 청년정책 평균 개수 대비 넉넉한 하한선
-    if total_saved < EXPECTED_MIN_POLICIES or consecutive_fails >= 3:
-        print(f"⚠️ 청년 API 이상 감지 (수집량 {total_saved}개 미달 또는 연속 실패). 기존 청년 정책의 생명 연장(부활)을 시도합니다.")
+    # 🌟 [최종 진화형 안전장치] 진짜 "비정상 API 장애"만 정밀 타격하여 발동
+    if (consecutive_fails >= 3 and total_saved == 0) or (total_saved < 50 and consecutive_fails > 0):
+        print(f"⚠️ 청년 API 이상 감지! (안전장치 발동)")
+        print(f"   - 실제 DB 저장(변경)량: {total_saved}개")
+        print(f"   - 연속 실패 횟수: {consecutive_fails}회")
+        print(f"   - 실패 데이터 수: {total_failed}개")
+        print(f"   - 중단된 페이지: {page}페이지")
+        
         try:
             if supabase:
-                # 🌟 죽어버린(is_active=False) 청년 정책까지 완벽하게 부활(True)시키는 강력한 방어 로직
+                # 🌟 R로 시작하면서 + 청년정책 provider인 것만 골라서 부활! (welfare 침범 원천 차단)
                 response = supabase.table("policies").update({
                     "updated_at": utc_now_iso(),
                     "is_active": True
-                }).like("id", "R%").execute()
+                }).like("id", "R%").in_(
+                    "provider", ["중앙부처", "지자체", "청년정책"]
+                ).execute()
                 
                 protected_count = len(response.data) if response.data else 0
-                print(f"🛡️ 생명 연장 및 부활 완료! 영향받은 행 수: {protected_count}개")
-                print(f"   (실제 보호 효과를 확인하려면 Supabase에서 직접 검증을 권장합니다.)")
+                print(f"🛡️ 생명 연장 시도 완료. 영향받은 행 수: {protected_count}개")
+                print(f"   (실제 보호 효과를 확인하려면 Supabase에서 검증을 권장합니다.)")
         except Exception as e:
             print(f"⚠️ 안전장치 가동 중 오류 발생: {e}")
 
