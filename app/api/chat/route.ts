@@ -249,7 +249,10 @@ export async function POST(req: Request) {
       },
       onFinish: async ({ text }) => {
         if (userId && threadId && text) {
-          const now = new Date().toISOString();
+          // 🌟 [수정] 쌍둥이 타임스탬프 버그 해결 (유저 시간은 1초 전으로!)
+          const userTime = new Date(Date.now() - 1000).toISOString(); 
+          const aiTime = new Date().toISOString();
+          
           const lastUserMessage = messages[messages.length - 1]?.content;
 
           try {
@@ -261,16 +264,16 @@ export async function POST(req: Request) {
                   user_id: userId,
                   role: 'user',
                   content: lastUserMessage,
-                  created_at: now,
-                  updated_at: now 
+                  created_at: userTime, // 🌟 유저 먼저!
+                  updated_at: userTime 
                 },
                 {
                   thread_id: threadId,
                   user_id: userId,
                   role: 'assistant',
                   content: text,
-                  created_at: now,
-                  updated_at: now 
+                  created_at: aiTime, // 🌟 AI는 1초 뒤!
+                  updated_at: aiTime 
                 }
               ]);
             }
