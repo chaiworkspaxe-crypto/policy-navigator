@@ -310,9 +310,11 @@ export async function POST(req: Request) {
           for await (const part of result.fullStream) {
             
             // 🚨 [진짜 범인 체포] OpenAI에서 에러가 발생하면 꿀꺽 삼키지 말고 화면으로 뱉어라!
+            // 👉 타입스크립트 에러 우회: (part.error as any) 사용!
             if (part.type === 'error') {
               console.error("[🚨 AI 통신 에러 발생!]:", part.error);
-              controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'status', message: `❌ AI 모델 에러: ${part.error?.message || '알 수 없는 오류'}` }) + '\n'));
+              const errMsg = (part.error as any)?.message || String(part.error) || '알 수 없는 오류';
+              controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'status', message: `❌ AI 모델 에러: ${errMsg}` }) + '\n'));
               break; // 에러 났으니 스트리밍 즉시 중단
             } 
             
