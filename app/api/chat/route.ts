@@ -1,4 +1,3 @@
-
 import { openai } from '@ai-sdk/openai';
 import { streamText, tool } from 'ai';
 import { z } from 'zod';
@@ -302,31 +301,44 @@ export async function POST(req: Request) {
     });
 
     // ==============================================================================
-    // 🌟 커스텀 JSON 스트리밍 엔진 (수정 금지)
+    // 🌟 커스텀 JSON 스트리밍 엔진 (에러 감지기 탑재!)
     // ==============================================================================
     let fullAnswer = "";
     const customStream = new ReadableStream({
       async start(controller) {
-        for await (const part of result.fullStream) {
-          if (part.type === 'tool-call') {
-            const toolName = part.toolName;
-            console.log(`[🤖 AI 도구 호출] ${toolName} 실행 중... 파라미터:`, part.args);
-            let friendlyMsg = "하나라도 더 찾아내려고 AI가 풀야근 중입니다! 쪼~금만 더 기다려주세요 😭🌙";
-            if (toolName === "search_internal_db") friendlyMsg = "정부 정책 창고 셔터 올리는 중! 먼지가 쫌 날려도(쿨럭) 싹 다 찾아올게요 😷💨";
-            else if (toolName === "naver_web_search") friendlyMsg = "동네방네 뿌려진 지자체 혜택 전단지 싹 다 긁어모으는 중! 🏃‍♂️💨🔥";
-            else if (toolName === "global_web_search") friendlyMsg = "국내 공식 정부 문서 풀스캔 중! 하나도 안 놓칠게요 🔎💻";
-            else if (toolName === "get_current_time") friendlyMsg = "이미 끝난 공고 주면 혼나니까! 실시간 마감일 깐깐하게 비교 중입니다 🗓️⏳";
-            controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'status', message: `🔍 ${friendlyMsg}` }) + '\n'));
-          } else if (part.type === 'tool-result') {
-            console.log(`[✅ 도구 응답 완료] ${part.toolName} 결과 수신 완료`);
-          } else if (part.type === 'text-delta') {
-            fullAnswer += part.textDelta;
-            controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'content', delta: part.textDelta }) + '\n'));
+        try {
+          for await (const part of result.fullStream) {
+            
+            // 🚨 [진짜 범인 체포] OpenAI에서 에러가 발생하면 꿀꺽 삼키지 말고 화면으로 뱉어라!
+            if (part.type === 'error') {
+              console.error("[🚨 AI 통신 에러 발생!]:", part.error);
+              controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'status', message: `❌ AI 모델 에러: ${part.error?.message || '알 수 없는 오류'}` }) + '\n'));
+              break; // 에러 났으니 스트리밍 즉시 중단
+            } 
+            
+            else if (part.type === 'tool-call') {
+              const toolName = part.toolName;
+              console.log(`[🤖 AI 도구 호출] ${toolName} 실행 중... 파라미터:`, part.args);
+              let friendlyMsg = "하나라도 더 찾아내려고 AI가 풀야근 중입니다! 쪼~금만 더 기다려주세요 😭🌙";
+              if (toolName === "search_internal_db") friendlyMsg = "정부 정책 창고 셔터 올리는 중! 먼지가 쫌 날려도(쿨럭) 싹 다 찾아올게요 😷💨";
+              else if (toolName === "naver_web_search") friendlyMsg = "동네방네 뿌려진 지자체 혜택 전단지 싹 다 긁어모으는 중! 🏃‍♂️💨🔥";
+              else if (toolName === "global_web_search") friendlyMsg = "국내 공식 정부 문서 풀스캔 중! 하나도 안 놓칠게요 🔎💻";
+              else if (toolName === "get_current_time") friendlyMsg = "이미 끝난 공고 주면 혼나니까! 실시간 마감일 깐깐하게 비교 중입니다 🗓️⏳";
+              controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'status', message: `🔍 ${friendlyMsg}` }) + '\n'));
+            } else if (part.type === 'tool-result') {
+              console.log(`[✅ 도구 응답 완료] ${part.toolName} 결과 수신 완료`);
+            } else if (part.type === 'text-delta') {
+              fullAnswer += part.textDelta;
+              controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'content', delta: part.textDelta }) + '\n'));
+            }
           }
+          console.log(`[🏁 AI 스트리밍 종료] 응답 완료! (총 길이: ${fullAnswer.length}자)`);
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'done', full_content: fullAnswer }) + '\n'));
+        } catch (streamError) {
+          console.error("[🚨 스트리밍 내부 예외 발생]:", streamError);
+        } finally {
+          controller.close();
         }
-        console.log(`[🏁 AI 스트리밍 종료] 응답 완료! (총 길이: ${fullAnswer.length}자)`);
-        controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'done', full_content: fullAnswer }) + '\n'));
-        controller.close();
       }
     });
 
