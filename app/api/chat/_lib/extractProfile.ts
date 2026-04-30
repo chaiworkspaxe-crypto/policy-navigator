@@ -34,13 +34,12 @@ export function needsProfileExtraction(message: string): boolean {
   return PROFILE_KEYWORDS.some(kw => message.includes(kw));
 }
 
-
 export async function extractAndSaveProfile(userId: string, userMessage: string) {
   if (!needsProfileExtraction(userMessage)) return;
   
   try {
     const response = await openai.chat.completions.create({
-      model: "gpt-5.4",
+      model: "gpt-5.4", // 💡 꿀팁: 백그라운드 작업은 "gpt-4o-mini" 같은 저렴한 모델을 쓰면 돈을 엄청 아낄 수 있어!
       messages: [{
         role: "user",
         content: PROFILE_EXTRACTION_PROMPT.replace("{message}", userMessage.slice(0, 500))
@@ -48,8 +47,20 @@ export async function extractAndSaveProfile(userId: string, userMessage: string)
       response_format: { type: "json_object" },
     });
     
-    const extracted = JSON.parse(response.choices[0].message.content || '{}');
-    if (!extracted || !Object.values(extracted).some(v => v)) return;
+    // 🌟 [수리 2] AI가 마크다운(```json)을 붙여서 줘도 깔끔하게 벗겨내는 방어막
+    let rawContent = response.choices[0].message.content || '{}';
+    rawContent = rawContent.replace(/```json\n?|```/g, '').trim();
+    const extracted = JSON.parse(rawContent);
+    
+    if (!extracted) return;
+
+    // 🌟 [수리 1] 빈 배열([])이나 null만 있는 쓰레기 데이터는 DB에 안 넣게 확실히 걸러냄!
+    const hasValidData = Object.entries(extracted).some(([key, value]) => {
+      if (Array.isArray(value)) return value.length > 0;
+      return value !== null && value !== undefined && value !== "";
+    });
+    
+    if (!hasValidData) return;
     
     // UPSERT (단순 필드)
     const updateData: any = { user_id: userId, updated_at: new Date().toISOString() };
@@ -57,14 +68,14 @@ export async function extractAndSaveProfile(userId: string, userMessage: string)
     if (extracted.housing_status) updateData.housing_status = extracted.housing_status;
     if (extracted.employment_status) updateData.employment_status = extracted.employment_status;
     
-    if (Object.keys(updateData).length > 2) {  // user_id, updated_at 외에 뭔가 있으면
+    if (Object.keys(updateData).length > 2) { 
       await supabase
         .from('user_profiles')
         .upsert(updateData, { onConflict: 'user_id' });
     }
     
-    // special_status는 배열 합집합 (별도 RPC 권장)
-    if (extracted.special_status && extracted.special_status.length > 0) {
+    // special_status는 배열 합집합
+    if (extracted.special_status && Array.isArray(extracted.special_status) && extracted.special_status.length > 0) {
       await supabase.rpc('merge_user_special_status', {
         p_user_id: userId,
         p_new_status: extracted.special_status,
@@ -74,7 +85,6 @@ export async function extractAndSaveProfile(userId: string, userMessage: string)
     console.error('profile extraction failed:', e);
   }
 }
-
 
 export async function loadUserProfile(userId: string) {
   if (!userId) return null;
@@ -89,7 +99,6 @@ export async function loadUserProfile(userId: string) {
   return data;
 }
 
-
 export function formatProfileForLLM(profile: any): string {
   if (!profile) return "";
   
@@ -103,7 +112,5 @@ export function formatProfileForLLM(profile: any): string {
   
   if (items.length === 0) return "";
   
-  return `[지금까지 파악된 사용자 정보 (이전 대화에서 추출)]
-${items.join(' | ')}
-이 정보를 자격 매칭에 활용하되, 변경 가능성이 보이면 자연스럽게 재확인하세요.`;
+  return `[지금까지 파악된 사용자 정보 (이전 대화에서 추출)]\n${items.join(' | ')}\n이 정보를 자격 매칭에 활용하되, 변경 가능성이 보이면 자연스럽게 재확인하세요.`;
 }
