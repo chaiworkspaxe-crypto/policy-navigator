@@ -35,11 +35,6 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
-/* 🌟 [신규 추가] iOS 사파리 폼 요소 자동 확대 방지 (접근성 유지) */
-input, select, textarea {
-  font-size: 16px;
-}
-
 .markdown-body table tr:last-child td {
   border-bottom: 0;
 }
