@@ -4,11 +4,6 @@ import { z } from 'zod';
 import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
 
-export const dynamic = 'force-dynamic'; // 🌟 Next.js 캐싱 폭탄을 제거하는 마법의 설정
-
-// 🌟 [추가] 프로필 추출 라이브러리 임포트
-import { extractAndSaveProfile, loadUserProfile, formatProfileForLLM } from './_lib/extractProfile';
-
 // 1. API 클라이언트 초기화
 const rawOpenai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -19,7 +14,7 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 export const runtime = 'edge';
 
 // ==============================================================================
-// 🌟 파이썬과 100% 동일한 시스템 프롬프트 (수정 금지)
+// 🌟 파이썬과 100% 동일한 시스템 프롬프트
 // ==============================================================================
 const SYSTEM_PROMPT = `
 당신은 대한민국 국민 모두의 '정보 비대칭'을 완벽하게 해소해 주는 최고의 '전국민 맞춤형 복지/지원금 내비게이터(Universal Policy Navigator)'입니다.
@@ -106,58 +101,14 @@ export async function POST(req: Request) {
   try {
     const { messages, userId, threadId } = await req.json();
 
-    // 🌟 [핵심 로직 추가] 입력 검증
-    if (!userId || !threadId || !Array.isArray(messages)) {
-      return new Response(
-        JSON.stringify({ detail: '필수 파라미터 누락' }), 
-        { status: 400 }
-      );
-    }
-
-    // 🌟 [핵심 로직 추가] Quota 차감 (atomic) — 어드민 식별 후 분기
-    const adminCookie = req.headers.get('cookie')?.match(/admin_session=([^;]+)/);
-    const isAdmin = adminCookie 
-      ? decodeURIComponent(adminCookie[1]) === process.env.ADMIN_PASS_KEY 
-      : false;
-    
-    if (!isAdmin) {
-      const { data: quota, error: quotaError } = await supabase.rpc('consume_quota', {
-        p_user_id: userId,
-        p_daily_limit: 4,
-      });
-      
-      if (quotaError) {
-        console.error('quota error:', quotaError);
-      } else if (quota && !quota.allowed) {
-        return new Response(
-          JSON.stringify({ 
-            detail: `오늘의 검색 횟수(${quota.limit}회)를 모두 사용했습니다. 내일 다시 이용해주세요.`,
-            quota: quota,
-          }), 
-          { status: 403, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-    }
-
-    // 🚨 여기서 성급하게 저장하던 유저 메시지 코드는 삭제 완료! (고아 메시지 방지)
-
     // ==============================================================================
-    // 🌟 [C-5-3 추가] 사용자 프로필 동적 주입 로직
-    // ==============================================================================
-    const profile = userId ? await loadUserProfile(userId) : null;
-    const profileBlock = formatProfileForLLM(profile);
-    const dynamicSystemPrompt = profileBlock 
-      ? `${SYSTEM_PROMPT}\n\n${profileBlock}` 
-      : SYSTEM_PROMPT;
-
-    // ==============================================================================
-    // 🤖 1. 에이전트 실행 (gpt-5.4 모델 고정!)
+    // 🤖 1. 에이전트 실행 (파이썬의 AgentExecutor 완벽 대체)
     // ==============================================================================
     const result = await streamText({
-      model: openai('gpt-5.4'), 
-      system: dynamicSystemPrompt, // 🌟 동적 프롬프트 적용!
+      model: openai('gpt-5.4'), // 🚨 [수술 완료] 에러 방지를 위해 gpt-4o 모델명으로 수정
+      system: SYSTEM_PROMPT,
       messages,
-      maxSteps: 7,
+      maxSteps: 10,
       tools: {
         get_current_time: tool({
           description: '현재 날짜와 시간을 확인합니다.',
@@ -167,45 +118,23 @@ export async function POST(req: Request) {
           },
         }),
         search_internal_db: tool({
-          description: '사용자의 자격 조건(나이/지역/가구/주거/취업)을 활용해 내부 DB에서 정책을 검색합니다.',
-          parameters: z.object({ 
-            query: z.string().describe('검색 의도 (예: "주거 지원금")'),
-            user_age: z.number().nullable().optional().describe('사용자 만 나이 (출생연도로 계산해서 전달)'),
-            user_sido: z.string().nullable().optional().describe('거주 시/도 (예: "서울특별시")'),
-            user_sigungu: z.string().nullable().optional().describe('거주 시/군/구 (예: "강남구")'),
-            user_household: z.enum(['1인가구', '신혼', '한부모', '다자녀', '일반']).nullable().optional(),
-            user_housing: z.enum(['무주택', '전세', '월세', '자가']).nullable().optional(),
-            user_employment: z.enum(['재직', '구직', '창업', '학생']).nullable().optional(),
-          }),
-          execute: async ({ query, user_age, user_sido, user_sigungu, user_household, user_housing, user_employment }) => {
+          description: '사용자 질문을 바탕으로 내부 DB에서 정부 정책을 검색합니다.',
+          parameters: z.object({ query: z.string() }),
+          execute: async ({ query }) => {
             const embeddingResponse = await rawOpenai.embeddings.create({
               model: 'text-embedding-3-small',
               input: query,
             });
-            
-            const { data, error } = await supabase.rpc('match_policies_v3', {
+            const { data, error } = await supabase.rpc('match_policies', {
               query_embedding: embeddingResponse.data[0].embedding,
-              match_count: 30,
-              user_age: user_age ?? null,
-              user_sido: user_sido ?? null,
-              user_sigungu: user_sigungu ?? null,
-              user_household: user_household ?? null,
-              user_housing: user_housing ?? null,
-              user_employment: user_employment ?? null,
+              match_threshold: 0.3,
+              match_count: 5,
             });
 
-            if (error) {
-              console.error('match_policies_v3 error:', error);
-              return "DB 검색 중 오류가 발생했습니다. naver_web_search를 사용하세요.";
-            }
-            if (!data || data.length === 0) {
+            if (error || !data || data.length === 0) {
               return "내부 DB에서 일치하는 정책을 찾지 못했습니다. naver_web_search를 사용하세요.";
             }
-            
-            return data.map((p: any) => {
-              const region = p.region_sigungu || p.region_sido || '전국';
-              return `- [${region}] ${p.title} (${p.provider})\n  ${p.summary}\n  링크: ${p.url}`;
-            }).join('\n\n');
+            return data.map((p: any) => `- 정책명: ${p.title} (${p.provider})\n  내용: ${p.summary}\n  링크: ${p.url}`).join('\n\n');
           },
         }),
         naver_web_search: tool({
@@ -249,100 +178,81 @@ export async function POST(req: Request) {
           },
         }),
       },
+      // 🌟 [수술 완료] DB 저장 시 updated_at 누락 에러 완벽 차단!
       onFinish: async ({ text }) => {
         if (userId && threadId) {
-          const now = new Date();
-          // 🌟 [수정] 쌍둥이 타임스탬프 버그 해결 (유저 시간은 1초 전으로!)
-          const userTime = new Date(now.getTime() - 1000).toISOString(); 
-          const aiTime = now.toISOString();
-          
-          const lastUserMessage = messages[messages.length - 1]?.content;
-
-          // 🌟 [최강 방어선] AI가 텅 빈 대답을 주면 DB에 쓰레기 데이터 쌓기 금지!
-          if (!text || text.trim() === "") {
-            console.warn("AI가 빈 응답을 반환하여 DB 저장을 취소합니다.");
-            return; // 여기서 실행을 즉시 중단합니다. (DB 오염 원천 차단)
-          }
-
           try {
-            // 🌟 [핵심 해결책] 에러가 나면 롤백되도록, 유저 메시지와 AI 메시지를 "답변 성공 시 한 번에" 배열로 저장합니다!
-            if (lastUserMessage) {
-              await supabase.from('chat_messages').insert([
-                {
-                  thread_id: threadId,
-                  user_id: userId,
-                  role: 'user',
-                  content: lastUserMessage,
-                  created_at: userTime, // 🌟 유저 먼저!
-                  updated_at: userTime 
-                },
-                {
-                  thread_id: threadId,
-                  user_id: userId,
-                  role: 'assistant',
-                  content: text,
-                  created_at: aiTime, // 🌟 AI는 1초 뒤!
-                  updated_at: aiTime 
-                }
-              ]);
-              
-              // ==============================================================================
-              // 🌟 [C-5-3 추가] 답변 완료 후 사용자 프로필 백그라운드 추출 (Fire-and-forget)
-              // ==============================================================================
-              extractAndSaveProfile(userId, lastUserMessage)
-                .catch(e => console.error('profile extract error:', e));
-            }
-
+            const lastUserMessage = messages[messages.length - 1].content;
+            const now = new Date().toISOString(); // 현재 시간 생성!
+            
+            await supabase.from('chat_messages').insert({
+              thread_id: threadId,
+              user_id: userId,
+              role: 'user',
+              content: lastUserMessage,
+              created_at: now,
+              updated_at: now // <-- 🚨 추가됨!
+            });
+            
+            await supabase.from('chat_messages').insert({
+              thread_id: threadId,
+              user_id: userId,
+              role: 'assistant',
+              content: text,
+              created_at: now,
+              updated_at: now // <-- 🚨 추가됨!
+            });
           } catch (dbError) {
-            console.error("DB 작업 중 에러 발생:", dbError);
+            console.error("DB 저장 중 에러 발생:", dbError);
           }
         }
       }
     });
 
     // ==============================================================================
-    // 🌟 커스텀 JSON 스트리밍 엔진 (에러 감지기 탑재!)
+    // 🌟 커스텀 JSON 스트리밍 엔진
     // ==============================================================================
+   // ... 생략 ...
     let fullAnswer = "";
     const customStream = new ReadableStream({
       async start(controller) {
-        try {
-          for await (const part of result.fullStream) {
+        for await (const part of result.fullStream) {
+          
+          if (part.type === 'tool-call') {
+            const toolName = part.toolName;
             
-            // 🚨 [진짜 범인 체포] OpenAI에서 에러가 발생하면 꿀꺽 삼키지 말고 화면으로 뱉어라!
-            // 👉 타입스크립트 에러 우회: (part.error as any) 사용!
-            if (part.type === 'error') {
-              console.error("[🚨 AI 통신 에러 발생!]:", part.error);
-              const errMsg = (part.error as any)?.message || String(part.error) || '알 수 없는 오류';
-              controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'status', message: `❌ AI 모델 에러: ${errMsg}` }) + '\n'));
-              break; // 에러 났으니 스트리밍 즉시 중단
-            } 
+            // 🌟 [로그 추가] Vercel Logs 창에 어떤 도구를 호출했는지 실시간으로 찍습니다!
+            console.log(`[🤖 AI 도구 호출] ${toolName} 실행 중... 파라미터:`, part.args);
+
+            let friendlyMsg = "하나라도 더 찾아내려고 AI가 풀야근 중입니다! 쪼~금만 더 기다려주세요 😭🌙";
             
-            else if (part.type === 'tool-call') {
-              const toolName = part.toolName;
-              console.log(`[🤖 AI 도구 호출] ${toolName} 실행 중... 파라미터:`, part.args);
-              let friendlyMsg = "하나라도 더 찾아내려고 AI가 풀야근 중입니다! 쪼~금만 더 기다려주세요 😭🌙";
-              if (toolName === "search_internal_db") friendlyMsg = "정부 정책 창고 셔터 올리는 중! 먼지가 쫌 날려도(쿨럭) 싹 다 찾아올게요 😷💨";
-              else if (toolName === "naver_web_search") friendlyMsg = "동네방네 뿌려진 지자체 혜택 전단지 싹 다 긁어모으는 중! 🏃‍♂️💨🔥";
-              else if (toolName === "global_web_search") friendlyMsg = "국내 공식 정부 문서 풀스캔 중! 하나도 안 놓칠게요 🔎💻";
-              else if (toolName === "get_current_time") friendlyMsg = "이미 끝난 공고 주면 혼나니까! 실시간 마감일 깐깐하게 비교 중입니다 🗓️⏳";
-              controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'status', message: `🔍 ${friendlyMsg}` }) + '\n'));
-            } else if (part.type === 'tool-result') {
-              console.log(`[✅ 도구 응답 완료] ${part.toolName} 결과 수신 완료`);
-            } else if (part.type === 'text-delta') {
-              fullAnswer += part.textDelta;
-              controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'content', delta: part.textDelta }) + '\n'));
-            }
+            if (toolName === "search_internal_db") friendlyMsg = "정부 정책 창고 셔터 올리는 중! 먼지가 쫌 날려도(쿨럭) 싹 다 찾아올게요 😷💨";
+            else if (toolName === "naver_web_search") friendlyMsg = "동네방네 뿌려진 지자체 혜택 전단지 싹 다 긁어모으는 중! 🏃‍♂️💨🔥";
+            else if (toolName === "global_web_search") friendlyMsg = "국내 공식 정부 문서 풀스캔 중! 하나도 안 놓칠게요 🔎💻";
+            else if (toolName === "get_current_time") friendlyMsg = "이미 끝난 공고 주면 혼나니까! 실시간 마감일 깐깐하게 비교 중입니다 🗓️⏳";
+
+            controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'status', message: `🔍 ${friendlyMsg}` }) + '\n'));
+          } 
+          
+          else if (part.type === 'tool-result') {
+            // 🌟 [로그 추가] 도구가 찾아온 결과의 길이나 상태를 찍어볼 수도 있어!
+            console.log(`[✅ 도구 응답 완료] ${part.toolName} 결과 수신 완료`);
           }
-          console.log(`[🏁 AI 스트리밍 종료] 응답 완료! (총 길이: ${fullAnswer.length}자)`);
-          controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'done', full_content: fullAnswer }) + '\n'));
-        } catch (streamError) {
-          console.error("[🚨 스트리밍 내부 예외 발생]:", streamError);
-        } finally {
-          controller.close();
+
+          else if (part.type === 'text-delta') {
+            fullAnswer += part.textDelta;
+            controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'content', delta: part.textDelta }) + '\n'));
+          }
         }
+        
+        // 🌟 [로그 추가] AI가 최종 답변을 다 만들었을 때 로그를 남깁니다.
+        console.log(`[🏁 AI 스트리밍 종료] 응답 완료! (총 길이: ${fullAnswer.length}자)`);
+        
+        controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'done', full_content: fullAnswer }) + '\n'));
+        controller.close();
       }
     });
+    // ... 생략 ...
 
     return new Response(customStream, {
       headers: { 'Content-Type': 'application/x-ndjson', 'Cache-Control': 'no-cache' }
