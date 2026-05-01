@@ -2,8 +2,9 @@ import os
 import time
 import requests
 import hashlib
+import re  # 🌟 정규식 사용을 위해 추가
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta # 🌟 timedelta 추가
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from langchain_openai import OpenAIEmbeddings
@@ -43,6 +44,62 @@ def utc_now_iso() -> str:
     """timezone-aware UTC ISO 문자열 (Python 3.12+ 호환)"""
     return datetime.now(timezone.utc).isoformat()
 
+# ==============================================================================
+# 🌟 [소프트 삭제 적용] 청년 정책 전용 청소 닌자 (타임아웃 방지 Chunking)
+# ==============================================================================
+def deactivate_stale_youth_policies(total_saved):
+    """
+    3일 이상 갱신 안 된 '청년 정책'만 안전하게 비활성화 (soft delete).
+    """
+    if total_saved < 50:
+        print("⚠️ [안전장치 작동] 오늘 수집된 청년 정책 데이터가 너무 적어 청소를 생략합니다.")
+        return
+
+    print("🧹 [청소 닌자 출동] 마감된 좀비 청년 정책 안전 숨김(Soft Delete) 처리를 시작합니다...")
+    if not supabase:
+        return
+
+    try:
+        # 기준일: 현재 UTC 기준 3일 전
+        three_days_ago = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+
+        # 1. 숨길 대상의 'id'만 먼저 빠르게 조회
+        stale_records = supabase.table('policies') \
+            .select('id') \
+            .lt('updated_at', three_days_ago) \
+            .execute()
+            
+        # 2. 파이썬 단에서 '청년 정책(20자리 숫자)'만 타겟팅 (보조금 데이터 건드림 방지)
+        youth_policy_pattern = re.compile(r"^20\d{18}$")
+        stale_ids = [
+            record['id'] for record in stale_records.data 
+            if youth_policy_pattern.match(record['id'])
+        ]
+        
+        if not stale_ids:
+            print("✅ 숨길 좀비 청년 정책이 없습니다. 청소 끝!")
+            return
+
+        print(f"🗑️ 총 {len(stale_ids)}개의 청년 정책을 숨김 처리합니다. (200개씩 분할 처리)")
+
+        # 3. 200개씩 쪼개서(Chunking) 안전하게 업데이트 실행 (Timeout 57014 에러 방지)
+        batch_size = 200
+        for i in range(0, len(stale_ids), batch_size):
+            chunk = stale_ids[i:i + batch_size]
+            
+            supabase.table('policies') \
+                .update({'is_active': False}) \
+                .in_('id', chunk) \
+                .execute()
+                
+            print(f"  -> {min(i + batch_size, len(stale_ids))} / {len(stale_ids)} 완료...")
+
+        print("✨ [청소 완료] 낡은 청년 데이터가 모두 깔끔하게 정리되었습니다!")
+        
+    except Exception as e:
+        print(f"❌ 청소 중 오류 발생: {e}")
+        import traceback
+        print(traceback.format_exc())
 
 # ==============================================================================
 # 🌟 지문 필터링(비용 절감) + DB 저장
@@ -413,7 +470,9 @@ def fetch_youth_data():
             print(f"⚠️ 안전장치 가동 중 오류 발생: {e}")
             import traceback
             print(traceback.format_exc())
-
+    else:
+        # 🌟 수집이 정상적으로 끝났을 때만 청소 닌자 출동!
+        deactivate_stale_youth_policies(total_saved)
 
 if __name__ == "__main__":
     fetch_youth_data()
