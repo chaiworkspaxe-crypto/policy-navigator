@@ -2,6 +2,7 @@ import os
 import time
 import requests
 import hashlib
+import re  # 🌟 정규식 사용을 위해 추가
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone  # 🌟 timezone 추가 완료
 from supabase import create_client, Client
@@ -40,16 +41,15 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 # ==============================================================================
-# 🌟 [소프트 삭제 적용] 좀비 정책 청소 로직 — RPC 기반
+# 🌟 [소프트 삭제 적용] 좀비 정책 청소 로직 — Chunking 분할 처리로 타임아웃 방지!
 # ==============================================================================
 def deactivate_stale_policies(total_saved):
     """
     3일 이상 갱신 안 된 정책을 안전하게 비활성화 (soft delete).
     
-    🌟 RPC 호출로 전환:
-    - 청년 정책(20YYMMDD + 12자리 = 정확히 20자리 숫자) 자동 제외
-    - 정규식 ^20[0-9]{18}$ 으로 정밀 매칭 (Python client의 like()보다 정확)
-    - 영향받은 행 수 정확히 반환
+    🌟 청소 로직 최적화:
+    - 데이터가 많을 때 발생하는 Timeout을 막기 위해 200개씩 쪼개서(Chunking) 처리
+    - 청년 정책(20YYMMDD + 12자리 = 정확히 20자리 숫자) 파이썬 정규식으로 안전 제외
     """
     if total_saved < 100:
         print("⚠️ [안전장치 작동] 오늘 수집된 데이터가 너무 적어 청소를 생략합니다.")
@@ -60,16 +60,43 @@ def deactivate_stale_policies(total_saved):
         return
 
     try:
+        # 기준일: 현재 UTC 기준 3일 전
         three_days_ago = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
 
-        result = supabase.rpc("deactivate_stale_welfare", {
-            "p_three_days_ago": three_days_ago
-        }).execute()
+        # 1. 한 번에 업데이트하지 말고, 숨길 대상의 'id'만 먼저 빠르게 조회
+        stale_records = supabase.table('policies') \
+            .select('id') \
+            .lt('updated_at', three_days_ago) \
+            .execute()
+            
+        # 2. 파이썬 단에서 청년 정책(20자리 숫자) 제외 필터링 적용
+        youth_policy_pattern = re.compile(r"^20\d{18}$")
+        stale_ids = [
+            record['id'] for record in stale_records.data 
+            if not youth_policy_pattern.match(record['id'])
+        ]
+        
+        if not stale_ids:
+            print("✅ 숨길 좀비 정책이 없습니다. 청소 끝!")
+            return
 
-        deactivated_count = result.data if isinstance(result.data, int) else 0
-        print(f"✨ [청소 완료] {deactivated_count}개 정책을 안전하게 숨김 처리(soft delete)")
-        print(f"   → 청년 정책(20자리 숫자 ID 패턴)은 자동 제외됨")
-        print(f"   → 복구 필요 시: UPDATE policies SET is_active = TRUE WHERE id IN (...)")
+        print(f"🗑️ 총 {len(stale_ids)}개의 정책을 숨김 처리합니다. (200개씩 분할 처리)")
+
+        # 3. 200개씩 쪼개서(Chunking) 안전하게 업데이트 실행
+        batch_size = 200
+        for i in range(0, len(stale_ids), batch_size):
+            chunk = stale_ids[i:i + batch_size]
+            
+            # 쪼갠 ID 리스트에 해당하는 데이터만 is_active = False로 업데이트
+            supabase.table('policies') \
+                .update({'is_active': False}) \
+                .in_('id', chunk) \
+                .execute()
+                
+            print(f"  -> {min(i + batch_size, len(stale_ids))} / {len(stale_ids)} 완료...")
+
+        print("✨ [청소 완료] 낡은 데이터가 모두 깔끔하게 정리되었습니다!")
+        
     except Exception as e:
         print(f"❌ 청소 중 오류 발생: {e}")
         import traceback
