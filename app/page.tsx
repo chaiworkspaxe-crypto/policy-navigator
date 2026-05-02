@@ -267,7 +267,7 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: newMessages,
-          userId: userId,           // 🌟 추가됨: 현재 유저 ID
+          userId: userId,            // 🌟 추가됨: 현재 유저 ID
           threadId: targetThreadId  // 🌟 추가됨: 현재 대화방 ID
         }),
       });
@@ -311,6 +311,13 @@ export default function Home() {
                 setAiStatus(""); 
               } else if (data.type === "status") {
                 setAiStatus(data.message);
+              } else if (data.type === "error") {
+                // 🌟 새 분기 — 모델/도구 에러 처리
+                setErrorMessage(data.message);
+                setAiStatus("");
+              } else if (data.type === "done" && data.errored) {
+                // 🌟 done인데 에러로 끝났으면 폼 다시 펼쳐서 재시도 유도
+                setIsFormExpanded(true);
               }
             } catch (e) {
               // 불완전한 JSON 청크 무시
