@@ -17,7 +17,7 @@ export const runtime = 'edge';
 // ==============================================================================
 // 🌟 헬퍼 함수: 도구 타임아웃 방지
 // ==============================================================================
-const TOOL_TIMEOUT_MS = 8000; // 도구별 8초 타임아웃
+const TOOL_TIMEOUT_MS = 10000; // 🌟 Pro 요금제 기준 10초 넉넉하게 세팅!
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -119,7 +119,7 @@ export async function POST(req: Request) {
     // 🤖 1. 에이전트 실행 (파이썬의 AgentExecutor 완벽 대체)
     // ==============================================================================
     const result = await streamText({
-      model: openai('gpt-5.4'), // 🚨 [수술 완료] 에러 방지를 위해 gpt-4o 모델명으로 수정
+      model: openai('gpt-5.4'), 
       system: SYSTEM_PROMPT,
       messages,
       maxSteps: 10,
@@ -141,14 +141,16 @@ export async function POST(req: Request) {
           parameters: z.object({ query: z.string().describe('한국어 자연어 검색어') }),
           execute: async ({ query }) => {
             try {
-              const embeddingResponse = await withTimeout(
+              // 🌟 해결: TypeScript 오류 방지를 위해 <any> 명시
+              const embeddingResponse = await withTimeout<any>(
                 rawOpenai.embeddings.create({ model: 'text-embedding-3-small', input: query }),
                 TOOL_TIMEOUT_MS,
                 'embedding',
               );
 
               for (const threshold of [0.55, 0.4]) {
-                const { data, error } = await withTimeout(
+                // 🌟 해결: TypeScript 오류 방지를 위해 <any> 명시
+                const { data, error } = await withTimeout<any>(
                   supabase.rpc('match_policies', {
                     query_embedding: embeddingResponse.data[0].embedding,
                     match_threshold: threshold,
@@ -267,7 +269,7 @@ export async function POST(req: Request) {
         if (userId && threadId) {
           try {
             const lastUserMessage = messages[messages.length - 1].content;
-            const now = new Date().toISOString(); // 현재 시간 생성!
+            const now = new Date().toISOString(); 
             
             await supabase.from('chat_messages').insert({
               thread_id: threadId,
@@ -275,7 +277,7 @@ export async function POST(req: Request) {
               role: 'user',
               content: lastUserMessage,
               created_at: now,
-              updated_at: now // <-- 🚨 추가됨!
+              updated_at: now 
             });
             
             await supabase.from('chat_messages').insert({
@@ -284,7 +286,7 @@ export async function POST(req: Request) {
               role: 'assistant',
               content: text,
               created_at: now,
-              updated_at: now // <-- 🚨 추가됨!
+              updated_at: now 
             });
           } catch (dbError) {
             console.error("DB 저장 중 에러 발생:", dbError);
@@ -320,7 +322,6 @@ export async function POST(req: Request) {
               }
               case 'text-delta': {
                 fullAnswer += part.textDelta;
-                // 🚨 Edge 환경 에러를 유발하는 process.stdout.write 제거 완료
                 send({ type: 'content', delta: part.textDelta });
                 break;
               }
@@ -335,7 +336,6 @@ export async function POST(req: Request) {
                 });
                 break;
               }
-              // 🚨 타입 에러를 유발하는 case 'tool-error': 블록 제거 완료
             }
           }
         } catch (loopErr) {
@@ -344,7 +344,7 @@ export async function POST(req: Request) {
           Sentry.captureException(loopErr);
           send({
             type: 'error',
-            message: '서버가 잠시 흔들렸어요. 다시 한 번만 시도 부탁드릴게요 🙇‍♂️',
+            message: '서버가 잠시 흔들렸어요. 다시 한 일시적인 현상이니 한번 더 시도 부탁드릴게요 🙇‍♂️',
           });
         } finally {
           console.log(`\n[🏁 스트림 종료] 길이=${fullAnswer.length}, error=${streamErrored}`);
