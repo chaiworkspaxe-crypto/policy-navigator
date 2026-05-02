@@ -15,6 +15,20 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 export const runtime = 'edge';
 
 // ==============================================================================
+// 🌟 헬퍼 함수: 도구 타임아웃 방지
+// ==============================================================================
+const TOOL_TIMEOUT_MS = 8000; // 도구별 8초 타임아웃
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, rej) =>
+      setTimeout(() => rej(new Error(`${label} 타임아웃(${ms}ms)`)), ms),
+    ),
+  ]);
+}
+
+// ==============================================================================
 // 🌟 파이썬과 100% 동일한 시스템 프롬프트
 // ==============================================================================
 const SYSTEM_PROMPT = `
@@ -111,70 +125,140 @@ export async function POST(req: Request) {
       maxSteps: 10,
       tools: {
         get_current_time: tool({
-          description: '현재 날짜와 시간을 확인합니다.',
+          description: '오늘 날짜와 시간(서울 기준)을 반환합니다.',
           parameters: z.object({}),
           execute: async () => {
-            return new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
-          },
-        }),
-        search_internal_db: tool({
-          description: '사용자 질문을 바탕으로 내부 DB에서 정부 정책을 검색합니다.',
-          parameters: z.object({ query: z.string() }),
-          execute: async ({ query }) => {
-            const embeddingResponse = await rawOpenai.embeddings.create({
-              model: 'text-embedding-3-small',
-              input: query,
-            });
-            const { data, error } = await supabase.rpc('match_policies', {
-              query_embedding: embeddingResponse.data[0].embedding,
-              match_threshold: 0.3,
-              match_count: 5,
-            });
-
-            if (error || !data || data.length === 0) {
-              return "내부 DB에서 일치하는 정책을 찾지 못했습니다. naver_web_search를 사용하세요.";
+            try {
+              return new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
+            } catch (e) {
+              return '시간 조회 실패. UTC 기준으로 진행해주세요.';
             }
-            return data.map((p: any) => `- 정책명: ${p.title} (${p.provider})\n  내용: ${p.summary}\n  링크: ${p.url}`).join('\n\n');
           },
         }),
+
+        search_internal_db: tool({
+          description: '내부 DB(pgvector)에서 정부 정책의 의미적 유사도 상위 결과를 가져옵니다. 가장 먼저 호출하세요.',
+          parameters: z.object({ query: z.string().describe('한국어 자연어 검색어') }),
+          execute: async ({ query }) => {
+            try {
+              const embeddingResponse = await withTimeout(
+                rawOpenai.embeddings.create({ model: 'text-embedding-3-small', input: query }),
+                TOOL_TIMEOUT_MS,
+                'embedding',
+              );
+
+              for (const threshold of [0.55, 0.4]) {
+                const { data, error } = await withTimeout(
+                  supabase.rpc('match_policies', {
+                    query_embedding: embeddingResponse.data[0].embedding,
+                    match_threshold: threshold,
+                    match_count: 8,
+                  }),
+                  TOOL_TIMEOUT_MS,
+                  'pgvector',
+                );
+
+                if (error) {
+                  console.error('[search_internal_db] supabase error:', error);
+                  return `내부 DB 일시 장애 (${error.message}). naver_web_search로 우회하세요.`;
+                }
+                if (data && data.length > 0) {
+                  return data
+                    .map((p: any) => `- 정책명: ${p.title} (${p.provider})\n  내용: ${p.summary}\n  링크: ${p.url}`)
+                    .join('\n\n');
+                }
+              }
+              return '내부 DB에 매칭되는 정책 없음. naver_web_search 또는 global_web_search로 보완하세요.';
+            } catch (e: any) {
+              console.error('[search_internal_db] fatal:', e);
+              return `내부 DB 검색 실패(${e?.message ?? 'unknown'}). naver_web_search로 즉시 우회하세요.`;
+            }
+          },
+        }),
+
         naver_web_search: tool({
-          description: '지자체 블로그, 최신 뉴스, 지역구 특화 정보를 찾을 때 사용하는 필수 도구입니다.',
+          description: '지자체/읍면동 단위 특화 정책, 최신 공고를 찾을 때 우선 사용. 키워드는 "OOO시 OOO 지원금" 형태가 효과적.',
           parameters: z.object({ query: z.string() }),
           execute: async ({ query }) => {
-            const clientId = process.env.NAVER_CLIENT_ID;
-            const clientSecret = process.env.NAVER_CLIENT_SECRET;
-            if (!clientId || !clientSecret) return "네이버 API 키 누락. global_web_search를 사용하세요.";
-
-            const res = await fetch(`https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(query)}&display=5`, {
-              headers: { 'X-Naver-Client-Id': clientId, 'X-Naver-Client-Secret': clientSecret }
-            });
-            const data = await res.json();
-            if (!data.items || data.items.length === 0) return "네이버 검색 결과 없음.";
-
-            return data.items.map((item: any) => {
-              const cleanTitle = item.title.replace(/<[^>]+>/g, '');
-              const cleanDesc = item.description.replace(/<[^>]+>/g, '');
-              return `- 제목: ${cleanTitle}\n  내용: ${cleanDesc}\n  링크: ${item.link}`;
-            }).join('\n\n');
+            try {
+              const clientId = process.env.NAVER_CLIENT_ID;
+              const clientSecret = process.env.NAVER_CLIENT_SECRET;
+              if (!clientId || !clientSecret) {
+                return '네이버 API 키 미설정. global_web_search를 사용하세요.';
+              }
+              const res = await withTimeout(
+                fetch(
+                  `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(query)}&display=5`,
+                  { headers: { 'X-Naver-Client-Id': clientId, 'X-Naver-Client-Secret': clientSecret } },
+                ),
+                TOOL_TIMEOUT_MS,
+                'naver',
+              );
+              if (!res.ok) {
+                return `네이버 검색 ${res.status} 에러. global_web_search로 우회하세요.`;
+              }
+              const data = await res.json();
+              if (!data.items?.length) {
+                return '네이버 검색 결과 없음. 키워드를 더 구체적으로(지역명+분야) 바꿔 재시도해보세요.';
+              }
+              return data.items
+                .map((item: any) => {
+                  const cleanTitle = item.title.replace(/<[^>]+>/g, '');
+                  const cleanDesc = item.description.replace(/<[^>]+>/g, '');
+                  return `- 제목: ${cleanTitle}\n  내용: ${cleanDesc}\n  링크: ${item.link}`;
+                })
+                .join('\n\n');
+            } catch (e: any) {
+              console.error('[naver_web_search] fatal:', e);
+              return `네이버 검색 실패(${e?.message ?? 'unknown'}). global_web_search로 우회하세요.`;
+            }
           },
         }),
+
         global_web_search: tool({
-          description: "네이버 검색에서 찾지 못한 정부 공식 문서나 '2026년 최신 신청 일정(마감일)'을 교차 검증할 때 사용합니다.",
+          description: '정부 공식 문서 / 최신 신청 일정 교차 검증. 네이버에서 못 찾았거나 마감일 확인이 필요할 때 사용.',
           parameters: z.object({ query: z.string() }),
           execute: async ({ query }) => {
-            const localizedQuery = `2026년 대한민국 ${query}`;
-            const tavilyKey = process.env.TAVILY_API_KEY;
-            if (!tavilyKey) return "글로벌 검색 엔진이 차단되었습니다. 현재 지식과 DB 정보만으로 최선을 다해 답변하세요.";
+            try {
+              const tavilyKey = process.env.TAVILY_API_KEY;
+              if (!tavilyKey) {
+                return '글로벌 검색 미설정. DB와 네이버 결과만으로 답변하세요.';
+              }
+              const seoulYear = new Intl.DateTimeFormat('en-US', {
+                timeZone: 'Asia/Seoul',
+                year: 'numeric',
+              }).format(new Date());
+              const localizedQuery = `${seoulYear}년 대한민국 ${query}`;
 
-            const res = await fetch('https://api.tavily.com/search', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ api_key: tavilyKey, query: localizedQuery, max_results: 3 })
-            });
-            const data = await res.json();
-            if (!data.results || data.results.length === 0) return "글로벌 검색 결과 없음.";
-
-            return data.results.map((r: any) => `- 제목: ${r.title}\n  내용: ${r.content}\n  링크: ${r.url}`).join('\n\n');
+              const res = await withTimeout(
+                fetch('https://api.tavily.com/search', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    api_key: tavilyKey,
+                    query: localizedQuery,
+                    max_results: 4,
+                    search_depth: 'advanced',
+                    include_domains: ['gov.kr', 'go.kr', 'or.kr', 'bokjiro.go.kr', 'youthcenter.go.kr'],
+                  }),
+                }),
+                TOOL_TIMEOUT_MS + 2000,
+                'tavily',
+              );
+              if (!res.ok) {
+                return `글로벌 검색 ${res.status}. 네이버 결과만으로 답변하세요.`;
+              }
+              const data = await res.json();
+              if (!data.results?.length) {
+                return '글로벌 검색 결과 없음. 키워드를 바꿔 재시도하거나 보유 정보로 마무리하세요.';
+              }
+              return data.results
+                .map((r: any) => `- 제목: ${r.title}\n  내용: ${r.content}\n  링크: ${r.url}`)
+                .join('\n\n');
+            } catch (e: any) {
+              console.error('[global_web_search] fatal:', e);
+              return `글로벌 검색 실패(${e?.message ?? 'unknown'}). 보유 정보로 답변하세요.`;
+            }
           },
         }),
       },
