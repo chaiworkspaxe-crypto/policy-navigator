@@ -170,14 +170,14 @@ export default function AdminDashboardPage() {
         {/* ========================================================= */}
         {activeTab === 'stats' && (
           <div className="space-y-8 animate-in fade-in duration-300 pt-4">
-            {/* ... 기존 통계 UI 내용과 동일하므로 생략 없이 유지됨 ... */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="bg-[#1e1e1e] border border-gray-800 rounded-2xl p-5 shadow-lg flex flex-col transition-transform hover:-translate-y-1">
                 <div className="flex items-center gap-3 mb-3">
                   <div className="p-2.5 bg-blue-500/10 rounded-lg"><Users size={20} className="text-blue-500" /></div>
                   <h2 className="text-gray-400 text-sm font-semibold">총 누적 사용자</h2>
                 </div>
-                <div className="text-3xl font-extrabold text-white mt-auto">{loading ? "-" : stats?.total_users.toLocaleString()} <span className="text-base text-gray-500 font-medium">명</span></div>
+                {/* 🌟 해결: 값이 없을 때 0으로 떨어지도록 방어막 (|| 0) 추가 */}
+                <div className="text-3xl font-extrabold text-white mt-auto">{loading ? "-" : (stats?.total_users || 0).toLocaleString()} <span className="text-base text-gray-500 font-medium">명</span></div>
               </div>
 
               <div className="bg-[#1e1e1e] border border-gray-800 rounded-2xl p-5 shadow-lg flex flex-col transition-transform hover:-translate-y-1">
@@ -185,7 +185,8 @@ export default function AdminDashboardPage() {
                   <div className="p-2.5 bg-green-500/10 rounded-lg"><MessageSquare size={20} className="text-green-500" /></div>
                   <h2 className="text-gray-400 text-sm font-semibold">총 생성된 대화방</h2>
                 </div>
-                <div className="text-3xl font-extrabold text-white mt-auto">{loading ? "-" : stats?.total_threads.toLocaleString()} <span className="text-base text-gray-500 font-medium">개</span></div>
+                {/* 🌟 해결: 방어막 추가 */}
+                <div className="text-3xl font-extrabold text-white mt-auto">{loading ? "-" : (stats?.total_threads || 0).toLocaleString()} <span className="text-base text-gray-500 font-medium">개</span></div>
               </div>
 
               <div className="bg-[#1e1e1e] border border-purple-900/30 rounded-2xl p-5 shadow-lg flex flex-col transition-transform hover:-translate-y-1">
@@ -193,7 +194,8 @@ export default function AdminDashboardPage() {
                   <div className="p-2.5 bg-purple-500/10 rounded-lg"><MessageCircle size={20} className="text-purple-500" /></div>
                   <h2 className="text-gray-400 text-sm font-semibold">유저 평균 티키타카</h2>
                 </div>
-                <div className="text-3xl font-extrabold text-purple-400 mt-auto">{loading ? "-" : stats?.avg_conversation_depth} <span className="text-base text-purple-900/70 font-medium">턴</span></div>
+                {/* 🌟 해결: 방어막 추가 */}
+                <div className="text-3xl font-extrabold text-purple-400 mt-auto">{loading ? "-" : (stats?.avg_conversation_depth || 0)} <span className="text-base text-purple-900/70 font-medium">턴</span></div>
               </div>
 
               <div className="bg-[#1e1e1e] border border-red-900/30 rounded-2xl p-5 shadow-lg flex flex-col transition-transform hover:-translate-y-1">
@@ -201,7 +203,8 @@ export default function AdminDashboardPage() {
                   <div className="p-2.5 bg-red-500/10 rounded-lg"><AlertOctagon size={20} className="text-red-500" /></div>
                   <h2 className="text-gray-400 text-sm font-semibold">오늘 한도 초과 방어</h2>
                 </div>
-                <div className="text-3xl font-extrabold text-red-400 mt-auto">{loading ? "-" : stats?.blocked_today.toLocaleString()} <span className="text-base text-red-900/70 font-medium">건</span></div>
+                {/* 🌟 해결: 방어막 추가 */}
+                <div className="text-3xl font-extrabold text-red-400 mt-auto">{loading ? "-" : (stats?.blocked_today || 0).toLocaleString()} <span className="text-base text-red-900/70 font-medium">건</span></div>
               </div>
             </div>
 
