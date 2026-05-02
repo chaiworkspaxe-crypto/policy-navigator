@@ -3,6 +3,7 @@ import { streamText, tool } from 'ai';
 import { z } from 'zod';
 import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
+import * as Sentry from '@sentry/nextjs'; // 🌟 상단에 Sentry 임포트 추가!
 
 // 1. API 클라이언트 초기화
 const rawOpenai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -28,7 +29,7 @@ const SYSTEM_PROMPT = `
 
 0.5. [매우 중요] 응답 시작 패턴 — 도구 호출 전 반드시 다음을 먼저 스트리밍:
    1) 한 줄 인사 ("OOOO년 O월 O일 기준으로 찾아드릴게요!")
-   2) 검색 계획 안내 ("거주지 ___, 출생연도 ___을 토대로 모든 분야를 탐색해 볼게요!
+   2) 검색 계획 안내 ("거주지 ___, 출생연도 ___을 토대로 모든 분야를 탐색해 볼게요!")
    3) 그 다음에 도구 호출 시작
    
 1. 프로필 활용 — "답하면서 묻기" 패턴:
@@ -209,49 +210,77 @@ export async function POST(req: Request) {
     });
 
     // ==============================================================================
-    // 🌟 커스텀 JSON 스트리밍 엔진
+    // 🌟 커스텀 JSON 스트리밍 엔진 (초고도화 버전!)
     // ==============================================================================
-   // ... 생략 ...
     let fullAnswer = "";
+    let streamErrored = false;
+
     const customStream = new ReadableStream({
       async start(controller) {
-        for await (const part of result.fullStream) {
-          
-          if (part.type === 'tool-call') {
-            const toolName = part.toolName;
-            
-            // 🌟 [로그 추가] Vercel Logs 창에 어떤 도구를 호출했는지 실시간으로 찍습니다!
-            console.log(`[🤖 AI 도구 호출] ${toolName} 실행 중... 파라미터:`, part.args);
+        const encoder = new TextEncoder();
+        const send = (obj: Record<string, unknown>) =>
+          controller.enqueue(encoder.encode(JSON.stringify(obj) + '\n'));
 
-            let friendlyMsg = "하나라도 더 찾아내려고 AI가 풀야근 중입니다! 쪼~금만 더 기다려주세요 😭🌙";
-            
-            if (toolName === "search_internal_db") friendlyMsg = "정부 정책 창고 셔터 올리는 중! 먼지가 쫌 날려도(쿨럭) 싹 다 찾아올게요 😷💨";
-            else if (toolName === "naver_web_search") friendlyMsg = "동네방네 뿌려진 지자체 혜택 전단지 싹 다 긁어모으는 중! 🏃‍♂️💨🔥";
-            else if (toolName === "global_web_search") friendlyMsg = "국내 공식 정부 문서 풀스캔 중! 하나도 안 놓칠게요 🔎💻";
-            else if (toolName === "get_current_time") friendlyMsg = "이미 끝난 공고 주면 혼나니까! 실시간 마감일 깐깐하게 비교 중입니다 🗓️⏳";
-
-            controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'status', message: `🔍 ${friendlyMsg}` }) + '\n'));
-          } 
-          
-          else if (part.type === 'tool-result') {
-            // 🌟 [로그 추가] 도구가 찾아온 결과의 길이나 상태를 찍어볼 수도 있어!
-            console.log(`[✅ 도구 응답 완료] ${part.toolName} 결과 수신 완료`);
+        try {
+          for await (const part of result.fullStream) {
+            switch (part.type) {
+              case 'tool-call': {
+                console.log(`[🤖 도구 호출] ${part.toolName}`, part.args);
+                const friendlyMsg = pickFriendlyMessage(part.toolName, part.args);
+                send({ type: 'status', message: `🔍 ${friendlyMsg}` });
+                break;
+              }
+              case 'tool-result': {
+                console.log(`[✅ 도구 응답] ${part.toolName} 완료`);
+                break;
+              }
+              case 'text-delta': {
+                fullAnswer += part.textDelta;
+                
+                // 🌟 창현이가 원했던 Vercel 터미널 실시간 타다닥 로그 유지!
+                process.stdout.write(part.textDelta); 
+                
+                send({ type: 'content', delta: part.textDelta });
+                break;
+              }
+              // 🚨 신규 — 모델/SDK 레벨 에러
+              case 'error': {
+                streamErrored = true;
+                const err = part.error as Error;
+                console.error('\n[💥 모델 스트림 에러]', err);
+                Sentry.captureException(err, { tags: { phase: 'model-stream' } });
+                send({
+                  type: 'error',
+                  message: '앗, AI가 잠깐 어지러워해요 🥲 잠시 후 다시 시도해주세요. (자동으로 끊긴 답변 이어쓰기가 가능해요!)',
+                });
+                break;
+              }
+              // 🚨 신규 — 도구 단계 에러 (execute 안에서 throw된 경우)
+              case 'tool-error': {
+                console.error(`\n[⚠️ 도구 에러] ${part.toolName}`, part.error);
+                Sentry.captureException(part.error as Error, {
+                  tags: { phase: 'tool-execute', tool: part.toolName },
+                });
+                // 사용자에겐 노출하지 않음 — 모델이 다른 도구로 우회 가능하도록
+                break;
+              }
+            }
           }
-
-          else if (part.type === 'text-delta') {
-            fullAnswer += part.textDelta;
-            controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'content', delta: part.textDelta }) + '\n'));
-          }
+        } catch (loopErr) {
+          streamErrored = true;
+          console.error('\n[💀 스트림 루프 치명 에러]', loopErr);
+          Sentry.captureException(loopErr);
+          send({
+            type: 'error',
+            message: '서버가 잠시 흔들렸어요. 다시 한 번만 시도 부탁드릴게요 🙇‍♂️',
+          });
+        } finally {
+          console.log(`\n[🏁 스트림 종료] 길이=${fullAnswer.length}, error=${streamErrored}`);
+          send({ type: 'done', full_content: fullAnswer, errored: streamErrored });
+          controller.close();
         }
-        
-        // 🌟 [로그 추가] AI가 최종 답변을 다 만들었을 때 로그를 남깁니다.
-        console.log(`[🏁 AI 스트리밍 종료] 응답 완료! (총 길이: ${fullAnswer.length}자)`);
-        
-        controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: 'done', full_content: fullAnswer }) + '\n'));
-        controller.close();
-      }
+      },
     });
-    // ... 생략 ...
 
     return new Response(customStream, {
       headers: { 'Content-Type': 'application/x-ndjson', 'Cache-Control': 'no-cache' }
@@ -260,5 +289,28 @@ export async function POST(req: Request) {
   } catch (error) {
     console.error(error);
     return new Response(JSON.stringify({ error: '서버 에러가 발생했습니다.' }), { status: 500 });
+  }
+}
+
+// ==============================================================================
+// 🌟 파일 맨 아래에 헬퍼 함수 추가
+// ==============================================================================
+function pickFriendlyMessage(toolName: string, args: any): string {
+  const argHint =
+    typeof args?.query === 'string' && args.query.length > 0
+      ? ` ("${args.query.slice(0, 18)}${args.query.length > 18 ? '…' : ''}")`
+      : '';
+      
+  switch (toolName) {
+    case 'search_internal_db':
+      return `정부 정책 창고 셔터 올리는 중${argHint}! 먼지가 쫌 날려도(쿨럭) 싹 다 찾아올게요 😷💨`;
+    case 'naver_web_search':
+      return `동네방네 지자체 전단지 긁어모으는 중${argHint}! 🏃‍♂️💨🔥`;
+    case 'global_web_search':
+      return `정부 공식 문서 풀스캔 중${argHint}! 하나도 안 놓칠게요 🔎💻`;
+    case 'get_current_time':
+      return '실시간 마감일 깐깐 비교 중 🗓️⏳';
+    default:
+      return '하나라도 더 찾아내려고 AI가 풀야근 중! 쪼~금만 더 기다려주세요 😭🌙';
   }
 }
