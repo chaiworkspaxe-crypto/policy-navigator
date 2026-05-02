@@ -15,14 +15,15 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 export const runtime = 'edge';
 
 // ==============================================================================
-// 🌟 헬퍼 함수: 도구 타임아웃 방지
+// 🌟 헬퍼 함수: 도구 타임아웃 방지 (타입스크립트 에러 완벽 차단 버전)
 // ==============================================================================
 const TOOL_TIMEOUT_MS = 10000; // 🌟 Pro 요금제 기준 10초 넉넉하게 세팅!
 
-function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+// Supabase의 특수한 PromiseLike 객체도 모두 소화할 수 있도록 만능형(any)으로 변경
+function withTimeout(p: any, ms: number, label: string): Promise<any> {
   return Promise.race([
-    p,
-    new Promise<T>((_, rej) =>
+    Promise.resolve(p), // 🌟 일반 Promise가 아니어도 무조건 Promise로 감싸서 해결
+    new Promise<any>((_, rej) =>
       setTimeout(() => rej(new Error(`${label} 타임아웃(${ms}ms)`)), ms),
     ),
   ]);
@@ -141,16 +142,15 @@ export async function POST(req: Request) {
           parameters: z.object({ query: z.string().describe('한국어 자연어 검색어') }),
           execute: async ({ query }) => {
             try {
-              // 🌟 해결: TypeScript 오류 방지를 위해 <any> 명시
-              const embeddingResponse = await withTimeout<any>(
+              // 🌟 만능형 withTimeout을 사용하므로 <any>를 뺄 수 있고, 에러도 안 납니다!
+              const embeddingResponse = await withTimeout(
                 rawOpenai.embeddings.create({ model: 'text-embedding-3-small', input: query }),
                 TOOL_TIMEOUT_MS,
                 'embedding',
               );
 
               for (const threshold of [0.55, 0.4]) {
-                // 🌟 해결: TypeScript 오류 방지를 위해 <any> 명시
-                const { data, error } = await withTimeout<any>(
+                const { data, error } = await withTimeout(
                   supabase.rpc('match_policies', {
                     query_embedding: embeddingResponse.data[0].embedding,
                     match_threshold: threshold,
