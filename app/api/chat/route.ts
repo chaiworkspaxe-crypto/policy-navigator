@@ -117,6 +117,26 @@ export async function POST(req: Request) {
     const { messages, userId, threadId } = await req.json();
 
     // ==============================================================================
+    // 🌟 [수술 3️⃣] 사용자 메시지 즉시 저장 (유실 방지)
+    // ==============================================================================
+    if (userId && threadId && Array.isArray(messages) && messages.length > 0) {
+      const lastMsg = messages[messages.length - 1];
+      if (lastMsg?.role === 'user') {
+        const content = typeof lastMsg.content === 'string' ? lastMsg.content : JSON.stringify(lastMsg.content);
+        const now = new Date().toISOString();
+        const { error: insertErr } = await supabase.from('chat_messages').insert({
+          thread_id: threadId,
+          user_id: userId,
+          role: 'user',
+          content,
+          created_at: now,
+          updated_at: now,
+        });
+        if (insertErr) console.error('[user msg insert]', insertErr);
+      }
+    }
+
+    // ==============================================================================
     // 🤖 1. 에이전트 실행 (파이썬의 AgentExecutor 완벽 대체)
     // ==============================================================================
     const result = await streamText({
@@ -124,6 +144,10 @@ export async function POST(req: Request) {
       system: SYSTEM_PROMPT,
       messages,
       maxSteps: 10,
+      abortSignal: req.signal, // 🌟 [수술 4️⃣] 유저 탭 닫으면 즉시 중단 (비용 절약)
+      onError: (err) => {
+        console.error('[streamText onError]', err);
+      },
       tools: {
         get_current_time: tool({
           description: '오늘 날짜와 시간(서울 기준)을 반환합니다.',
@@ -142,15 +166,14 @@ export async function POST(req: Request) {
           parameters: z.object({ query: z.string().describe('한국어 자연어 검색어') }),
           execute: async ({ query }) => {
             try {
-              // 🌟 만능형 withTimeout을 사용하므로 <any>를 뺄 수 있고, 에러도 안 납니다!
-              const embeddingResponse = await withTimeout(
+              const embeddingResponse = await withTimeout<any>(
                 rawOpenai.embeddings.create({ model: 'text-embedding-3-small', input: query }),
                 TOOL_TIMEOUT_MS,
                 'embedding',
               );
 
               for (const threshold of [0.55, 0.4]) {
-                const { data, error } = await withTimeout(
+                const { data, error } = await withTimeout<any>(
                   supabase.rpc('match_policies', {
                     query_embedding: embeddingResponse.data[0].embedding,
                     match_threshold: threshold,
@@ -264,33 +287,29 @@ export async function POST(req: Request) {
           },
         }),
       },
-      // 🌟 [수술 완료] DB 저장 시 updated_at 누락 에러 완벽 차단!
-      onFinish: async ({ text }) => {
-        if (userId && threadId) {
-          try {
-            const lastUserMessage = messages[messages.length - 1].content;
-            const now = new Date().toISOString(); 
-            
-            await supabase.from('chat_messages').insert({
-              thread_id: threadId,
-              user_id: userId,
-              role: 'user',
-              content: lastUserMessage,
-              created_at: now,
-              updated_at: now 
-            });
-            
-            await supabase.from('chat_messages').insert({
-              thread_id: threadId,
-              user_id: userId,
-              role: 'assistant',
-              content: text,
-              created_at: now,
-              updated_at: now 
-            });
-          } catch (dbError) {
-            console.error("DB 저장 중 에러 발생:", dbError);
-          }
+      // 🌟 [수술 완료] 어시스턴트 메시지만 깔끔하게 저장 (유저 메시지 중복 방지)
+      onFinish: async ({ text, usage, finishReason }) => {
+        if (!userId || !threadId) return;
+        try {
+          const now = new Date().toISOString(); 
+          
+          await supabase.from('chat_messages').insert({
+            thread_id: threadId,
+            user_id: userId,
+            role: 'assistant',
+            content: text,
+            created_at: now,
+            updated_at: now 
+          });
+
+          // 🌟 토큰 사용량 로그
+          console.log(`[💰 토큰] in=${usage?.promptTokens}, out=${usage?.completionTokens}, finish=${finishReason}`);
+
+          // 🌟 대화방 최근 활동 시간 업데이트
+          await supabase.from('chat_threads').update({ updated_at: now }).eq('thread_id', threadId);
+
+        } catch (dbError) {
+          console.error("DB 저장 중 에러 발생:", dbError);
         }
       }
     });
