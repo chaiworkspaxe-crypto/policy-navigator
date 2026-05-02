@@ -19,10 +19,10 @@ export const runtime = 'edge';
 // ==============================================================================
 const TOOL_TIMEOUT_MS = 10000; // 🌟 Pro 요금제 기준 10초 넉넉하게 세팅!
 
-// Supabase의 특수한 PromiseLike 객체도 모두 소화할 수 있도록 만능형(any)으로 변경
+// 🌟 해결: 첫 번째 파라미터 p의 타입을 명시적으로 any로 선언하여 Supabase 빌더 객체 허용
 function withTimeout(p: any, ms: number, label: string): Promise<any> {
   return Promise.race([
-    Promise.resolve(p), // 🌟 일반 Promise가 아니어도 무조건 Promise로 감싸서 해결
+    Promise.resolve(p), // 일반 Promise가 아니어도 무조건 Promise로 감싸서 해결
     new Promise<any>((_, rej) =>
       setTimeout(() => rej(new Error(`${label} 타임아웃(${ms}ms)`)), ms),
     ),
@@ -166,14 +166,14 @@ export async function POST(req: Request) {
           parameters: z.object({ query: z.string().describe('한국어 자연어 검색어') }),
           execute: async ({ query }) => {
             try {
-              const embeddingResponse = await withTimeout<any>(
+              const embeddingResponse = await withTimeout(
                 rawOpenai.embeddings.create({ model: 'text-embedding-3-small', input: query }),
                 TOOL_TIMEOUT_MS,
                 'embedding',
               );
 
               for (const threshold of [0.55, 0.4]) {
-                const { data, error } = await withTimeout<any>(
+                const { data, error } = await withTimeout(
                   supabase.rpc('match_policies', {
                     query_embedding: embeddingResponse.data[0].embedding,
                     match_threshold: threshold,
