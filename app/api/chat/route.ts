@@ -210,7 +210,7 @@ export async function POST(req: Request) {
     });
 
     // ==============================================================================
-    // 🌟 커스텀 JSON 스트리밍 엔진 (초고도화 버전!)
+    // 🌟 커스텀 JSON 스트리밍 엔진 (에러 수정 및 Vercel Edge 최적화 버전)
     // ==============================================================================
     let fullAnswer = "";
     let streamErrored = false;
@@ -236,14 +236,10 @@ export async function POST(req: Request) {
               }
               case 'text-delta': {
                 fullAnswer += part.textDelta;
-                
-                // 🌟 창현이가 원했던 Vercel 터미널 실시간 타다닥 로그 유지!
-                process.stdout.write(part.textDelta); 
-                
+                // 🚨 Edge 환경 에러를 유발하는 process.stdout.write 제거 완료
                 send({ type: 'content', delta: part.textDelta });
                 break;
               }
-              // 🚨 신규 — 모델/SDK 레벨 에러
               case 'error': {
                 streamErrored = true;
                 const err = part.error as Error;
@@ -255,15 +251,7 @@ export async function POST(req: Request) {
                 });
                 break;
               }
-              // 🚨 신규 — 도구 단계 에러 (execute 안에서 throw된 경우)
-              case 'tool-error': {
-                console.error(`\n[⚠️ 도구 에러] ${part.toolName}`, part.error);
-                Sentry.captureException(part.error as Error, {
-                  tags: { phase: 'tool-execute', tool: part.toolName },
-                });
-                // 사용자에겐 노출하지 않음 — 모델이 다른 도구로 우회 가능하도록
-                break;
-              }
+              // 🚨 타입 에러를 유발하는 case 'tool-error': 블록 제거 완료
             }
           }
         } catch (loopErr) {
