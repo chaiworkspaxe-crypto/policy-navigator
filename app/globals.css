@@ -46,11 +46,11 @@ body {
 
 @layer components {
   /* 🌟 1. 마크다운 굵은 글씨 ( **강조** ) */
-  /* 라이트모드: 검은색 / 다크모드: 연두색 유지 */
+  /* 배경 / 색상 강제 제거 — 굵기만 유지하여 가독성 확보 */
   .markdown-body strong,
   .prose strong,
   strong {
-    @apply text-black dark:text-green-400 font-bold;
+    @apply font-bold;
   }
 
   /* 🌟 2. 마크다운 인라인 코드 ( `배경이 있는 글씨` ) */
