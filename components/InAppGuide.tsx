@@ -8,28 +8,41 @@ export default function InAppGuide() {
   const [os, setOs] = useState<'ios' | 'android' | 'other'>('other');
   const [copied, setCopied] = useState(false);
 
+  // 🌟 [수술 1️⃣6️⃣] useEffect 통째로 교체: 카톡/네이버앱/Daum앱 등 정밀 감지
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    
     // ✅ sessionStorage로 한 번 닫으면 해당 탭(세션)에서는 다시 띄우지 않음
-    if (typeof window !== 'undefined' && sessionStorage.getItem('inapp_dismissed')) {
+    if (sessionStorage.getItem('inapp_dismissed')) {
       setDismissed(true);
       return;
     }
     
-    // 1. 유저 기기 및 브라우저 정보 가져오기
-    const userAgent = navigator.userAgent.toLowerCase();
+    const ua = navigator.userAgent.toLowerCase();
     
-    // 2. 인스타, 카톡 등 대표적인 인앱 브라우저 키워드 감지
-    const inAppKeywords = ['instagram', 'kakaotalk', 'line', 'fbav', 'fban'];
-    const isApp = inAppKeywords.some(keyword => userAgent.includes(keyword));
-
+    // 🌟 한국 환경 핵심 인앱 + 글로벌 앱 감지 패턴 보강
+    const inAppPatterns = [
+      'kakaotalk',
+      'naver(', // 네이버 앱
+      'naverin',
+      'daumapps',
+      'instagram',
+      'line/',
+      'fbav', 'fban', // Facebook
+      'fb_iab',
+      'micromessenger', // WeChat
+      'snapchat',
+      'discord',
+      ' wv)', // 일반 안드로이드 WebView
+    ];
+    
+    const isApp = inAppPatterns.some((p) => ua.includes(p));
+    
     if (isApp) {
       setIsInApp(true);
-      // 3. 아이폰(iOS)인지 안드로이드인지 판별
-      if (userAgent.match(/iphone|ipad|ipod/i)) {
-        setOs('ios');
-      } else if (userAgent.match(/android/i)) {
-        setOs('android');
-      }
+      // 아이폰(iOS)인지 안드로이드인지 판별
+      if (/iphone|ipad|ipod/i.test(ua)) setOs('ios');
+      else if (/android/i.test(ua)) setOs('android');
     }
   }, []);
 
