@@ -671,4 +671,3 @@ export default function Home() {
     </div>
   );
 }
-```</ReactMarkdown>
