@@ -3,8 +3,7 @@ import { streamText, tool } from 'ai';
 import { z } from 'zod';
 import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
-import * as Sentry from '@sentry/nextjs'; // 🌟 상단에 Sentry 임포트 추가!
-// 🌟 [수술 6️⃣] 분리한 시스템 프롬프트 불러오기
+import * as Sentry from '@sentry/nextjs'; 
 import { POLICY_NAVIGATOR_SYSTEM_PROMPT } from '@/lib/prompts/policyNavigator';
 
 // 1. API 클라이언트 초기화
@@ -13,18 +12,17 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// ⚡️ Edge 런타임을 사용하여 파이썬 서버보다 응답 속도를 극대화!
+// ⚡️ Edge 런타임을 사용하여 응답 속도를 극대화!
 export const runtime = 'edge';
 
 // ==============================================================================
-// 🌟 헬퍼 함수: 도구 타임아웃 방지 (타입스크립트 에러 완벽 차단 버전)
+// 🌟 헬퍼 함수: 도구 타임아웃 방지
 // ==============================================================================
-const TOOL_TIMEOUT_MS = 10000; // 🌟 Pro 요금제 기준 10초 넉넉하게 세팅!
+const TOOL_TIMEOUT_MS = 10000;
 
-// 🌟 해결: 첫 번째 파라미터 p의 타입을 명시적으로 any로 선언하여 Supabase 빌더 객체 허용
 function withTimeout(p: any, ms: number, label: string): Promise<any> {
   return Promise.race([
-    Promise.resolve(p), // 일반 Promise가 아니어도 무조건 Promise로 감싸서 해결
+    Promise.resolve(p), 
     new Promise<any>((_, rej) =>
       setTimeout(() => rej(new Error(`${label} 타임아웃(${ms}ms)`)), ms),
     ),
@@ -35,8 +33,12 @@ export async function POST(req: Request) {
   try {
     const { messages, userId, threadId } = await req.json();
 
+    // 🌟 서버사이드 절대경로 추출 (백그라운드 fetch용)
+    const reqUrl = new URL(req.url);
+    const extractApiUrl = `${reqUrl.origin}/api/profile/extract`;
+
     // ==============================================================================
-    // 🌟 [수술 3️⃣] 사용자 메시지 즉시 저장 (유실 방지)
+    // 🌟 사용자 메시지 즉시 저장 (유실 방지)
     // ==============================================================================
     if (userId && threadId && Array.isArray(messages) && messages.length > 0) {
       const lastMsg = messages[messages.length - 1];
@@ -56,15 +58,39 @@ export async function POST(req: Request) {
     }
 
     // ==============================================================================
-    // 🤖 1. 에이전트 실행 (파이썬의 AgentExecutor 완벽 대체)
+    // 🌟 [수술 1️⃣1️⃣] 메인 응답 전, 기존 프로필 컨텍스트 주입 (AI 뇌에 장부 입력)
+    // ==============================================================================
+    let profileContext = '';
+    if (userId && threadId) {
+      const { data: inputs } = await supabase
+        .from('chat_thread_inputs')
+        .select('profile_json, selected_city, selected_district, birth_year, extra_info')
+        .eq('thread_id', threadId)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (inputs) {
+        // AI가 참고할 수 있도록 문자열로 풀어서 덧붙여줌
+        profileContext = `\n\n[💡 현재까지 파악된 사용자 맞춤 프로필]
+- 거주지: ${inputs.selected_city !== '선택하세요' ? inputs.selected_city : '미상'} ${inputs.selected_district !== '선택하세요' ? inputs.selected_district : ''}
+- 출생연도: ${inputs.birth_year || '미상'}
+- 폼 추가 정보: ${inputs.extra_info || '없음'}
+- AI 백그라운드 자동추출 데이터: ${JSON.stringify(inputs.profile_json || {})}
+
+🚨 [중요 지침] 위 프로필 데이터를 적극적으로 활용하여 사용자에게 가장 적합한 혜택을 추천하세요. 이미 파악된 정보(주거형태, 소득, 직업 등)는 절대 다시 묻지 마세요!`;
+      }
+    }
+
+    // ==============================================================================
+    // 🤖 1. 에이전트 실행
     // ==============================================================================
     const result = await streamText({
       model: openai('gpt-5.4'), 
-      // 🌟 [수술 6️⃣ 적용] 엄청나게 깔끔해진 시스템 프롬프트 속성!
-      system: POLICY_NAVIGATOR_SYSTEM_PROMPT,
+      // 🌟 [수술 1️⃣1️⃣] 기존 프롬프트에 동적 프로필 컨텍스트(profileContext) 합체!
+      system: POLICY_NAVIGATOR_SYSTEM_PROMPT + profileContext,
       messages,
       maxSteps: 10,
-      abortSignal: req.signal, // 🌟 [수술 4️⃣] 유저 탭 닫으면 즉시 중단 (비용 절약)
+      abortSignal: req.signal, 
       onError: (err) => {
         console.error('[streamText onError]', err);
       },
@@ -86,7 +112,6 @@ export async function POST(req: Request) {
           parameters: z.object({ query: z.string().describe('한국어 자연어 검색어') }),
           execute: async ({ query }) => {
             try {
-              // 🌟 해결: <any> 삭제 완료!
               const embeddingResponse = await withTimeout(
                 rawOpenai.embeddings.create({ model: 'text-embedding-3-small', input: query }),
                 TOOL_TIMEOUT_MS,
@@ -94,7 +119,6 @@ export async function POST(req: Request) {
               );
 
               for (const threshold of [0.55, 0.4]) {
-                // 🌟 해결: <any> 삭제 완료!
                 const { data, error } = await withTimeout(
                   supabase.rpc('match_policies', {
                     query_embedding: embeddingResponse.data[0].embedding,
@@ -209,7 +233,6 @@ export async function POST(req: Request) {
           },
         }),
       },
-      // 🌟 [수술 완료] 어시스턴트 메시지만 깔끔하게 저장 (유저 메시지 중복 방지)
       onFinish: async ({ text, usage, finishReason }) => {
         if (!userId || !threadId) return;
         try {
@@ -224,11 +247,25 @@ export async function POST(req: Request) {
             updated_at: now 
           });
 
-          // 🌟 토큰 사용량 로그
           console.log(`[💰 토큰] in=${usage?.promptTokens}, out=${usage?.completionTokens}, finish=${finishReason}`);
-
-          // 🌟 대화방 최근 활동 시간 업데이트
           await supabase.from('chat_threads').update({ updated_at: now }).eq('thread_id', threadId);
+
+          // ==============================================================================
+          // 🌟 [수술 1️⃣1️⃣] 백그라운드 프로필 추출 — fire-and-forget (응답 지연 없음)
+          // ==============================================================================
+          const lastUser = messages[messages.length - 1];
+          if (lastUser?.role === 'user' && typeof lastUser.content === 'string') {
+            // 메인 로직을 막지 않고(await 없음) 뒤에서 조용히 API 호출
+            fetch(extractApiUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                userId,
+                threadId,
+                lastUserMessage: lastUser.content,
+              }),
+            }).catch((e) => console.error('[bg extract fire-and-forget error]', e));
+          }
 
         } catch (dbError) {
           console.error("DB 저장 중 에러 발생:", dbError);
@@ -237,7 +274,7 @@ export async function POST(req: Request) {
     });
 
     // ==============================================================================
-    // 🌟 커스텀 JSON 스트리밍 엔진 (에러 수정 및 Vercel Edge 최적화 버전)
+    // 🌟 커스텀 JSON 스트리밍 엔진
     // ==============================================================================
     let fullAnswer = "";
     let streamErrored = false;
