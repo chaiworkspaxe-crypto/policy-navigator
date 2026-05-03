@@ -306,7 +306,6 @@ export default function Home() {
             const next = [...prev];
             const lastMsg = next[next.length - 1];
             if (lastMsg) {
-               // 🌟 배열 접근 안전 장치 및 role 명시
                next[next.length - 1] = { ...lastMsg, role: 'assistant', content: acc };
             }
             return next;
@@ -543,7 +542,8 @@ export default function Home() {
                         </div>
                       )}
 
-                      {!loading && isLastMessage && isAssistant && !hasSummaryTable(message.content) && (
+                      {/* 🌟 수정 1: message.content.length > 50 조건 추가 완료! */}
+                      {!loading && isLastMessage && isAssistant && message.content.length > 50 && !hasSummaryTable(message.content) && (
                          <div className="mt-4 p-4 bg-gray-50 dark:bg-[#1a1a1a] rounded-xl border border-gray-200 dark:border-[#444] animate-in fade-in duration-300">
                            <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
                              <AlertCircle size={16} className="text-yellow-500" />
