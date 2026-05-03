@@ -147,18 +147,23 @@ export default function Home() {
     else document.documentElement.classList.add('dark');
   };
 
+  // 🌟 [수술 10️⃣] handleDeleteThread의 비대칭 fetch 통일
   const handleDeleteThread = async (tid: string, e: React.MouseEvent) => {
-    e.stopPropagation(); 
-    if (!confirm("정말 이 대화 기록을 삭제하시겠습니까?")) return;
+    e.stopPropagation();
+    if (!confirm('정말 이 대화 기록을 삭제하시겠습니까?')) return;
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/threads/${tid}?user_id=${userId}`, { method: 'DELETE' });
-      if (res.ok) {
-        await loadThreads(userId);
-        if (currentThreadId === tid) {
-          setCurrentThreadId(""); setMessages([]); applyInputs(EMPTY_INPUTS); setIsFormExpanded(true);
-        }
-      } else alert("삭제에 실패했습니다.");
-    } catch (err) { console.error("삭제 에러:", err); }
+      await api.deleteThread(userId, tid); // 🌟 lib/api.ts의 헬퍼 사용
+      await loadThreads(userId);
+      if (currentThreadId === tid) {
+        setCurrentThreadId('');
+        setMessages([]);
+        applyInputs(EMPTY_INPUTS);
+        setIsFormExpanded(true);
+      }
+    } catch (err) {
+      console.error('삭제 에러:', err);
+      alert('삭제에 실패했습니다.');
+    }
   };
 
   const handleDeleteAll = async () => {
