@@ -22,19 +22,27 @@ const extractSummaryTableText = (text: string) => {
   const lines = text.split('\n');
   let headerIdx = -1;
   for (let i = 0; i < lines.length; i++) {
-    const normalized = lines[i].replace(/ /g, "");
+    const line = lines[i];
+    if (line === undefined) continue; // 🌟 타입스크립트 안심시키기 (undefined 방어)
+    const normalized = line.replace(/ /g, "");
     if (normalized.includes("|분야|") && normalized.includes("|정책명|") && (normalized.includes("|신청마감일|") || normalized.includes("|핵심혜택|"))) {
       headerIdx = i; break;
     }
   }
   if (headerIdx === -1) return "";
   
-  const tableLines = [lines[headerIdx]];
+  const headerLine = lines[headerIdx];
+  if (headerLine === undefined) return ""; // 🌟 타입스크립트 안심시키기
+
+  const tableLines = [headerLine];
   for (let i = headerIdx + 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) { if (tableLines.length >= 2) break; continue; }
-    if (!line.includes('|')) { if (tableLines.length >= 2) break; continue; }
-    tableLines.push(lines[i]);
+    const line = lines[i];
+    if (line === undefined) continue; // 🌟 타입스크립트 안심시키기
+    
+    const trimmedLine = line.trim();
+    if (!trimmedLine) { if (tableLines.length >= 2) break; continue; }
+    if (!trimmedLine.includes('|')) { if (tableLines.length >= 2) break; continue; }
+    tableLines.push(line);
   }
   return tableLines.join('\n');
 };
@@ -202,7 +210,6 @@ export default function Home() {
       if (threadList.length === 0) { await handleNewThread(uid); return; }
       const shouldKeepCurrent = threadList.some((thread) => thread.thread_id === currentThreadId);
       
-      // 🌟 [수술 1️⃣7️⃣ 해결] threadList[0] 뒤에 ? 추가! (옵셔널 체이닝)
       const targetThreadId = shouldKeepCurrent ? currentThreadId : threadList[0]?.thread_id;
       
       if (targetThreadId) await selectThread(uid, targetThreadId);
@@ -297,7 +304,11 @@ export default function Home() {
         onDelta: (_, acc) =>
           setMessages((prev) => {
             const next = [...prev];
-            next[next.length - 1] = { ...next[next.length - 1], content: acc };
+            const lastMsg = next[next.length - 1];
+            if (lastMsg) {
+               // 🌟 배열 접근 안전 장치 및 role 명시
+               next[next.length - 1] = { ...lastMsg, role: 'assistant', content: acc };
+            }
             return next;
           }),
         onError: (msg) => {
