@@ -1,28 +1,23 @@
-import { withSentryConfig } from "@sentry/nextjs";
-import type { NextConfig } from "next";
+// next.config.ts — 전체 교체
+
+import { withSentryConfig } from '@sentry/nextjs';
+import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
-  // Turbopack이 빈 설정을 감지해서 충돌 에러를 무시하도록 강제하는 옵션!
-  turbopack: {}, 
-  
-  async headers() {
-    return [
-      {
-        source: '/(.*)',
-        headers: [
-          {
-            key: 'Content-Security-Policy',
-            // 🌟 수정됨: 외부 도메인(https:)과 데이터 URI(data:)도 허용하도록 완화
-            value: "script-src 'self' 'unsafe-eval' 'unsafe-inline' https: data:;",
-          },
-        ],
-      },
-    ];
+  turbopack: {},
+  // 🌟 OG 이미지 호스트 등 외부 이미지 사용 시
+  images: {
+    remotePatterns: [{ protocol: 'https', hostname: 'policyai.kr' }],
   },
 };
 
 export default withSentryConfig(nextConfig, {
-  silent: true,
-  org: "본인의_Sentry_조직명", 
-  project: "policy-navigator-web",
+  silent: !process.env.CI,
+  org: process.env.SENTRY_ORG, // 🌟 env로 분리
+  project: process.env.SENTRY_PROJECT ?? 'policy-navigator-web',
+  // 🌟 release 자동 태깅 (Vercel 환경변수 활용)
+  release: { name: process.env.VERCEL_GIT_COMMIT_SHA ?? 'dev' },
+  // 🌟 인증토큰 누락 시 빌드 안 깨지게
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+  disableLogger: true,
 });
