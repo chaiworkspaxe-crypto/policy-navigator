@@ -70,14 +70,14 @@ export async function POST(req: Request) {
         .maybeSingle();
 
       if (inputs) {
-        // AI가 참고할 수 있도록 문자열로 풀어서 덧붙여줌
-        profileContext = `\n\n[💡 현재까지 파악된 사용자 맞춤 프로필]
-- 거주지: ${inputs.selected_city !== '선택하세요' ? inputs.selected_city : '미상'} ${inputs.selected_district !== '선택하세요' ? inputs.selected_district : ''}
-- 출생연도: ${inputs.birth_year || '미상'}
-- 폼 추가 정보: ${inputs.extra_info || '없음'}
-- AI 백그라운드 자동추출 데이터: ${JSON.stringify(inputs.profile_json || {})}
+        // 네가 작성한 깔끔한 포맷 적용!
+        profileContext = `\n\n[현재까지 파악된 사용자 프로필]
+- 거주지: ${inputs.selected_city ?? '미상'} ${inputs.selected_district ?? ''}
+- 출생연도: ${inputs.birth_year ?? '미상'}
+- 추가 정보: ${inputs.extra_info ?? '없음'}
+- 백그라운드 추출: ${JSON.stringify(inputs.profile_json ?? {})}
 
-🚨 [중요 지침] 위 프로필 데이터를 적극적으로 활용하여 사용자에게 가장 적합한 혜택을 추천하세요. 이미 파악된 정보(주거형태, 소득, 직업 등)는 절대 다시 묻지 마세요!`;
+이 프로필을 활용해 검색을 더 정밀하게 수행하세요. 이미 알고 있는 정보는 다시 묻지 마세요.`;
       }
     }
 
