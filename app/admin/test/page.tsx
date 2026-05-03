@@ -85,7 +85,10 @@ export default function AdminTestPage() {
       setThreads(threadList);
       if (threadList.length === 0) { await handleNewThread(uid); return; }
       const shouldKeepCurrent = threadList.some((thread) => thread.thread_id === currentThreadId);
-      const targetThreadId = shouldKeepCurrent ? currentThreadId : threadList[0].thread_id;
+      
+      // 🌟 [수술 1️⃣7️⃣ 해결] threadList[0] 뒤에 ? 추가! (옵셔널 체이닝)
+      const targetThreadId = shouldKeepCurrent ? currentThreadId : threadList[0]?.thread_id;
+      
       if (targetThreadId) await selectThread(uid, targetThreadId);
     } catch { setErrorMessage("서버와 연결할 수 없습니다."); }
   };
