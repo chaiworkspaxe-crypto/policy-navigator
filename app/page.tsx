@@ -111,7 +111,6 @@ export default function Home() {
   const availableDistricts = useMemo(() => CITY_TO_DISTRICTS[city] || [], [city]);
   const availableDongs = useMemo(() => DONG_MAP[`${city}-${district}`] || [], [city, district]);
 
-  // 🌟 [수술 1️⃣2️⃣] 커스텀 훅 가져오기 및 상태 연결
   const { stream, stop, isStreaming: loading, aiStatus, setAiStatus } = useChatStream();
 
   useEffect(() => {
@@ -238,7 +237,6 @@ export default function Home() {
     return "";
   };
 
-  // 🌟 [수술 1️⃣2️⃣] 커스텀 훅 연동 및 로직 슬림화
   const handleSearch = async (isFollowUp = false, overridePrompt?: string) => {
     setErrorMessage('');
     if (!userId) return setErrorMessage('사용자 정보가 준비되지 않았습니다. 새로고침 해주세요.');
@@ -460,7 +458,10 @@ export default function Home() {
                               h3: ({ node, ...props }) => <h3 className="text-lg font-bold mb-3 mt-4 text-gray-800 dark:text-gray-100" {...props} />,
                               h4: ({ node, ...props }) => <h4 className="text-base font-bold mb-2 mt-4 text-gray-800 dark:text-gray-200" {...props} />,
                               h5: ({ node, ...props }) => <h5 className="text-sm font-bold mb-2 mt-3 text-gray-800 dark:text-gray-300" {...props} />,
-                              strong: ({ node, ...props }) => <strong className="font-bold text-gray-900 dark:text-white bg-green-50 dark:bg-green-900/20 px-1.5 py-0.5 rounded" {...props} />,
+                              // 🌟 [수술 1️⃣3️⃣] 일반 bold는 깔끔하게 굵기만! 형광펜 효과 제거
+                              strong: ({ node, ...props }) => <strong className="font-bold text-gray-900 dark:text-white" {...props} />,
+                              // 🌟 [수술 1️⃣3️⃣] 진짜 강조하고 싶을 때 쓰는 <mark> 형광펜 추가!
+                              mark: ({ node, ...props }) => <mark className="bg-yellow-200 dark:bg-yellow-500/30 text-gray-900 dark:text-yellow-100 px-1 rounded font-bold" {...props} />,
                               a: ({ node, ...props }) => <a className="text-blue-600 dark:text-blue-400 hover:underline break-all font-bold" target="_blank" rel="noopener noreferrer" {...props} />,
                               hr: ({ node, ...props }) => <hr className="my-5 border-gray-300 dark:border-[#444]" {...props} />,
                               table: ({ node, ...props }) => (
@@ -567,7 +568,6 @@ export default function Home() {
             <div className="relative">
               <input type="text" placeholder="추가 질문을 입력하세요 (예: 청년 혜택만 다시)" className="w-full rounded-full border border-gray-300 dark:border-[#444] bg-white dark:bg-[#1e1e1e] py-3.5 pl-5 pr-12 text-sm text-gray-800 dark:text-white outline-none transition focus:border-green-500 shadow-sm" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void handleSearch(true); }} disabled={messages.length === 0 || loading} />
               
-              {/* 🌟 [UI 업데이트] 로딩 중일 때는 중지 버튼(빨간 네모) 표시! */}
               {loading ? (
                 <button onClick={stop} className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full bg-gray-500 p-2 text-white transition hover:bg-gray-600 shadow-sm">
                   <Square size={16} fill="currentColor" />
@@ -671,3 +671,4 @@ export default function Home() {
     </div>
   );
 }
+```</ReactMarkdown>
