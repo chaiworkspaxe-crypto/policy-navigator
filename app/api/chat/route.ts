@@ -86,14 +86,16 @@ export async function POST(req: Request) {
           parameters: z.object({ query: z.string().describe('한국어 자연어 검색어') }),
           execute: async ({ query }) => {
             try {
-              const embeddingResponse = await withTimeout<any>(
+              // 🌟 해결: <any> 삭제 완료!
+              const embeddingResponse = await withTimeout(
                 rawOpenai.embeddings.create({ model: 'text-embedding-3-small', input: query }),
                 TOOL_TIMEOUT_MS,
                 'embedding',
               );
 
               for (const threshold of [0.55, 0.4]) {
-                const { data, error } = await withTimeout<any>(
+                // 🌟 해결: <any> 삭제 완료!
+                const { data, error } = await withTimeout(
                   supabase.rpc('match_policies', {
                     query_embedding: embeddingResponse.data[0].embedding,
                     match_threshold: threshold,
