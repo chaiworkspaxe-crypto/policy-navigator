@@ -201,7 +201,10 @@ export default function Home() {
       setThreads(threadList);
       if (threadList.length === 0) { await handleNewThread(uid); return; }
       const shouldKeepCurrent = threadList.some((thread) => thread.thread_id === currentThreadId);
-      const targetThreadId = shouldKeepCurrent ? currentThreadId : threadList[0].thread_id;
+      
+      // 🌟 [수술 1️⃣7️⃣ 해결] threadList[0] 뒤에 ? 추가! (옵셔널 체이닝)
+      const targetThreadId = shouldKeepCurrent ? currentThreadId : threadList[0]?.thread_id;
+      
       if (targetThreadId) await selectThread(uid, targetThreadId);
     } catch { setErrorMessage("서버와 연결할 수 없습니다."); }
   };
@@ -458,9 +461,7 @@ export default function Home() {
                               h3: ({ node, ...props }) => <h3 className="text-lg font-bold mb-3 mt-4 text-gray-800 dark:text-gray-100" {...props} />,
                               h4: ({ node, ...props }) => <h4 className="text-base font-bold mb-2 mt-4 text-gray-800 dark:text-gray-200" {...props} />,
                               h5: ({ node, ...props }) => <h5 className="text-sm font-bold mb-2 mt-3 text-gray-800 dark:text-gray-300" {...props} />,
-                              // 🌟 [수술 1️⃣3️⃣] 일반 bold는 깔끔하게 굵기만! 형광펜 효과 제거
                               strong: ({ node, ...props }) => <strong className="font-bold text-gray-900 dark:text-white" {...props} />,
-                              // 🌟 [수술 1️⃣3️⃣] 진짜 강조하고 싶을 때 쓰는 <mark> 형광펜 추가!
                               mark: ({ node, ...props }) => <mark className="bg-yellow-200 dark:bg-yellow-500/30 text-gray-900 dark:text-yellow-100 px-1 rounded font-bold" {...props} />,
                               a: ({ node, ...props }) => <a className="text-blue-600 dark:text-blue-400 hover:underline break-all font-bold" target="_blank" rel="noopener noreferrer" {...props} />,
                               hr: ({ node, ...props }) => <hr className="my-5 border-gray-300 dark:border-[#444]" {...props} />,
