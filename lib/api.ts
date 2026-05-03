@@ -54,8 +54,11 @@ export const api = {
     await apiClient.post("/inputs", { user_id: userId, thread_id: threadId, ...payload });
   },
 
+  // 🌟 [수술 10️⃣] deleteThread 보정 적용 완료!
   deleteThread: async (userId: string, threadId: string): Promise<void> => {
-    await apiClient.delete("/threads", { params: { user_id: userId, thread_id: threadId } });
+    await apiClient.delete('/threads', {
+      params: { user_id: userId, thread_id: threadId },
+    });
   },
 
   deleteAllThreads: async (userId: string): Promise<void> => {
