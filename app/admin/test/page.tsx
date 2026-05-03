@@ -86,7 +86,6 @@ export default function AdminTestPage() {
       if (threadList.length === 0) { await handleNewThread(uid); return; }
       const shouldKeepCurrent = threadList.some((thread) => thread.thread_id === currentThreadId);
       
-      // 🌟 [수술 1️⃣7️⃣ 해결] threadList[0] 뒤에 ? 추가! (옵셔널 체이닝)
       const targetThreadId = shouldKeepCurrent ? currentThreadId : threadList[0]?.thread_id;
       
       if (targetThreadId) await selectThread(uid, targetThreadId);
@@ -188,7 +187,12 @@ export default function AdminTestPage() {
                   accumulatedContent += data.delta;
                   setMessages((prev) => {
                     const next = [...prev];
-                    next[next.length - 1] = { ...next[next.length - 1], content: accumulatedContent };
+                    // 🌟 17번 수술 완결: role을 명시적으로 'assistant'라고 못 박아줌!
+                    next[next.length - 1] = { 
+                      ...next[next.length - 1], 
+                      role: "assistant", 
+                      content: accumulatedContent 
+                    };
                     return next;
                   });
                   setAiStatus(""); 
