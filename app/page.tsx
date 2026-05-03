@@ -4,13 +4,14 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { api, ChatMessage, extractApiErrorMessage, ThreadInputs, ThreadItem } from "@/lib/api";
 import { CITY_TO_DISTRICTS, DONG_MAP } from "@/lib/regionData";
+import { useChatStream } from '@/lib/hooks/useChatStream';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { 
   MessageSquare, Plus, Send, Loader2, MapPin, Search, AlertCircle, 
   Menu, X, Trash2, Sun, Moon, Coffee, ChevronUp, ChevronDown, 
-  Download, RefreshCw, FileText, Image as ImageIcon
+  Download, RefreshCw, FileText, Image as ImageIcon, Square
 } from "lucide-react";
 
 const DEFAULT_CITY = "선택하세요";
@@ -88,9 +89,7 @@ export default function Home() {
   const [threads, setThreads] = useState<ThreadItem[]>([]);
   const [currentThreadId, setCurrentThreadId] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const [aiStatus, setAiStatus] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [showDonation, setShowDonation] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
@@ -111,6 +110,9 @@ export default function Home() {
 
   const availableDistricts = useMemo(() => CITY_TO_DISTRICTS[city] || [], [city]);
   const availableDongs = useMemo(() => DONG_MAP[`${city}-${district}`] || [], [city, district]);
+
+  // 🌟 [수술 1️⃣2️⃣] 커스텀 훅 가져오기 및 상태 연결
+  const { stream, stop, isStreaming: loading, aiStatus, setAiStatus } = useChatStream();
 
   useEffect(() => {
     let storedId = localStorage.getItem("pn_user_id");
@@ -134,7 +136,6 @@ export default function Home() {
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, [currentThreadId, userId]);
 
-  // 🌟 AI가 로딩 중(타이핑 중)일 때만 자동 스크롤되도록 조건 추가!
   useEffect(() => {
     if (loading) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -147,12 +148,11 @@ export default function Home() {
     else document.documentElement.classList.add('dark');
   };
 
-  // 🌟 [수술 10️⃣] handleDeleteThread의 비대칭 fetch 통일
   const handleDeleteThread = async (tid: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!confirm('정말 이 대화 기록을 삭제하시겠습니까?')) return;
     try {
-      await api.deleteThread(userId, tid); // 🌟 lib/api.ts의 헬퍼 사용
+      await api.deleteThread(userId, tid);
       await loadThreads(userId);
       if (currentThreadId === tid) {
         setCurrentThreadId('');
@@ -214,7 +214,6 @@ export default function Home() {
       setMessages(loadedMessages); applyInputs(loadedInputs);
       if (loadedMessages.length > 0) setIsFormExpanded(false); else setIsFormExpanded(true);
       
-      // 🌟 과거 대화방을 클릭해서 불러왔을 때만 스크롤을 한 번 맨 아래로!
       setTimeout(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
       }, 100);
@@ -239,20 +238,24 @@ export default function Home() {
     return "";
   };
 
+  // 🌟 [수술 1️⃣2️⃣] 커스텀 훅 연동 및 로직 슬림화
   const handleSearch = async (isFollowUp = false, overridePrompt?: string) => {
-    setErrorMessage(""); setAiStatus("");
-
-    if (!userId) return setErrorMessage("사용자 정보가 준비되지 않았습니다. 새로고침 해주세요.");
+    setErrorMessage('');
+    if (!userId) return setErrorMessage('사용자 정보가 준비되지 않았습니다. 새로고침 해주세요.');
 
     let targetThreadId = currentThreadId;
     if (!targetThreadId) {
-      try { targetThreadId = await api.createThread(userId); setCurrentThreadId(targetThreadId); } 
-      catch { return setErrorMessage("대화방을 만들 수 없습니다. 잠시 후 시도해 주세요."); }
+      try {
+        targetThreadId = await api.createThread(userId);
+        setCurrentThreadId(targetThreadId);
+      } catch {
+        return setErrorMessage('대화방을 만들 수 없습니다. 잠시 후 시도해 주세요.');
+      }
     }
 
     if (isFollowUp && !overridePrompt) {
-      if (!query.trim()) return setErrorMessage("추가 질문을 입력해주세요.");
-      if (messages.length === 0) return setErrorMessage("먼저 기본 조건으로 혜택을 조회해주세요.");
+      if (!query.trim()) return setErrorMessage('추가 질문을 입력해주세요.');
+      if (messages.length === 0) return setErrorMessage('먼저 기본 조건으로 혜택을 조회해주세요.');
     } else if (!isFollowUp) {
       const validationMessage = validateStructuredSearch();
       if (validationMessage) return setErrorMessage(validationMessage);
@@ -260,87 +263,51 @@ export default function Home() {
     }
 
     const followUpText = overridePrompt || query.trim();
-    const optimisticUserMessage = isFollowUp ? followUpText : `📍 ${city} ${district} ${dong !== DEFAULT_DONG ? dong : ""} | 🎂 ${birthYear}년생 | 📝 ${extraInfo}`;
+    const userText = isFollowUp 
+      ? followUpText 
+      : `📍 ${city} ${district} ${dong !== DEFAULT_DONG ? dong : ''} | 🎂 ${birthYear}년생 | 📝 ${extraInfo}`;
 
-    const newMessages = [...messages, { role: "user" as const, content: optimisticUserMessage }];
+    const optimisticMessages = [
+      ...messages,
+      { role: 'user' as const, content: userText },
+      { role: 'assistant' as const, content: '' },
+    ];
+    setMessages(optimisticMessages);
+    if (isFollowUp && !overridePrompt) setQuery('');
 
-    setLoading(true);
-    setMessages([...newMessages, { role: "assistant" as const, content: "" }]);
-    if (isFollowUp && !overridePrompt) setQuery("");
+    await api
+      .saveThreadInputs(userId, targetThreadId, {
+        selected_city: city,
+        selected_district: district,
+        selected_dong: dong,
+        birth_year: birthYear,
+        extra_info: extraInfo,
+      })
+      .catch((e) => console.error(e));
 
-    try {
-      await api.saveThreadInputs(userId, targetThreadId, { selected_city: city, selected_district: district, selected_dong: dong, birth_year: birthYear, extra_info: extraInfo });
-
-      const response = await fetch(`/api/chat`, {
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: newMessages,
-          userId: userId,
-          threadId: targetThreadId
-        }),
-      });
-
-      if (response.status === 403) {
-        const errorData = await response.json();
-        setErrorMessage(errorData.detail || "오늘의 검색 횟수를 모두 사용했습니다.");
-        setMessages((prev) => prev.slice(0, -2)); setLoading(false); setIsFormExpanded(true); return;
+    await stream(
+      {
+        userId,
+        threadId: targetThreadId,
+        messages: [...messages, { role: 'user' as const, content: userText }],
+        newUserContent: userText,
+      },
+      {
+        onDelta: (_, acc) =>
+          setMessages((prev) => {
+            const next = [...prev];
+            next[next.length - 1] = { ...next[next.length - 1], content: acc };
+            return next;
+          }),
+        onError: (msg) => {
+          setErrorMessage(msg);
+          setMessages((prev) => prev.slice(0, -1));
+          setIsFormExpanded(true);
+        },
       }
-      if (!response.ok) throw new Error("서버 통신 오류");
+    );
 
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder("utf-8");
-      let accumulatedContent = "";
-      let buffer = "";
-
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || ""; 
-
-          for (const line of lines) {
-            const dataStr = line.replace(/^data:\s*/, '').trim(); 
-            if (!dataStr) continue;
-
-            try {
-              const data = JSON.parse(dataStr);
-              if (data.type === "content") {
-                accumulatedContent += data.delta;
-                setMessages((prev) => {
-                  const next = [...prev];
-                  next[next.length - 1] = { ...next[next.length - 1], content: accumulatedContent };
-                  return next;
-                });
-                setAiStatus(""); 
-              } else if (data.type === "status") {
-                setAiStatus(data.message);
-              } else if (data.type === "error") {
-                setErrorMessage(data.message);
-                setAiStatus("");
-              } else if (data.type === "done" && data.errored) {
-                setIsFormExpanded(true);
-              }
-            } catch (e) {
-              // 불완전한 JSON 청크 무시
-            }
-          }
-        }
-      }
-
-      setLoading(false);
-      void api.listThreads(userId).then(setThreads);
-
-    } catch (error) {
-      console.error(error);
-      setMessages((prev) => prev.slice(0, -1));
-      setErrorMessage("서버 상태가 불안정합니다. 잠시 후 다시 시도해 주세요.");
-      setIsFormExpanded(true);
-      setLoading(false);
-    }
+    void api.listThreads(userId).then(setThreads);
   };
 
   return (
@@ -599,7 +566,18 @@ export default function Home() {
             </div>
             <div className="relative">
               <input type="text" placeholder="추가 질문을 입력하세요 (예: 청년 혜택만 다시)" className="w-full rounded-full border border-gray-300 dark:border-[#444] bg-white dark:bg-[#1e1e1e] py-3.5 pl-5 pr-12 text-sm text-gray-800 dark:text-white outline-none transition focus:border-green-500 shadow-sm" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void handleSearch(true); }} disabled={messages.length === 0 || loading} />
-              <button onClick={() => void handleSearch(true)} disabled={!query.trim() || loading} className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full bg-green-600 p-2 text-white transition hover:bg-green-500 disabled:opacity-50"><Send size={16} /></button>
+              
+              {/* 🌟 [UI 업데이트] 로딩 중일 때는 중지 버튼(빨간 네모) 표시! */}
+              {loading ? (
+                <button onClick={stop} className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full bg-gray-500 p-2 text-white transition hover:bg-gray-600 shadow-sm">
+                  <Square size={16} fill="currentColor" />
+                </button>
+              ) : (
+                <button onClick={() => void handleSearch(true)} disabled={!query.trim() || loading} className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full bg-green-600 p-2 text-white transition hover:bg-green-500 disabled:opacity-50 shadow-sm">
+                  <Send size={16} />
+                </button>
+              )}
+
             </div>
           </div>
         </div>
@@ -651,7 +629,6 @@ export default function Home() {
               </div>
             </div>
 
-            {/* 💡 건의사항 및 인스타 링크 섹션 */}
         <div className="mt-6 pt-4 border-t border-gray-700 text-center">
           <p className="text-sm text-gray-300 mb-2">
             💡 더 많은 정보나 서비스 건의사항이 있으신가요?
