@@ -44,6 +44,14 @@ body {
   border-color: #2f2f2f;
 }
 
+@layer base {
+  /* 🌟 [수술 1️⃣5️⃣] iOS Safari 입력창 자동 확대 방지 */
+  /* iOS는 16px 미만 폰트의 input 포커스 시 화면을 강제로 줌(Zoom) 해버림 */
+  input, select, textarea {
+    font-size: 16px !important; 
+  }
+}
+
 @layer components {
   /* 🌟 1. 마크다운 굵은 글씨 ( **강조** ) */
   /* 배경 / 색상 강제 제거 — 굵기만 유지하여 가독성 확보 */
