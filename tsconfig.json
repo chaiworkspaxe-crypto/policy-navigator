@@ -5,6 +5,12 @@
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
+    
+    // 🌟 [수술 1️⃣7️⃣] 점진적 엄격 모드 켜기 (안전성 강화)
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "exactOptionalPropertyTypes": false,
+
     "noEmit": true,
     "esModuleInterop": true,
     "module": "esnext",
