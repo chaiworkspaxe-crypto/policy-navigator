@@ -1,14 +1,47 @@
 "use client";
 
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, ChatMessage, extractApiErrorMessage, ThreadInputs, ThreadItem } from "@/lib/api";
 import { CITY_TO_DISTRICTS, DONG_MAP } from "@/lib/regionData";
 import MarkdownMessage from "@/components/MarkdownMessage";
-import { MessageSquare, Plus, Send, Loader2, MapPin, Search, AlertCircle, Menu, X, Trash2, Sun, Moon, Coffee, ChevronUp, ChevronDown } from "lucide-react";
+import { MessageSquare, Plus, Send, Loader2, MapPin, Search, AlertCircle, Menu, X, Trash2, Sun, Moon, Coffee, ChevronUp, ChevronDown, RefreshCw } from "lucide-react";
 
 const DEFAULT_CITY = "선택하세요";
 const DEFAULT_DONG = "선택 안 함";
 const EMPTY_INPUTS: ThreadInputs = { selected_city: DEFAULT_CITY, selected_district: DEFAULT_CITY, selected_dong: DEFAULT_DONG, birth_year: "", extra_info: "" };
+
+const extractSummaryTableText = (text: string) => {
+  const lines = text.split('\n');
+  let headerIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line === undefined) continue; 
+    const normalized = line.replace(/ /g, "");
+    if (normalized.includes("|분야|") && normalized.includes("|정책명|") && (normalized.includes("|신청마감일|") || normalized.includes("|핵심혜택|"))) {
+      headerIdx = i; break;
+    }
+  }
+  if (headerIdx === -1) return "";
+  
+  const headerLine = lines[headerIdx];
+  if (headerLine === undefined) return ""; 
+
+  const tableLines = [headerLine];
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (line === undefined) continue; 
+    
+    const trimmedLine = line.trim();
+    if (!trimmedLine) { if (tableLines.length >= 2) break; continue; }
+    if (!trimmedLine.includes('|')) { if (tableLines.length >= 2) break; continue; }
+    tableLines.push(line);
+  }
+  return tableLines.join('\n');
+};
+
+const hasSummaryTable = (text: string) => {
+  return extractSummaryTableText(text).length > 0;
+};
 
 export default function AdminTestPage() {
   const ADMIN_ID = "8011";
@@ -118,7 +151,7 @@ export default function AdminTestPage() {
     return "";
   };
 
-  const handleSearch = async (isFollowUp = false) => {
+  const handleSearch = async (isFollowUp = false, overridePrompt?: string) => {
     setErrorMessage(""); setAiStatus("");
 
     let targetThreadId = currentThreadId;
@@ -127,21 +160,21 @@ export default function AdminTestPage() {
       catch { return setErrorMessage("대화방을 만들 수 없습니다. 잠시 후 시도해 주세요."); }
     }
 
-    if (isFollowUp) {
+    if (isFollowUp && !overridePrompt) {
       if (!query.trim()) return setErrorMessage("추가 질문을 입력해주세요.");
       if (messages.length === 0) return setErrorMessage("먼저 기본 조건으로 혜택을 조회해주세요.");
-    } else {
+    } else if (!isFollowUp) {
       const validationMessage = validateStructuredSearch();
       if (validationMessage) return setErrorMessage(validationMessage);
       setIsFormExpanded(false);
     }
 
-    const followUpText = query.trim();
+    const followUpText = overridePrompt || query.trim();
     const optimisticUserMessage = isFollowUp ? followUpText : `📍 ${city} ${district} ${dong !== DEFAULT_DONG ? dong : ""} | 🎂 ${birthYear}년생 | 📝 ${extraInfo}`;
 
     setLoading(true);
     setMessages((prev) => [...prev, { role: "user", content: optimisticUserMessage }, { role: "assistant", content: "" }]);
-    if (isFollowUp) setQuery("");
+    if (isFollowUp && !overridePrompt) setQuery("");
 
     try {
       await api.saveThreadInputs(userId, targetThreadId, { selected_city: city, selected_district: district, selected_dong: dong, birth_year: birthYear, extra_info: extraInfo });
@@ -187,12 +220,14 @@ export default function AdminTestPage() {
                   accumulatedContent += data.delta;
                   setMessages((prev) => {
                     const next = [...prev];
-                    // 🌟 17번 수술 완결: role을 명시적으로 'assistant'라고 못 박아줌!
-                    next[next.length - 1] = { 
-                      ...next[next.length - 1], 
-                      role: "assistant", 
-                      content: accumulatedContent 
-                    };
+                    const lastMsg = next[next.length - 1];
+                    if (lastMsg) {
+                      next[next.length - 1] = { 
+                        ...lastMsg, 
+                        role: "assistant", 
+                        content: accumulatedContent 
+                      };
+                    }
                     return next;
                   });
                   setAiStatus(""); 
@@ -309,44 +344,68 @@ export default function AdminTestPage() {
             </div>
           ) : (
             <div className="space-y-6 pb-4">
-              {messages.map((message, index) => (
-                <div key={`${message.role}-${index}`} className={`flex gap-3 sm:gap-4 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-                  {message.role === "assistant" && (
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-600 mt-1 shadow-sm"><span className="text-[10px] sm:text-xs font-bold text-white">AI</span></div>
-                  )}
-                  <div className={`max-w-[90%] sm:max-w-[85%] rounded-2xl p-4 shadow-sm overflow-hidden ${message.role === "user" ? "whitespace-pre-wrap border border-gray-200 dark:border-[#444] bg-white dark:bg-[#2d2d2d] text-gray-800 dark:text-gray-200 text-sm sm:text-base" : "bg-transparent text-gray-800 dark:text-gray-300"}`}>
-                    {message.role === "assistant" ? <MarkdownMessage content={message.content} /> : <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>}
-                    
-                    {/* 🌟 PC와 모바일을 완벽하게 구분해서 작동하는 똑똑한 공유 버튼! */}
-                    {message.role === "assistant" && message.content.length > 50 && (
-                      <div className="mt-4 pt-3 border-t border-gray-200 dark:border-[#444] flex justify-end">
-                        <button onClick={async () => {
-                            const shareData = { 
-                              title: '나에게 딱 맞는 맞춤형 정부 혜택 🎁', 
-                              text: '정책 내비게이터가 찾아준 맞춤형 혜택을 확인해보세요!\n\n' + message.content + '\n\n', 
-                              url: window.location.href 
-                            };
-                            try { 
-                              const isMobile = /Mobi|Android/i.test(navigator.userAgent);
-                              
-                              if (isMobile && navigator.share) { 
-                                // 스마트폰: 카카오톡 등 네이티브 앱 선택 창 띄우기
-                                await navigator.share(shareData); 
-                              } else { 
-                                // PC: 윈도우 공유창 무시하고, 바로 클립보드에 풀 텍스트 복사!
-                                await navigator.clipboard.writeText(shareData.text + shareData.url); 
-                                alert('전체 결과가 클립보드에 복사되었습니다! 메모장이나 카톡 PC버전에 붙여넣기 해보세요.'); 
-                              } 
-                            } catch (err) { 
-                              console.error('공유/복사 실패:', err); 
-                            }
-                          }} className="text-xs font-bold bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-3 py-1.5 rounded-lg hover:bg-green-200 dark:hover:bg-green-800/50 transition-colors flex items-center gap-1">🔗 결과 공유하기</button>
-                      </div>
-                    )}
+              {messages.map((message, index) => {
+                const isLastMessage = index === messages.length - 1;
+                const isAssistant = message.role === "assistant";
 
+                return (
+                  <div key={`${message.role}-${index}`} className={`flex gap-3 sm:gap-4 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+                    {isAssistant && (
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-600 mt-1 shadow-sm"><span className="text-[10px] sm:text-xs font-bold text-white">AI</span></div>
+                    )}
+                    <div className={`max-w-[90%] sm:max-w-[85%] rounded-2xl p-4 shadow-sm overflow-hidden ${message.role === "user" ? "whitespace-pre-wrap border border-gray-200 dark:border-[#444] bg-white dark:bg-[#2d2d2d] text-gray-800 dark:text-gray-200 text-sm sm:text-base" : "bg-transparent text-gray-800 dark:text-gray-300"}`}>
+                      {isAssistant ? <MarkdownMessage content={message.content} /> : <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>}
+                      
+                      {/* 🌟 PC와 모바일을 완벽하게 구분해서 작동하는 똑똑한 공유 버튼! */}
+                      {isAssistant && message.content.length > 50 && (
+                        <div className="mt-4 pt-3 border-t border-gray-200 dark:border-[#444] flex justify-end">
+                          <button onClick={async () => {
+                              const shareData = { 
+                                title: '나에게 딱 맞는 맞춤형 정부 혜택 🎁', 
+                                text: '정책 내비게이터가 찾아준 맞춤형 혜택을 확인해보세요!\n\n' + message.content + '\n\n', 
+                                url: window.location.href 
+                              };
+                              try { 
+                                const isMobile = /Mobi|Android/i.test(navigator.userAgent);
+                                
+                                if (isMobile && navigator.share) { 
+                                  // 스마트폰: 카카오톡 등 네이티브 앱 선택 창 띄우기
+                                  await navigator.share(shareData); 
+                                } else { 
+                                  // PC: 윈도우 공유창 무시하고, 바로 클립보드에 풀 텍스트 복사!
+                                  await navigator.clipboard.writeText(shareData.text + shareData.url); 
+                                  alert('전체 결과가 클립보드에 복사되었습니다! 메모장이나 카톡 PC버전에 붙여넣기 해보세요.'); 
+                                } 
+                              } catch (err) { 
+                                console.error('공유/복사 실패:', err); 
+                              }
+                            }} className="text-xs font-bold bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-3 py-1.5 rounded-lg hover:bg-green-200 dark:hover:bg-green-800/50 transition-colors flex items-center gap-1">🔗 결과 공유하기</button>
+                        </div>
+                      )}
+
+                      {/* 🌟 수정 1: 답변 이어서 생성하기 깜빡임 해결 (message.content.length > 50 적용) */}
+                      {!loading && isLastMessage && isAssistant && message.content.length > 50 && !hasSummaryTable(message.content) && (
+                         <div className="mt-4 p-4 bg-gray-50 dark:bg-[#1a1a1a] rounded-xl border border-gray-200 dark:border-[#444] animate-in fade-in duration-300">
+                           <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
+                             <AlertCircle size={16} className="text-yellow-500" />
+                             답변이 중간에 끊긴 것 같나요? 아래 버튼을 눌러 마저 들을 수 있어요!
+                           </p>
+                           <button
+                             onClick={() => {
+                               setQuery(""); 
+                               void handleSearch(true, "답변이 끊겼어. 방금 하던 말부터 이어서 계속해줘.");
+                             }}
+                             className="w-full flex items-center justify-center gap-2 py-2.5 bg-white dark:bg-[#2d2d2d] border border-gray-300 dark:border-[#555] rounded-lg hover:bg-gray-100 dark:hover:bg-[#3d3d3d] transition-colors text-sm font-bold text-gray-700 dark:text-gray-200 shadow-sm"
+                           >
+                             <RefreshCw size={16} /> 답변 이어서 생성하기
+                           </button>
+                         </div>
+                      )}
+
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
           {loading && messages[messages.length - 1]?.content === "" && (
