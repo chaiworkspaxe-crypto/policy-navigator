@@ -18,30 +18,44 @@ const DEFAULT_CITY = "선택하세요";
 const DEFAULT_DONG = "선택 안 함";
 const EMPTY_INPUTS: ThreadInputs = { selected_city: DEFAULT_CITY, selected_district: DEFAULT_CITY, selected_dong: DEFAULT_DONG, birth_year: "", extra_info: "" };
 
+// 🌟 [개선 3] 표 추출 매칭 로직 강화 (마크다운 굵기, 띄어쓰기, 별칭 완벽 대응)
 const extractSummaryTableText = (text: string) => {
   const lines = text.split('\n');
   let headerIdx = -1;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (line === undefined) continue; // 🌟 타입스크립트 안심시키기 (undefined 방어)
-    const normalized = line.replace(/ /g, "");
-    if (normalized.includes("|분야|") && normalized.includes("|정책명|") && (normalized.includes("|신청마감일|") || normalized.includes("|핵심혜택|"))) {
-      headerIdx = i; break;
+    if (line === undefined) continue;
+    
+    // 🌟 마크다운 강조(**)와 공백을 모두 제거하여 순수 텍스트만 추출
+    const normalized = line
+      .replace(/\*+/g, '')
+      .replace(/\s/g, '');
+    
+    const hasField = normalized.includes('|분야|');
+    const hasPolicy = normalized.includes('|정책명|');
+    const hasDeadlineOrBenefit = 
+      normalized.includes('|신청마감일|') || 
+      normalized.includes('|마감일|') ||
+      normalized.includes('|핵심혜택|') ||
+      normalized.includes('|혜택|');
+    
+    if (hasField && hasPolicy && hasDeadlineOrBenefit) {
+      headerIdx = i;
+      break;
     }
   }
   if (headerIdx === -1) return "";
   
   const headerLine = lines[headerIdx];
-  if (headerLine === undefined) return ""; // 🌟 타입스크립트 안심시키기
+  if (headerLine === undefined) return "";
 
   const tableLines = [headerLine];
   for (let i = headerIdx + 1; i < lines.length; i++) {
     const line = lines[i];
-    if (line === undefined) continue; // 🌟 타입스크립트 안심시키기
-    
-    const trimmedLine = line.trim();
-    if (!trimmedLine) { if (tableLines.length >= 2) break; continue; }
-    if (!trimmedLine.includes('|')) { if (tableLines.length >= 2) break; continue; }
+    if (line === undefined) continue;
+    const trimmed = line.trim();
+    if (!trimmed) { if (tableLines.length >= 2) break; continue; }
+    if (!trimmed.includes('|')) { if (tableLines.length >= 2) break; continue; }
     tableLines.push(line);
   }
   return tableLines.join('\n');
@@ -223,9 +237,12 @@ export default function Home() {
       setMessages(loadedMessages); applyInputs(loadedInputs);
       if (loadedMessages.length > 0) setIsFormExpanded(false); else setIsFormExpanded(true);
       
-      setTimeout(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
-      }, 100);
+      // 🌟 [개선 2] 매직 넘버 100ms 제거 및 rAF 더블 버퍼링 적용 (완벽한 스크롤 보장)
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
+        });
+      });
       
     } catch (error) { setErrorMessage(extractApiErrorMessage(error)); }
   };
@@ -340,13 +357,37 @@ export default function Home() {
         <div className="flex-1 overflow-y-auto px-3 pb-3">
           <p className="mb-2 px-1 text-xs font-bold text-gray-500">대화 목록</p>
           {threads.map((thread) => (
-            <button key={thread.thread_id} type="button" onClick={() => void selectThread(userId, thread.thread_id)} className={`group mb-1 flex w-full items-center justify-between rounded-xl p-3 text-left transition ${currentThreadId === thread.thread_id ? "border border-green-500/30 bg-green-500/10 text-green-600 dark:text-green-400" : "text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-[#2a2a2a]"}`}>
+            // 🌟 [개선 1] 중첩된 버튼(Nested Button) 위반 해결 및 접근성 강화
+            <div
+              key={thread.thread_id}
+              role="button"
+              tabIndex={0}
+              onClick={() => void selectThread(userId, thread.thread_id)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  void selectThread(userId, thread.thread_id);
+                }
+              }}
+              className={`group mb-1 flex w-full items-center justify-between rounded-xl p-3 text-left transition cursor-pointer ${
+                currentThreadId === thread.thread_id 
+                  ? "border border-green-500/30 bg-green-500/10 text-green-600 dark:text-green-400" 
+                  : "text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-[#2a2a2a]"
+              }`}
+            >
               <div className="flex min-w-0 items-center gap-2 truncate">
                 <MessageSquare size={16} className="shrink-0" />
                 <span className="truncate text-sm">{thread.title || "새 대화"}</span>
               </div>
-              <Trash2 size={16} className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity" onClick={(e) => handleDeleteThread(thread.thread_id, e)} />
-            </button>
+              <button
+                type="button"
+                aria-label="대화 삭제"
+                onClick={(e) => handleDeleteThread(thread.thread_id, e)}
+                className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity p-1 -m-1"
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
           ))}
         </div>
 
@@ -542,7 +583,6 @@ export default function Home() {
                         </div>
                       )}
 
-                      {/* 🌟 수정 1: message.content.length > 50 조건 추가 완료! */}
                       {!loading && isLastMessage && isAssistant && message.content.length > 50 && !hasSummaryTable(message.content) && (
                          <div className="mt-4 p-4 bg-gray-50 dark:bg-[#1a1a1a] rounded-xl border border-gray-200 dark:border-[#444] animate-in fade-in duration-300">
                            <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
