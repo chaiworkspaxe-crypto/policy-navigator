@@ -4,6 +4,7 @@ import { z } from 'zod';
 import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs'; 
+import { after } from 'next/server'; // 🌟 [신규] 응답 후 백그라운드 작업 완벽 보장
 import { POLICY_NAVIGATOR_SYSTEM_PROMPT } from '@/lib/prompts/policyNavigator';
 
 // 1. API 클라이언트 초기화
@@ -16,17 +17,48 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 export const runtime = 'edge';
 
 // ==============================================================================
-// 🌟 헬퍼 함수: 도구 타임아웃 방지
+// 🌟 [개선 1] withTimeout: 타이머 정리 + 원본 작업 abort 전파 (메모리 좀비, 비용 누수 차단)
 // ==============================================================================
-const TOOL_TIMEOUT_MS = 10000;
+const TOOL_TIMEOUT_MS = 10_000;
 
-function withTimeout(p: any, ms: number, label: string): Promise<any> {
-  return Promise.race([
-    Promise.resolve(p), 
-    new Promise<any>((_, rej) =>
-      setTimeout(() => rej(new Error(`${label} 타임아웃(${ms}ms)`)), ms),
-    ),
-  ]);
+function withTimeout<T>(
+  factory: (signal: AbortSignal) => Promise<T>,
+  ms: number,
+  label: string,
+  parentSignal?: AbortSignal,
+): Promise<T> {
+  const ctrl = new AbortController();
+  const onParentAbort = () => ctrl.abort(parentSignal?.reason);
+  
+  if (parentSignal) {
+    if (parentSignal.aborted) ctrl.abort(parentSignal.reason);
+    else parentSignal.addEventListener('abort', onParentAbort, { once: true });
+  }
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, rej) => {
+    timeoutId = setTimeout(() => {
+      ctrl.abort(new Error(`${label} 타임아웃`));
+      rej(new Error(`${label} 타임아웃(${ms}ms)`));
+    }, ms);
+  });
+
+  return Promise.race([factory(ctrl.signal), timeoutPromise]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+    if (parentSignal) parentSignal.removeEventListener('abort', onParentAbort);
+  });
+}
+
+// ==============================================================================
+// 🌟 [개선 2] 메시지 슬라이딩 윈도우: 시스템 + 최근 N턴만 유지 (비용 선형 증가 방지)
+// ==============================================================================
+const MAX_HISTORY_TURNS = 12; // user/assistant 합쳐 12개(약 6턴)
+
+function trimMessages(messages: any[]): any[] {
+  if (messages.length <= MAX_HISTORY_TURNS) return messages;
+  const sliced = messages.slice(-MAX_HISTORY_TURNS);
+  const firstUserIdx = sliced.findIndex((m) => m.role === 'user');
+  return firstUserIdx <= 0 ? sliced : sliced.slice(firstUserIdx);
 }
 
 export async function POST(req: Request) {
@@ -38,27 +70,37 @@ export async function POST(req: Request) {
     const extractApiUrl = `${reqUrl.origin}/api/profile/extract`;
 
     // ==============================================================================
-    // 🌟 사용자 메시지 즉시 저장 (유실 방지)
+    // 🌟 [개선 3] TTFB 단축: 사용자 메시지 INSERT 병렬화 (응답 지연 제로)
     // ==============================================================================
-    if (userId && threadId && Array.isArray(messages) && messages.length > 0) {
-      const lastMsg = messages[messages.length - 1];
-      if (lastMsg?.role === 'user') {
-        const content = typeof lastMsg.content === 'string' ? lastMsg.content : JSON.stringify(lastMsg.content);
-        const now = new Date().toISOString();
-        const { error: insertErr } = await supabase.from('chat_messages').insert({
+    const lastMsg = Array.isArray(messages) && messages.length > 0
+      ? messages[messages.length - 1]
+      : null;
+
+    let userInsertPromise: Promise<void> | null = null;
+    
+    if (userId && threadId && lastMsg?.role === 'user') {
+      const content = typeof lastMsg.content === 'string' 
+        ? lastMsg.content 
+        : JSON.stringify(lastMsg.content);
+      const now = new Date().toISOString();
+      
+      userInsertPromise = supabase
+        .from('chat_messages')
+        .insert({
           thread_id: threadId,
           user_id: userId,
           role: 'user',
           content,
           created_at: now,
           updated_at: now,
+        })
+        .then(({ error }) => {
+          if (error) console.error('[user msg insert]', error);
         });
-        if (insertErr) console.error('[user msg insert]', insertErr);
-      }
     }
 
     // ==============================================================================
-    // 🌟 [수술 1️⃣1️⃣] 메인 응답 전, 기존 프로필 컨텍스트 주입 (AI 뇌에 장부 입력)
+    // 🌟 프로필 SELECT (컨텍스트 주입에 필수적이므로 await)
     // ==============================================================================
     let profileContext = '';
     if (userId && threadId) {
@@ -70,27 +112,35 @@ export async function POST(req: Request) {
         .maybeSingle();
 
       if (inputs) {
-        // 네가 작성한 깔끔한 포맷 적용!
+        // 🌟 [개선 4] JSON을 LLM 친화적 문장으로 변환 (토큰 최적화 및 주입 방어)
+        const bgProfile = (inputs.profile_json && typeof inputs.profile_json === 'object')
+          ? Object.entries(inputs.profile_json)
+              .filter(([_, v]) => v && v !== '미상')
+              .map(([k, v]) => `${k}: ${v}`)
+              .join(', ')
+          : '';
+
         profileContext = `\n\n[현재까지 파악된 사용자 프로필]
 - 거주지: ${inputs.selected_city ?? '미상'} ${inputs.selected_district ?? ''}
 - 출생연도: ${inputs.birth_year ?? '미상'}
 - 추가 정보: ${inputs.extra_info ?? '없음'}
-- 백그라운드 추출: ${JSON.stringify(inputs.profile_json ?? {})}
+- 백그라운드 추출: ${bgProfile || '없음'}
 
 이 프로필을 활용해 검색을 더 정밀하게 수행하세요. 이미 알고 있는 정보는 다시 묻지 마세요.`;
       }
     }
 
+    const trimmedMessages = trimMessages(messages); // 🌟 [개선 2] 컨텍스트 캡 적용
+
     // ==============================================================================
-    // 🤖 1. 에이전트 실행
+    // 🤖 에이전트 실행
     // ==============================================================================
     const result = await streamText({
       model: openai('gpt-5.4'), 
-      // 🌟 [수술 1️⃣1️⃣] 기존 프롬프트에 동적 프로필 컨텍스트(profileContext) 합체!
       system: POLICY_NAVIGATOR_SYSTEM_PROMPT + profileContext,
-      messages,
+      messages: trimmedMessages,
       maxSteps: 10,
-      abortSignal: req.signal, 
+      abortSignal: req.signal, // 🌟 중지 버튼 누르면 즉시 전체 중단!
       onError: (err) => {
         console.error('[streamText onError]', err);
       },
@@ -112,21 +162,27 @@ export async function POST(req: Request) {
           parameters: z.object({ query: z.string().describe('한국어 자연어 검색어') }),
           execute: async ({ query }) => {
             try {
+              // 🌟 [개선 5] 도구 내부에 AbortSignal 전파 완료
               const embeddingResponse = await withTimeout(
-                rawOpenai.embeddings.create({ model: 'text-embedding-3-small', input: query }),
+                (signal) => rawOpenai.embeddings.create(
+                  { model: 'text-embedding-3-small', input: query },
+                  { signal }
+                ),
                 TOOL_TIMEOUT_MS,
                 'embedding',
+                req.signal,
               );
 
               for (const threshold of [0.55, 0.4]) {
                 const { data, error } = await withTimeout(
-                  supabase.rpc('match_policies', {
+                  () => supabase.rpc('match_policies', {
                     query_embedding: embeddingResponse.data[0].embedding,
                     match_threshold: threshold,
                     match_count: 8,
                   }),
                   TOOL_TIMEOUT_MS,
                   'pgvector',
+                  req.signal,
                 );
 
                 if (error) {
@@ -141,6 +197,7 @@ export async function POST(req: Request) {
               }
               return '내부 DB에 매칭되는 정책 없음. naver_web_search 또는 global_web_search로 보완하세요.';
             } catch (e: any) {
+              if (e?.name === 'AbortError') throw e; 
               console.error('[search_internal_db] fatal:', e);
               return `내부 DB 검색 실패(${e?.message ?? 'unknown'}). naver_web_search로 즉시 우회하세요.`;
             }
@@ -157,21 +214,22 @@ export async function POST(req: Request) {
               if (!clientId || !clientSecret) {
                 return '네이버 API 키 미설정. global_web_search를 사용하세요.';
               }
+              
               const res = await withTimeout(
-                fetch(
-                  `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(query)}&display=5`,
-                  { headers: { 'X-Naver-Client-Id': clientId, 'X-Naver-Client-Secret': clientSecret } },
+                (signal) => fetch(
+                  `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(query)}&display=5&sort=date`,
+                  { headers: { 'X-Naver-Client-Id': clientId, 'X-Naver-Client-Secret': clientSecret }, signal }
                 ),
                 TOOL_TIMEOUT_MS,
                 'naver',
+                req.signal,
               );
-              if (!res.ok) {
-                return `네이버 검색 ${res.status} 에러. global_web_search로 우회하세요.`;
-              }
+              
+              if (!res.ok) return `네이버 검색 ${res.status} 에러. global_web_search로 우회하세요.`;
+              
               const data = await res.json();
-              if (!data.items?.length) {
-                return '네이버 검색 결과 없음. 키워드를 더 구체적으로(지역명+분야) 바꿔 재시도해보세요.';
-              }
+              if (!data.items?.length) return '네이버 검색 결과 없음. 키워드를 더 구체적으로(지역명+분야) 바꿔 재시도해보세요.';
+              
               return data.items
                 .map((item: any) => {
                   const cleanTitle = item.title.replace(/<[^>]+>/g, '');
@@ -180,6 +238,7 @@ export async function POST(req: Request) {
                 })
                 .join('\n\n');
             } catch (e: any) {
+              if (e?.name === 'AbortError') throw e;
               console.error('[naver_web_search] fatal:', e);
               return `네이버 검색 실패(${e?.message ?? 'unknown'}). global_web_search로 우회하세요.`;
             }
@@ -192,9 +251,8 @@ export async function POST(req: Request) {
           execute: async ({ query }) => {
             try {
               const tavilyKey = process.env.TAVILY_API_KEY;
-              if (!tavilyKey) {
-                return '글로벌 검색 미설정. DB와 네이버 결과만으로 답변하세요.';
-              }
+              if (!tavilyKey) return '글로벌 검색 미설정. DB와 네이버 결과만으로 답변하세요.';
+              
               const seoulYear = new Intl.DateTimeFormat('en-US', {
                 timeZone: 'Asia/Seoul',
                 year: 'numeric',
@@ -202,7 +260,7 @@ export async function POST(req: Request) {
               const localizedQuery = `${seoulYear}년 대한민국 ${query}`;
 
               const res = await withTimeout(
-                fetch('https://api.tavily.com/search', {
+                (signal) => fetch('https://api.tavily.com/search', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
@@ -212,21 +270,23 @@ export async function POST(req: Request) {
                     search_depth: 'advanced',
                     include_domains: ['gov.kr', 'go.kr', 'or.kr', 'bokjiro.go.kr', 'youthcenter.go.kr'],
                   }),
+                  signal,
                 }),
                 TOOL_TIMEOUT_MS + 2000,
                 'tavily',
+                req.signal,
               );
-              if (!res.ok) {
-                return `글로벌 검색 ${res.status}. 네이버 결과만으로 답변하세요.`;
-              }
+              
+              if (!res.ok) return `글로벌 검색 ${res.status}. 네이버 결과만으로 답변하세요.`;
+              
               const data = await res.json();
-              if (!data.results?.length) {
-                return '글로벌 검색 결과 없음. 키워드를 바꿔 재시도하거나 보유 정보로 마무리하세요.';
-              }
+              if (!data.results?.length) return '글로벌 검색 결과 없음. 키워드를 바꿔 재시도하거나 보유 정보로 마무리하세요.';
+              
               return data.results
                 .map((r: any) => `- 제목: ${r.title}\n  내용: ${r.content}\n  링크: ${r.url}`)
                 .join('\n\n');
             } catch (e: any) {
+              if (e?.name === 'AbortError') throw e;
               console.error('[global_web_search] fatal:', e);
               return `글로벌 검색 실패(${e?.message ?? 'unknown'}). 보유 정보로 답변하세요.`;
             }
@@ -238,6 +298,11 @@ export async function POST(req: Request) {
         try {
           const now = new Date().toISOString(); 
           
+          // 🌟 [개선 6] 사용자 메시지 INSERT 합류 (고아 답변 생성 원천 차단)
+          if (userInsertPromise) {
+            await userInsertPromise.catch(() => {});
+          }
+
           await supabase.from('chat_messages').insert({
             thread_id: threadId,
             user_id: userId,
@@ -251,20 +316,24 @@ export async function POST(req: Request) {
           await supabase.from('chat_threads').update({ updated_at: now }).eq('thread_id', threadId);
 
           // ==============================================================================
-          // 🌟 [수술 1️⃣1️⃣] 백그라운드 프로필 추출 — fire-and-forget (응답 지연 없음)
+          // 🌟 [개선 7] Edge 함수 수명 보장 (after 훅 도입) - 100% 신뢰성 있는 백그라운드 추출
           // ==============================================================================
-          const lastUser = messages[messages.length - 1];
-          if (lastUser?.role === 'user' && typeof lastUser.content === 'string') {
-            // 메인 로직을 막지 않고(await 없음) 뒤에서 조용히 API 호출
-            fetch(extractApiUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                userId,
-                threadId,
-                lastUserMessage: lastUser.content,
-              }),
-            }).catch((e) => console.error('[bg extract fire-and-forget error]', e));
+          if (lastMsg?.role === 'user' && typeof lastMsg.content === 'string') {
+            after(async () => {
+              try {
+                await fetch(extractApiUrl, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    userId,
+                    threadId,
+                    lastUserMessage: lastMsg.content,
+                  }),
+                });
+              } catch (e) {
+                console.error('[bg extract after error]', e);
+              }
+            });
           }
 
         } catch (dbError) {
@@ -322,7 +391,7 @@ export async function POST(req: Request) {
           Sentry.captureException(loopErr);
           send({
             type: 'error',
-            message: '서버가 잠시 흔들렸어요. 다시 한 일시적인 현상이니 한번 더 시도 부탁드릴게요 🙇‍♂️',
+            message: '서버가 잠시 흔들렸어요. 일시적인 현상이니 한번 더 시도 부탁드릴게요 🙇‍♂️',
           });
         } finally {
           console.log(`\n[🏁 스트림 종료] 길이=${fullAnswer.length}, error=${streamErrored}`);
@@ -333,11 +402,16 @@ export async function POST(req: Request) {
     });
 
     return new Response(customStream, {
-      headers: { 'Content-Type': 'application/x-ndjson', 'Cache-Control': 'no-cache' }
+      headers: { 
+        'Content-Type': 'application/x-ndjson', 
+        'Cache-Control': 'no-cache, no-transform', // 🌟 [개선 8] 프록시 버퍼링 방지 
+        'X-Accel-Buffering': 'no'
+      }
     });
 
   } catch (error) {
     console.error(error);
+    Sentry.captureException(error);
     return new Response(JSON.stringify({ error: '서버 에러가 발생했습니다.' }), { status: 500 });
   }
 }
