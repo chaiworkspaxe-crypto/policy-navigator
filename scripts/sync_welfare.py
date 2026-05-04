@@ -48,7 +48,7 @@ def deactivate_stale_policies(total_saved):
     3일 이상 갱신 안 된 정책을 안전하게 비활성화 (soft delete).
     
     🌟 청소 로직 최적화:
-    - 데이터가 많을 때 발생하는 Timeout을 막기 위해 200개씩 쪼개서(Chunking) 처리
+    - 데이터가 많을 때 발생하는 Timeout을 막기 위해 50개씩 쪼개서(Chunking) 처리
     - 청년 정책(20YYMMDD + 12자리 = 정확히 20자리 숫자) 파이썬 정규식으로 안전 제외
     """
     if total_saved < 100:
@@ -80,20 +80,35 @@ def deactivate_stale_policies(total_saved):
             print("✅ 숨길 좀비 정책이 없습니다. 청소 끝!")
             return
 
-        print(f"🗑️ 총 {len(stale_ids)}개의 정책을 숨김 처리합니다. (200개씩 분할 처리)")
+        print(f"🗑️ 총 {len(stale_ids)}개의 정책을 숨김 처리합니다. (50개씩 분할 처리)")
 
-        # 3. 200개씩 쪼개서(Chunking) 안전하게 업데이트 실행
-        batch_size = 200
+        # 3. 50개씩 쪼개서(Chunking) 안전하게 업데이트 실행 (Timeout 완벽 방지)
+        batch_size = 50
         for i in range(0, len(stale_ids), batch_size):
             chunk = stale_ids[i:i + batch_size]
             
-            # 쪼갠 ID 리스트에 해당하는 데이터만 is_active = False로 업데이트
-            supabase.table('policies') \
-                .update({'is_active': False}) \
-                .in_('id', chunk) \
-                .execute()
+            # DB Lock 방지를 위한 재시도(Retry) 로직 추가
+            db_success = False
+            for attempt in range(3):
+                try:
+                    # 쪼갠 ID 리스트에 해당하는 데이터만 is_active = False로 업데이트
+                    supabase.table('policies') \
+                        .update({'is_active': False}) \
+                        .in_('id', chunk) \
+                        .execute()
+                    db_success = True
+                    break  # 성공 시 재시도 루프 탈출
+                except Exception as e:
+                    wait_time = 2 ** attempt
+                    print(f"    ⚠️ DB 숨김 처리 지연 (시도 {attempt+1}/3) - {wait_time}초 후 재시도...")
+                    time.sleep(wait_time)
+            
+            if db_success:
+                print(f"  -> {min(i + batch_size, len(stale_ids))} / {len(stale_ids)} 완료...")
+            else:
+                print(f"  ❌ {i} ~ {i + batch_size} 구간 숨김 처리 최종 실패")
                 
-            print(f"  -> {min(i + batch_size, len(stale_ids))} / {len(stale_ids)} 완료...")
+            time.sleep(0.5) # 🌟 다음 쿼리를 날리기 전 DB 숨통 트여주기 (매우 중요)
 
         print("✨ [청소 완료] 낡은 데이터가 모두 깔끔하게 정리되었습니다!")
         
