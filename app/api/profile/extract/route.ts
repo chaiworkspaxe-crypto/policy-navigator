@@ -12,18 +12,18 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
 );
 
-// 🌟 [고급화 1] AI의 판단력을 극대화하는 Zod 스키마 설계
+// 🌟 [해결 완료] .optional()을 모두 제거하여 OpenAI Structured Outputs의 엄격한 규칙 완벽 대응!
 const ProfileSchema = z.object({
   // AI가 결론을 내리기 전, 논리적 근거를 먼저 적게 하여 정확도 200% 상승 (Chain of Thought)
   _reasoning: z.string().describe('사용자 메시지에서 이 정보들을 추출하거나 기존 정보를 수정한 논리적 근거를 짧게 작성하세요.'),
   
-  housing_type: z.enum(['무주택', '자가', '월세', '전세', '미상']).optional(),
-  household_type: z.enum(['1인가구', '신혼부부', '한부모', '다자녀', '미상']).optional(),
-  employment: z.enum(['취업준비생', '재직중', '프리랜서', '학생', '구직중', '미상']).optional(),
-  monthly_income_band: z.enum(['100만미만', '100-200만', '200-300만', '300-500만', '500만초과', '미상']).optional(),
+  housing_type: z.enum(['무주택', '자가', '월세', '전세', '미상']),
+  household_type: z.enum(['1인가구', '신혼부부', '한부모', '다자녀', '미상']),
+  employment: z.enum(['취업준비생', '재직중', '프리랜서', '학생', '구직중', '미상']),
+  monthly_income_band: z.enum(['100만미만', '100-200만', '200-300만', '300-500만', '500만초과', '미상']),
   
-  // 자유 메모 강화
-  notes: z.string().max(200).describe('위 카테고리에 속하지 않는 중요한 단서 (예: "오늘 자취 시작함", "관심사: 창업" 등)').optional(),
+  // 자유 메모 (모를 때는 빈 문자열을 넣으라고 확실히 지시)
+  notes: z.string().max(200).describe('위 카테고리에 속하지 않는 중요한 단서. 만약 새롭게 추가할 메모가 없다면 반드시 빈 문자열("")을 넣으세요.'),
 });
 
 export async function POST(req: Request) {
@@ -48,7 +48,7 @@ export async function POST(req: Request) {
 
     // 2. 미니 모델로 구조화 추출
     const { object } = await generateObject({
-      model: openai('gpt-5.4-mini'),
+      model: openai('gpt-5.4-nano'), 
       schema: ProfileSchema,
       // 🌟 [고급화 3] 프롬프트 엔지니어링 강화 (단순 추출을 넘어 '업데이트' 기능 명시)
       system: `당신은 사용자의 대화에서 정책 추천에 필요한 자격 조건을 조용히 추출하는 최고 수준의 백그라운드 프로파일러입니다.
