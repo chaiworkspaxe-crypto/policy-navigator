@@ -163,20 +163,21 @@ export async function POST(req: Request) {
           parameters: z.object({ query: z.string().describe('한국어 자연어 검색어') }),
           execute: async ({ query }) => {
             try {
-              // 🌟 [개선 5] 도구 내부에 AbortSignal 전파 완료
-              const embeddingResponse = await withTimeout(
-                (signal) => rawOpenai.embeddings.create(
+              // 🌟 [해결 완료] 타입스크립트의 unknown 에러를 방지하기 위해 as any 적용
+              const embeddingResponse = (await withTimeout(
+                async (signal) => await rawOpenai.embeddings.create(
                   { model: 'text-embedding-3-small', input: query },
                   { signal }
                 ),
                 TOOL_TIMEOUT_MS,
                 'embedding',
                 req.signal,
-              );
+              )) as any;
 
               for (const threshold of [0.55, 0.4]) {
-                const { data, error } = await withTimeout(
-                  () => supabase.rpc('match_policies', {
+                // 🌟 [해결 완료] supabase.rpc()를 진짜 Promise로 변환 및 as any로 타입에러 원천 차단!
+                const { data, error } = (await withTimeout(
+                  async () => await supabase.rpc('match_policies', {
                     query_embedding: embeddingResponse.data[0].embedding,
                     match_threshold: threshold,
                     match_count: 8,
@@ -184,7 +185,7 @@ export async function POST(req: Request) {
                   TOOL_TIMEOUT_MS,
                   'pgvector',
                   req.signal,
-                );
+                )) as any;
 
                 if (error) {
                   console.error('[search_internal_db] supabase error:', error);
@@ -216,15 +217,15 @@ export async function POST(req: Request) {
                 return '네이버 API 키 미설정. global_web_search를 사용하세요.';
               }
               
-              const res = await withTimeout(
-                (signal) => fetch(
+              const res = (await withTimeout(
+                async (signal) => await fetch(
                   `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(query)}&display=5&sort=date`,
                   { headers: { 'X-Naver-Client-Id': clientId, 'X-Naver-Client-Secret': clientSecret }, signal }
                 ),
                 TOOL_TIMEOUT_MS,
                 'naver',
                 req.signal,
-              );
+              )) as any;
               
               if (!res.ok) return `네이버 검색 ${res.status} 에러. global_web_search로 우회하세요.`;
               
@@ -260,8 +261,8 @@ export async function POST(req: Request) {
               }).format(new Date());
               const localizedQuery = `${seoulYear}년 대한민국 ${query}`;
 
-              const res = await withTimeout(
-                (signal) => fetch('https://api.tavily.com/search', {
+              const res = (await withTimeout(
+                async (signal) => await fetch('https://api.tavily.com/search', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
@@ -276,7 +277,7 @@ export async function POST(req: Request) {
                 TOOL_TIMEOUT_MS + 2000,
                 'tavily',
                 req.signal,
-              );
+              )) as any;
               
               if (!res.ok) return `글로벌 검색 ${res.status}. 네이버 결과만으로 답변하세요.`;
               
