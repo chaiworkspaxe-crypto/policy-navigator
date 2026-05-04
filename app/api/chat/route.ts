@@ -84,19 +84,20 @@ export async function POST(req: Request) {
         : JSON.stringify(lastMsg.content);
       const now = new Date().toISOString();
       
-      userInsertPromise = supabase
-        .from('chat_messages')
-        .insert({
-          thread_id: threadId,
-          user_id: userId,
-          role: 'user',
-          content,
-          created_at: now,
-          updated_at: now,
-        })
-        .then(({ error }) => {
-          if (error) console.error('[user msg insert]', error);
-        });
+      // 🌟 [해결 완료] Supabase의 PromiseLike를 진짜 Promise로 만들어주기 위해 async 함수로 감쌈
+      userInsertPromise = (async () => {
+        const { error } = await supabase
+          .from('chat_messages')
+          .insert({
+            thread_id: threadId,
+            user_id: userId,
+            role: 'user',
+            content,
+            created_at: now,
+            updated_at: now,
+          });
+        if (error) console.error('[user msg insert]', error);
+      })();
     }
 
     // ==============================================================================
