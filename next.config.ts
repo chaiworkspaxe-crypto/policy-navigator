@@ -1,23 +1,23 @@
-// next.config.ts — 전체 교체
-
 import { withSentryConfig } from '@sentry/nextjs';
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
-  turbopack: {},
-  // 🌟 OG 이미지 호스트 등 외부 이미지 사용 시
+  // 🌟 외부 이미지 도메인 (OG 이미지, 향후 정책 카드 썸네일 등)
   images: {
-    remotePatterns: [{ protocol: 'https', hostname: 'policyai.kr' }],
+    remotePatterns: [
+      { protocol: 'https', hostname: 'policyai.kr' },
+    ],
   },
+  // 🌟 React Strict Mode 명시 (Next.js 16 default true이지만 의도 표명)
+  reactStrictMode: true,
+  // 🌟 검색엔진 최적화: trailing slash 통일 안함 (default)
 };
 
 export default withSentryConfig(nextConfig, {
   silent: !process.env.CI,
-  org: process.env.SENTRY_ORG, // 🌟 env로 분리
+  org: process.env.SENTRY_ORG,
   project: process.env.SENTRY_PROJECT ?? 'policy-navigator-web',
-  // 🌟 release 자동 태깅 (Vercel 환경변수 활용)
   release: { name: process.env.VERCEL_GIT_COMMIT_SHA ?? 'dev' },
-  // 🌟 인증토큰 누락 시 빌드 안 깨지게
   authToken: process.env.SENTRY_AUTH_TOKEN,
   disableLogger: true,
 });
