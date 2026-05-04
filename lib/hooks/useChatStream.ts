@@ -22,10 +22,10 @@ export function useChatStream() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [aiStatus, setAiStatus] = useState('');
   
-  // 🌟 [고급화 포인트] 네트워크 요청을 강제로 끊을 수 있는 컨트롤러
+  // 🌟 네트워크 요청을 강제로 끊을 수 있는 컨트롤러
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // 🌟 [추가 기능] 답변 생성 중지 함수
+  // 🌟 답변 생성 중지 함수
   const stop = useCallback(() => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort(); // 네트워크 요청 즉시 차단
@@ -46,6 +46,16 @@ export function useChatStream() {
       setIsStreaming(true);
       setAiStatus('');
 
+      // 🌟 [개선 1] 무응답 Watchdog (감시견) — 30초 동안 데이터 없으면 자동 중단
+      let watchdogId: ReturnType<typeof setTimeout> | null = null;
+      const resetWatchdog = () => {
+        if (watchdogId) clearTimeout(watchdogId);
+        watchdogId = setTimeout(() => {
+          console.warn('[useChatStream] 30초 응답 지연 — 자동 중단 발동');
+          abortControllerRef.current?.abort();
+        }, 30_000); // 30초
+      };
+
       const newMessages = [
         ...opts.messages,
         { role: 'user' as const, content: opts.newUserContent },
@@ -60,7 +70,7 @@ export function useChatStream() {
             userId: opts.userId,
             threadId: opts.threadId,
           }),
-          signal: abortControllerRef.current.signal, // 🌟 컨트롤러 연결!
+          signal: abortControllerRef.current.signal, 
         });
 
         if (response.status === 403) {
@@ -85,37 +95,47 @@ export function useChatStream() {
           return;
         }
 
+        resetWatchdog(); // 첫 watchdog 시작!
+
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
+          
+          resetWatchdog(); // 🌟 데이터가 올 때마다 30초 타이머 리셋
+
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split('\n');
-          buffer = lines.pop() ?? '';
+          buffer = lines.pop() ?? ''; // 마지막 부분 청크는 buffer에 남김
 
           for (const line of lines) {
-            const dataStr = line.replace(/^data:\s*/, '').trim();
-            if (!dataStr) continue;
+            // 🌟 [개선 3] 의미 없는 SSE 잔재(data:) 치환 로직 제거, 순수 NDJSON 처리
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+
+            let data: any;
             try {
-              const data = JSON.parse(dataStr);
-              if (data.type === 'content') {
-                accumulated += data.delta;
-                handlers.onDelta?.(data.delta, accumulated);
-                setAiStatus(''); // 글자가 오면 상태 메시지 깔끔하게 비우기
-              } else if (data.type === 'status') {
-                setAiStatus(data.message);
-                handlers.onStatus?.(data.message);
-              } else if (data.type === 'error') {
-                handlers.onError?.(data.message);
-              } else if (data.type === 'done') {
-                handlers.onDone?.(data.full_content ?? accumulated);
-              }
-            } catch {
-              // 부분 청크 — 무시
+              data = JSON.parse(trimmed);
+            } catch (parseErr) {
+              // 🌟 [개선 2] 진짜 파싱 실패는 로깅하여 데이터 깨짐 현상 추적
+              console.warn('[useChatStream] JSON parse 실패:', trimmed.slice(0, 100));
+              continue;
+            }
+
+            if (data.type === 'content' && typeof data.delta === 'string') {
+              accumulated += data.delta;
+              handlers.onDelta?.(data.delta, accumulated);
+              setAiStatus(''); 
+            } else if (data.type === 'status') {
+              setAiStatus(data.message);
+              handlers.onStatus?.(data.message);
+            } else if (data.type === 'error') {
+              handlers.onError?.(data.message);
+            } else if (data.type === 'done') {
+              handlers.onDone?.(data.full_content ?? accumulated);
             }
           }
         }
       } catch (err: any) {
-        // 🌟 [고급화 포인트] 유저가 강제로 끊은 에러는 무시 처리
         if (err.name === 'AbortError') {
           console.log('[useChatStream] 사용자에 의해 스트리밍이 중단되었습니다.');
         } else {
@@ -123,6 +143,7 @@ export function useChatStream() {
           handlers.onError?.('서버 상태가 불안정합니다. 잠시 후 다시 시도해주세요.');
         }
       } finally {
+        if (watchdogId) clearTimeout(watchdogId); // 🌟 스트림 끝나면 감시견 퇴근
         setIsStreaming(false);
         abortControllerRef.current = null;
       }
@@ -130,6 +151,5 @@ export function useChatStream() {
     [],
   );
 
-  // 🌟 외부에서 stop 함수도 꺼내 쓸 수 있도록 반환!
   return { stream, stop, isStreaming, aiStatus, setAiStatus };
 }
