@@ -74,6 +74,17 @@ export const api = {
     const res = await apiClient.get("/admin/policies");
     return res.data;
   },
+
+  // 🌟 [추가] 대시보드 활성 사용자 통계 가져오기
+  getActiveUserStats: async (): Promise<{ today: number; week: number; month: number }> => {
+    try {
+      const res = await apiClient.get("/admin/active-users");
+      return res.data;
+    } catch (error) {
+      console.error("통계 불러오기 실패:", error);
+      return { today: 0, week: 0, month: 0 };
+    }
+  },
 };
 
 export function extractApiErrorMessage(error: unknown): string {
