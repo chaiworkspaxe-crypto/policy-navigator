@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { Users, MessageSquare, AlertOctagon, Calendar, Activity, RefreshCw, MessageCircle, Database, Plus, Edit, Trash2, X, Save, Bot, Landmark } from "lucide-react";
+import { Users, UserPlus, MessageSquare, AlertOctagon, Calendar, Activity, RefreshCw, MessageCircle, Database, Plus, Edit, Trash2, X, Save, Bot, Landmark } from "lucide-react";
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   PieChart, Pie, Cell, AreaChart, Area
@@ -19,6 +19,12 @@ interface DashboardStats {
   age_distribution: { name: string; value: number }[];
   time_traffic: { hour: string; count: number }[];
   top_keywords: { keyword: string; count: number }[];
+}
+
+interface ActiveUserStats {
+  today: number;
+  week: number;
+  month: number;
 }
 
 interface Policy {
@@ -47,11 +53,12 @@ export default function AdminDashboardPage() {
   
   // 메인 탭 상태
   const [activeTab, setActiveTab] = useState<'stats' | 'db'>('stats');
-  // 🌟 DB 서브 탭 상태 (공식 vs AI수집)
+  // DB 서브 탭 상태 (공식 vs AI수집)
   const [dbSubTab, setDbSubTab] = useState<'official' | 'agent'>('official');
 
   // 통계/데이터 상태
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [activeUsers, setActiveUsers] = useState<ActiveUserStats>({ today: 0, week: 0, month: 0 }); // 🌟 신규: 활성 유저 상태
   const [officialPolicies, setOfficialPolicies] = useState<Policy[]>([]);
   const [agentPolicies, setAgentPolicies] = useState<Policy[]>([]);
 
@@ -59,12 +66,16 @@ export default function AdminDashboardPage() {
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState<Policy>(EMPTY_POLICY);
 
-  // 통계 불러오기
+  // 🌟 [수정됨] 통계 불러오기 (기존 통계 + 활성 유저 통계 동시 호출)
   const fetchStats = async () => {
     setLoading(true);
     try {
-      const data = await api.getAdminStats();
-      setStats(data as DashboardStats);
+      const [statsData, activeUsersData] = await Promise.all([
+        api.getAdminStats(),
+        api.getActiveUserStats() // 우리가 만든 신규 API 호출!
+      ]);
+      setStats(statsData as DashboardStats);
+      setActiveUsers(activeUsersData);
     } catch (error) {
       console.error("통계 불러오기 실패:", error);
     } finally {
@@ -72,11 +83,10 @@ export default function AdminDashboardPage() {
     }
   };
 
-  // 🌟 정책 리스트 진짜로 불러오기 (백엔드 연동)
+  // 정책 리스트 불러오기
   const fetchPolicies = async () => {
     setLoading(true);
     try {
-      // lib/api.ts에 getAdminPolicies() 가 정의되어 있다고 가정!
       const res = await api.getAdminPolicies(); 
       if (res && res.data) {
         setOfficialPolicies(res.data.official || []);
@@ -122,7 +132,6 @@ export default function AdminDashboardPage() {
     return null;
   };
 
-  // 현재 서브 탭에 따라 보여줄 데이터 결정
   const currentPolicies = dbSubTab === 'official' ? officialPolicies : agentPolicies;
 
   return (
@@ -149,7 +158,7 @@ export default function AdminDashboardPage() {
           </button>
         </div>
 
-        {/* 🌟 메인 탭 네비게이션 */}
+        {/* 메인 탭 네비게이션 */}
         <div className="flex gap-2 border-b border-gray-800 pt-4">
           <button 
             onClick={() => handleTabChange('stats')}
@@ -166,26 +175,53 @@ export default function AdminDashboardPage() {
         </div>
 
         {/* ========================================================= */}
-        {/* 탭 1: 통계 보기 (기존 그대로) */}
+        {/* 탭 1: 통계 보기 */}
         {/* ========================================================= */}
         {activeTab === 'stats' && (
-          <div className="space-y-8 animate-in fade-in duration-300 pt-4">
+          <div className="space-y-6 animate-in fade-in duration-300 pt-4">
+            
+            {/* 🌟 신규: 유저 활성도 (DAU, WAU, MAU, Total) 카드 */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="bg-[#1e1e1e] border border-gray-800 rounded-2xl p-5 shadow-lg flex flex-col transition-transform hover:-translate-y-1">
                 <div className="flex items-center gap-3 mb-3">
-                  <div className="p-2.5 bg-blue-500/10 rounded-lg"><Users size={20} className="text-blue-500" /></div>
-                  <h2 className="text-gray-400 text-sm font-semibold">총 누적 사용자</h2>
+                  <div className="p-2.5 bg-blue-500/10 rounded-lg"><Activity size={20} className="text-blue-500" /></div>
+                  <h2 className="text-gray-400 text-sm font-semibold">오늘 접속 유저 (DAU)</h2>
                 </div>
-                {/* 🌟 해결: 값이 없을 때 0으로 떨어지도록 방어막 (|| 0) 추가 */}
-                <div className="text-3xl font-extrabold text-white mt-auto">{loading ? "-" : (stats?.total_users || 0).toLocaleString()} <span className="text-base text-gray-500 font-medium">명</span></div>
+                <div className="text-3xl font-extrabold text-white mt-auto">{loading ? "-" : activeUsers.today.toLocaleString()} <span className="text-base text-gray-500 font-medium">명</span></div>
               </div>
 
+              <div className="bg-[#1e1e1e] border border-gray-800 rounded-2xl p-5 shadow-lg flex flex-col transition-transform hover:-translate-y-1">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="p-2.5 bg-green-500/10 rounded-lg"><Calendar size={20} className="text-green-500" /></div>
+                  <h2 className="text-gray-400 text-sm font-semibold">이번 주 유저 (WAU)</h2>
+                </div>
+                <div className="text-3xl font-extrabold text-white mt-auto">{loading ? "-" : activeUsers.week.toLocaleString()} <span className="text-base text-gray-500 font-medium">명</span></div>
+              </div>
+
+              <div className="bg-[#1e1e1e] border border-gray-800 rounded-2xl p-5 shadow-lg flex flex-col transition-transform hover:-translate-y-1">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="p-2.5 bg-purple-500/10 rounded-lg"><Users size={20} className="text-purple-500" /></div>
+                  <h2 className="text-gray-400 text-sm font-semibold">한 달 유저 (MAU)</h2>
+                </div>
+                <div className="text-3xl font-extrabold text-white mt-auto">{loading ? "-" : activeUsers.month.toLocaleString()} <span className="text-base text-gray-500 font-medium">명</span></div>
+              </div>
+
+              <div className="bg-[#1e1e1e] border border-gray-800 rounded-2xl p-5 shadow-lg flex flex-col transition-transform hover:-translate-y-1">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="p-2.5 bg-blue-500/10 rounded-lg"><UserPlus size={20} className="text-blue-500" /></div>
+                  <h2 className="text-gray-400 text-sm font-semibold">총 누적 사용자</h2>
+                </div>
+                <div className="text-3xl font-extrabold text-white mt-auto">{loading ? "-" : (stats?.total_users || 0).toLocaleString()} <span className="text-base text-gray-500 font-medium">명</span></div>
+              </div>
+            </div>
+
+            {/* 기존: 시스템 통계 (대화방, 티키타카, 방어) */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="bg-[#1e1e1e] border border-gray-800 rounded-2xl p-5 shadow-lg flex flex-col transition-transform hover:-translate-y-1">
                 <div className="flex items-center gap-3 mb-3">
                   <div className="p-2.5 bg-green-500/10 rounded-lg"><MessageSquare size={20} className="text-green-500" /></div>
                   <h2 className="text-gray-400 text-sm font-semibold">총 생성된 대화방</h2>
                 </div>
-                {/* 🌟 해결: 방어막 추가 */}
                 <div className="text-3xl font-extrabold text-white mt-auto">{loading ? "-" : (stats?.total_threads || 0).toLocaleString()} <span className="text-base text-gray-500 font-medium">개</span></div>
               </div>
 
@@ -194,7 +230,6 @@ export default function AdminDashboardPage() {
                   <div className="p-2.5 bg-purple-500/10 rounded-lg"><MessageCircle size={20} className="text-purple-500" /></div>
                   <h2 className="text-gray-400 text-sm font-semibold">유저 평균 티키타카</h2>
                 </div>
-                {/* 🌟 해결: 방어막 추가 */}
                 <div className="text-3xl font-extrabold text-purple-400 mt-auto">{loading ? "-" : (stats?.avg_conversation_depth || 0)} <span className="text-base text-purple-900/70 font-medium">턴</span></div>
               </div>
 
@@ -203,7 +238,6 @@ export default function AdminDashboardPage() {
                   <div className="p-2.5 bg-red-500/10 rounded-lg"><AlertOctagon size={20} className="text-red-500" /></div>
                   <h2 className="text-gray-400 text-sm font-semibold">오늘 한도 초과 방어</h2>
                 </div>
-                {/* 🌟 해결: 방어막 추가 */}
                 <div className="text-3xl font-extrabold text-red-400 mt-auto">{loading ? "-" : (stats?.blocked_today || 0).toLocaleString()} <span className="text-base text-red-900/70 font-medium">건</span></div>
               </div>
             </div>
@@ -285,7 +319,7 @@ export default function AdminDashboardPage() {
         )}
 
         {/* ========================================================= */}
-        {/* 탭 2: 정책 DB 관리 (🌟 서브 탭 추가됨!) */}
+        {/* 탭 2: 정책 DB 관리 */}
         {/* ========================================================= */}
         {activeTab === 'db' && (
           <div className="space-y-6 animate-in fade-in duration-300 pt-4">
@@ -305,7 +339,6 @@ export default function AdminDashboardPage() {
               </button>
             </div>
 
-            {/* 🌟 서브 탭 네비게이션 (공식 vs AI수집) */}
             <div className="flex gap-2 bg-[#1a1a1a] p-1 rounded-xl border border-gray-800 w-fit">
               <button 
                 onClick={() => setDbSubTab('official')}
@@ -321,7 +354,6 @@ export default function AdminDashboardPage() {
               </button>
             </div>
 
-            {/* 정책 리스트 테이블 */}
             <div className="bg-[#1e1e1e] rounded-2xl border border-gray-800 overflow-hidden shadow-lg">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm whitespace-nowrap">
@@ -366,7 +398,6 @@ export default function AdminDashboardPage() {
 
       </div>
 
-      {/* 🌟 정책 추가/수정 모달 (팝업창) */}
       {showForm && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
           <div className="bg-[#1e1e1e] border border-gray-700 rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl">
@@ -378,7 +409,6 @@ export default function AdminDashboardPage() {
             </div>
             
             <div className="p-6 overflow-y-auto space-y-4 flex-1 custom-scrollbar">
-              {/* ... (입력 폼 내용은 기존과 동일) ... */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-gray-400">정책명 (필수)</label>
