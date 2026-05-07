@@ -248,12 +248,14 @@ export default function Home() {
   };
 
   const handleNewThread = async (uid = userId) => {
-    try {
-      setErrorMessage("");
-      const newThreadId = await api.createThread(uid);
-      setCurrentThreadId(newThreadId); setMessages([]); setQuery(""); applyInputs(EMPTY_INPUTS);
-      setIsSidebarOpen(false); setIsFormExpanded(true); setThreads(await api.listThreads(uid));
-    } catch { setErrorMessage("새 대화방을 만들 수 없습니다."); }
+    // 🌟 수정: DB에 당장 방을 만들지 않고 프론트엔드 상태만 초기화합니다! (지연 생성)
+    setErrorMessage("");
+    setCurrentThreadId(""); // ID를 비워둠
+    setMessages([]); 
+    setQuery(""); 
+    applyInputs(EMPTY_INPUTS);
+    setIsSidebarOpen(false); 
+    setIsFormExpanded(true);
   };
 
   const validateStructuredSearch = () => {
@@ -268,6 +270,17 @@ export default function Home() {
     setErrorMessage('');
     if (!userId) return setErrorMessage('사용자 정보가 준비되지 않았습니다. 새로고침 해주세요.');
 
+    // 🌟 1. 유효성 검사(문지기)를 제일 먼저 실행! (여기를 통과 못 하면 아래 코드는 실행 안 됨)
+    if (!isFollowUp) {
+      const validationMessage = validateStructuredSearch();
+      if (validationMessage) return setErrorMessage(validationMessage); // 시/도 선택 안 했으면 여기서 컷!
+      setIsFormExpanded(false);
+    } else if (isFollowUp && !overridePrompt) {
+      if (!query.trim()) return setErrorMessage('추가 질문을 입력해주세요.');
+      if (messages.length === 0) return setErrorMessage('먼저 기본 조건으로 혜택을 조회해주세요.');
+    }
+
+    // 🌟 2. 검사를 무사히 통과했는데 아직 만들어진 방이 없다면? '이때' 진짜 DB에 방을 생성!
     let targetThreadId = currentThreadId;
     if (!targetThreadId) {
       try {
@@ -276,15 +289,6 @@ export default function Home() {
       } catch {
         return setErrorMessage('대화방을 만들 수 없습니다. 잠시 후 시도해 주세요.');
       }
-    }
-
-    if (isFollowUp && !overridePrompt) {
-      if (!query.trim()) return setErrorMessage('추가 질문을 입력해주세요.');
-      if (messages.length === 0) return setErrorMessage('먼저 기본 조건으로 혜택을 조회해주세요.');
-    } else if (!isFollowUp) {
-      const validationMessage = validateStructuredSearch();
-      if (validationMessage) return setErrorMessage(validationMessage);
-      setIsFormExpanded(false);
     }
 
     const followUpText = overridePrompt || query.trim();
@@ -300,6 +304,7 @@ export default function Home() {
     setMessages(optimisticMessages);
     if (isFollowUp && !overridePrompt) setQuery('');
 
+    // 안전하게 생성된 방 ID(targetThreadId)에 유저 정보 저장
     await api
       .saveThreadInputs(userId, targetThreadId, {
         selected_city: city,
@@ -310,6 +315,7 @@ export default function Home() {
       })
       .catch((e) => console.error(e));
 
+    // AI 스트리밍 호출 (기존 코드 동일)
     await stream(
       {
         userId,
@@ -335,6 +341,7 @@ export default function Home() {
       }
     );
 
+    // 대화 목록 새로고침
     void api.listThreads(userId).then(setThreads);
   };
 
