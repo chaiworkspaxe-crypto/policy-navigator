@@ -84,6 +84,22 @@ const sanitizeForPrompt = (raw: unknown, maxLen = 200): string => {
   return s.length > maxLen ? s.slice(0, maxLen) + '…' : s;
 };
 
+// ==============================================================================
+// 🌟 [개선 5] Naver HTML Entity 디코딩 헬퍼 함수
+// ==============================================================================
+function decodeNaverEntities(s: string): string {
+  return s
+    .replace(/<[^>]+>/g, '')              // HTML 태그 (<b>검색어강조</b>)
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')               // 🛡️ &amp;는 다른 엔티티 디코딩 후 마지막에! 이중 디코딩 방지
+    .trim();
+}
+
 export async function POST(req: Request) {
   try {
     const { messages, userId, threadId } = await req.json();
@@ -292,11 +308,13 @@ export async function POST(req: Request) {
               const data = await res.json();
               if (!data.items?.length) return '네이버 검색 결과 없음. 키워드를 더 구체적으로(지역명+분야) 바꿔 재시도해보세요.';
               
+              // 🌟 [개선 5 적용] 네이버 HTML 엔티티 안전하게 디코딩
               return data.items
                 .map((item: any) => {
-                  const cleanTitle = item.title.replace(/<[^>]+>/g, '');
-                  const cleanDesc = item.description.replace(/<[^>]+>/g, '');
-                  return `- 제목: ${cleanTitle}\n  내용: ${cleanDesc}\n  링크: ${item.link}`;
+                  const cleanTitle = decodeNaverEntities(item?.title ?? '');
+                  const cleanDesc = decodeNaverEntities(item?.description ?? '');
+                  const link = typeof item?.link === 'string' ? item.link : '';
+                  return `- 제목: ${cleanTitle}\n  내용: ${cleanDesc}\n  링크: ${link}`;
                 })
                 .join('\n\n');
             } catch (e: any) {
@@ -377,7 +395,7 @@ export async function POST(req: Request) {
           console.log(`[💰 토큰] in=${usage?.promptTokens}, out=${usage?.completionTokens}, finish=${finishReason}`);
           await supabase.from('chat_threads').update({ updated_at: now }).eq('thread_id', threadId);
 
-          // 🌟 [변경 완료] 여기서 fetch 로직을 삭제하고, route 최상단 after() 훅으로 안전하게 이동했습니다.
+          // 🌟 [개선 7 적용] 여기서 fetch 로직을 삭제하고, route 최상단 after() 훅으로 이동.
 
         } catch (dbError) {
           console.error("DB 저장 중 에러 발생:", dbError);
@@ -445,7 +463,7 @@ export async function POST(req: Request) {
     });
 
     // ==============================================================================
-    // 🌟 [신규/개선 7] 라우트 핸들러 최상위에서 after() 등록 (안전한 Lifecycle 보장 및 HTTP 지연 제거)
+    // 🌟 [개선 7] 라우트 핸들러 최상위에서 after() 등록 (안전한 Lifecycle 보장 및 HTTP 지연 제거)
     // ==============================================================================
     if (
       userId &&
