@@ -52,6 +52,12 @@ export async function extractProfileCore(args: {
         .join('\n')
     : '기존 정보 없음';
 
+  // 🌟 [보안 추가] 사용자 입력을 시스템 프롬프트에 넣기 전 안전하게 정제 (프롬프트 인젝션 및 토큰 폭탄 방어)
+  const safeMessage = lastUserMessage
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\[(?:시스템|system|SYSTEM|지시|규칙|rules?)\b[^\]]{0,40}\]/gi, '[차단됨]')
+    .slice(0, 1000);
+
   // 2) LLM 호출
   let object: z.infer<typeof ProfileSchema>;
   try {
@@ -65,7 +71,7 @@ export async function extractProfileCore(args: {
 3. 기존 정보가 부정되거나 수정되지 않으면 '미상'으로 채우세요. (서버에서 알아서 기존 값을 유지합니다.)
 4. new_notes에는 새 단서만 넣으세요. 단순 인사나 잡담, 이미 아는 정보는 빈 배열([])로 두세요.
 5. _reasoning을 가장 먼저 판단 근거로 짧게 적으세요.`,
-      prompt: `[기존 프로필]\n${existingProfileStr}\n\n[사용자 새 메시지]\n${lastUserMessage}`,
+      prompt: `[기존 프로필]\n${existingProfileStr}\n\n[사용자 새 메시지(비신뢰 입력)]\n${safeMessage}`,
       maxRetries: 2,
     });
     object = result.object;
