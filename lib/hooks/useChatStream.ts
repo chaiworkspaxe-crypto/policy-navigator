@@ -16,6 +16,7 @@ interface StreamHandlers {
   onStatus?: (status: string) => void;
   onError?: (msg: string) => void;
   onDone?: (full: string) => void;
+  onFirstDelta?: () => void;     // 🌟 [개선 5-3] 신규: 첫 글자 수신 신호 (DB 저장 확신)
 }
 
 export function useChatStream() {
@@ -52,6 +53,7 @@ export function useChatStream() {
       // ==============================================================================
       let watchdogId: ReturnType<typeof setTimeout> | null = null;
       let isFirstChunk = true;
+      let firstDeltaFired = false; // 🌟 [개선 5-3] 첫 delta 발송 여부 추적
 
       const CONNECT_TIMEOUT_MS = 60_000;
       const IDLE_TIMEOUT_MS = 45_000;
@@ -132,6 +134,11 @@ export function useChatStream() {
             }
 
             if (data.type === 'content' && typeof data.delta === 'string') {
+              // 🌟 [개선 5-3 적용] 화면에 텍스트를 처음 그릴 때 '저장 성공' 신호 발송
+              if (!firstDeltaFired) {
+                firstDeltaFired = true;
+                handlers.onFirstDelta?.();
+              }
               accumulated += data.delta;
               handlers.onDelta?.(data.delta, accumulated);
               setAiStatus(''); 
@@ -154,6 +161,11 @@ export function useChatStream() {
           try {
             const data = JSON.parse(tail);
             if (data.type === 'content' && typeof data.delta === 'string') {
+              // 🌟 꼬리 잔재에서 첫 글자가 나오는 극단적 엣지 케이스도 방어
+              if (!firstDeltaFired) {
+                firstDeltaFired = true;
+                handlers.onFirstDelta?.();
+              }
               accumulated += data.delta;
               handlers.onDelta?.(data.delta, accumulated);
             } else if (data.type === 'done') {
