@@ -13,6 +13,24 @@ const nextConfig: NextConfig = {
   },
   // 🌟 React Strict Mode 명시 (Next.js 16 default true이지만 의도 표명)
   reactStrictMode: true,
+
+  // 🌟 [추가 권장 8-2] poweredByHeader 제거 — Next.js 노출 정보 최소화
+  poweredByHeader: false,
+  
+  // 🌟 [추가 권장 8-2] 보안 헤더 — 정책 정보를 다루는 사이트인 만큼 기본 보안 강화
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: [
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+        ],
+      },
+    ];
+  },
 };
 
 export default withSentryConfig(nextConfig, {
