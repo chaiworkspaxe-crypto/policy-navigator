@@ -7,6 +7,7 @@ import { createClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs'; 
 import { after } from 'next/server'; // 🌟 [신규] 응답 후 백그라운드 작업 완벽 보장
 import { POLICY_NAVIGATOR_SYSTEM_PROMPT } from '@/lib/prompts/policyNavigator';
+import { extractProfileCore } from '@/app/api/profile/extract/_logic'; // 🌟 [신규] 내부 로직 직접 호출
 
 // 1. API 클라이언트 초기화
 const rawOpenai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -86,10 +87,6 @@ const sanitizeForPrompt = (raw: unknown, maxLen = 200): string => {
 export async function POST(req: Request) {
   try {
     const { messages, userId, threadId } = await req.json();
-
-    // 🌟 서버사이드 절대경로 추출 (백그라운드 fetch용)
-    const reqUrl = new URL(req.url);
-    const extractApiUrl = `${reqUrl.origin}/api/profile/extract`;
 
     // ==============================================================================
     // 🌟 [개선 3] TTFB 단축: 사용자 메시지 INSERT 병렬화 (응답 지연 제로)
@@ -380,26 +377,7 @@ export async function POST(req: Request) {
           console.log(`[💰 토큰] in=${usage?.promptTokens}, out=${usage?.completionTokens}, finish=${finishReason}`);
           await supabase.from('chat_threads').update({ updated_at: now }).eq('thread_id', threadId);
 
-          // ==============================================================================
-          // 🌟 [개선 7] Edge 함수 수명 보장 (after 훅 도입) - 100% 신뢰성 있는 백그라운드 추출
-          // ==============================================================================
-          if (lastMsg?.role === 'user' && typeof lastMsg.content === 'string') {
-            after(async () => {
-              try {
-                await fetch(extractApiUrl, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    userId,
-                    threadId,
-                    lastUserMessage: lastMsg.content,
-                  }),
-                });
-              } catch (e) {
-                console.error('[bg extract after error]', e);
-              }
-            });
-          }
+          // 🌟 [변경 완료] 여기서 fetch 로직을 삭제하고, route 최상단 after() 훅으로 안전하게 이동했습니다.
 
         } catch (dbError) {
           console.error("DB 저장 중 에러 발생:", dbError);
@@ -465,6 +443,34 @@ export async function POST(req: Request) {
         }
       },
     });
+
+    // ==============================================================================
+    // 🌟 [신규/개선 7] 라우트 핸들러 최상위에서 after() 등록 (안전한 Lifecycle 보장 및 HTTP 지연 제거)
+    // ==============================================================================
+    if (
+      userId &&
+      threadId &&
+      lastMsg?.role === 'user' &&
+      typeof lastMsg.content === 'string' &&
+      lastMsg.content.trim().length > 0
+    ) {
+      const capturedUserId = userId;
+      const capturedThreadId = threadId;
+      const capturedMsg = lastMsg.content;
+      
+      after(async () => {
+        try {
+          // 🛡️ HTTP 라운드트립 제거 → 같은 Edge 인스턴스 안에서 직접 호출로 0ms 딜레이
+          await extractProfileCore({
+            userId: capturedUserId,
+            threadId: capturedThreadId,
+            lastUserMessage: capturedMsg,
+          });
+        } catch (e) {
+          console.error('[bg extract after error]', e);
+        }
+      });
+    }
 
     return new Response(customStream, {
       headers: { 
