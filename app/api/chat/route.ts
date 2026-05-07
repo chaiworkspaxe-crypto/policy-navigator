@@ -22,6 +22,13 @@ export const runtime = 'edge';
 // ==============================================================================
 const TOOL_TIMEOUT_MS = 10_000;
 
+// 🛡️ [신규] 사용자가 직접 중지(요청 abort)한 경우만 진짜 throw, 그 외는 fallback 텍스트 리턴
+const isUserCancellation = (e: any, parentSignal?: AbortSignal): boolean => {
+  if (!parentSignal?.aborted) return false;
+  // 사용자가 abort한 경우에만 부모 시그널이 aborted = true
+  return e?.name === 'AbortError' || /abort/i.test(e?.message ?? '');
+};
+
 function withTimeout<T>(
   factory: (signal: AbortSignal) => Promise<T>,
   ms: number,
@@ -229,9 +236,10 @@ export async function POST(req: Request) {
               }
               return '내부 DB에 매칭되는 정책 없음. naver_web_search 또는 global_web_search로 보완하세요.';
             } catch (e: any) {
-              if (e?.name === 'AbortError') throw e; 
+              if (isUserCancellation(e, req.signal)) throw e;  // 🛡️ 사용자 중지면만 propagate
               console.error('[search_internal_db] fatal:', e);
-              return `내부 DB 검색 실패(${e?.message ?? 'unknown'}). naver_web_search로 즉시 우회하세요.`;
+              // 🛡️ 타임아웃, 네트워크 오류, supabase 5xx 등 모든 비-사용자 오류는 graceful fallback
+              return `내부 DB 검색 일시 장애(${e?.message ?? 'unknown'}). 즉시 naver_web_search 또는 global_web_search로 우회하세요. 이 검색은 더 시도하지 마세요.`;
             }
           },
         }),
@@ -270,9 +278,9 @@ export async function POST(req: Request) {
                 })
                 .join('\n\n');
             } catch (e: any) {
-              if (e?.name === 'AbortError') throw e;
+              if (isUserCancellation(e, req.signal)) throw e;
               console.error('[naver_web_search] fatal:', e);
-              return `네이버 검색 실패(${e?.message ?? 'unknown'}). global_web_search로 우회하세요.`;
+              return `네이버 검색 일시 장애(${e?.message ?? 'unknown'}). global_web_search로 우회하세요. 이 검색은 더 시도하지 마세요.`;
             }
           },
         }),
@@ -318,9 +326,9 @@ export async function POST(req: Request) {
                 .map((r: any) => `- 제목: ${r.title}\n  내용: ${r.content}\n  링크: ${r.url}`)
                 .join('\n\n');
             } catch (e: any) {
-              if (e?.name === 'AbortError') throw e;
+              if (isUserCancellation(e, req.signal)) throw e;
               console.error('[global_web_search] fatal:', e);
-              return `글로벌 검색 실패(${e?.message ?? 'unknown'}). 보유 정보로 답변하세요.`;
+              return `글로벌 검색 일시 장애(${e?.message ?? 'unknown'}). 보유한 내부 DB/네이버 결과만으로 답변을 정리하세요.`;
             }
           },
         }),
