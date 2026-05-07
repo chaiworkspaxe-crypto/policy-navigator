@@ -210,7 +210,13 @@ export async function POST(req: Request) {
 
         search_internal_db: tool({
           description: '내부 DB(pgvector)에서 정부 정책의 의미적 유사도 상위 결과를 가져옵니다. 가장 먼저 호출하세요.',
-          parameters: z.object({ query: z.string().describe('한국어 자연어 검색어') }),
+          // 🌟 [개선 6] Zod 입력 검증 강화 (길이 제한)
+          parameters: z.object({ 
+            query: z.string()
+              .min(1, '검색어가 비어있습니다.')
+              .max(150, '검색어가 너무 깁니다.')
+              .describe('한국어 자연어 검색어') 
+          }),
           execute: async ({ query }) => {
             try {
               // 🛡️ [개선] OpenAI 응답 타입 좁히기 (Embedding API 공식 응답 형태 기반)
@@ -284,7 +290,13 @@ export async function POST(req: Request) {
 
         naver_web_search: tool({
           description: '지자체/읍면동 단위 특화 정책, 최신 공고를 찾을 때 우선 사용. 키워드는 "OOO시 OOO 지원금" 형태가 효과적.',
-          parameters: z.object({ query: z.string() }),
+          // 🌟 [개선 6] Zod 입력 검증 강화 (길이 제한)
+          parameters: z.object({ 
+            query: z.string()
+              .min(1, '검색어가 비어있습니다.')
+              .max(150, '검색어가 너무 깁니다.')
+              .describe('한국어 자연어 검색어') 
+          }),
           execute: async ({ query }) => {
             try {
               const clientId = process.env.NAVER_CLIENT_ID;
@@ -327,7 +339,13 @@ export async function POST(req: Request) {
 
         global_web_search: tool({
           description: '정부 공식 문서 / 최신 신청 일정 교차 검증. 네이버에서 못 찾았거나 마감일 확인이 필요할 때 사용.',
-          parameters: z.object({ query: z.string() }),
+          // 🌟 [개선 6] Zod 입력 검증 강화 (길이 제한)
+          parameters: z.object({ 
+            query: z.string()
+              .min(1, '검색어가 비어있습니다.')
+              .max(150, '검색어가 너무 깁니다.')
+              .describe('한국어 자연어 검색어') 
+          }),
           execute: async ({ query }) => {
             try {
               const tavilyKey = process.env.TAVILY_API_KEY;
@@ -337,7 +355,8 @@ export async function POST(req: Request) {
                 timeZone: 'Asia/Seoul',
                 year: 'numeric',
               }).format(new Date());
-              const localizedQuery = `${seoulYear}년 대한민국 ${query}`;
+              // 🌟 [개선 6 적용] include_domains 삭제 + 정부 정책 키워드 주입
+              const localizedQuery = `${seoulYear}년 대한민국 정부 정책 지원금 ${query}`;
 
               const res = (await withTimeout(
                 async (signal) => await fetch('https://api.tavily.com/search', {
@@ -348,7 +367,6 @@ export async function POST(req: Request) {
                     query: localizedQuery,
                     max_results: 4,
                     search_depth: 'advanced',
-                    include_domains: ['gov.kr', 'go.kr', 'or.kr', 'bokjiro.go.kr', 'youthcenter.go.kr'],
                   }),
                   signal,
                 }),
@@ -362,7 +380,17 @@ export async function POST(req: Request) {
               const data = await res.json();
               if (!data.results?.length) return '글로벌 검색 결과 없음. 키워드를 바꿔 재시도하거나 보유 정보로 마무리하세요.';
               
-              return data.results
+              // 🌟 [개선 6 적용] 결과 후처리(Post-Processing) 정렬 로직: 공식 도메인 맨 위로 끌어올리기
+              const sortedResults = data.results.sort((a: any, b: any) => {
+                const isGovA = a.url.includes('.go.kr') || a.url.includes('.or.kr') || a.url.includes('.kr');
+                const isGovB = b.url.includes('.go.kr') || b.url.includes('.or.kr') || b.url.includes('.kr');
+                
+                if (isGovA && !isGovB) return -1; // A가 정부 사이트면 위로 올림
+                if (!isGovA && isGovB) return 1;  // B가 정부 사이트면 위로 올림
+                return 0; // 둘 다 정부 사이트거나, 둘 다 아니면 원래 순서 유지
+              });
+
+              return sortedResults
                 .map((r: any) => `- 제목: ${r.title}\n  내용: ${r.content}\n  링크: ${r.url}`)
                 .join('\n\n');
             } catch (e: any) {
@@ -394,8 +422,6 @@ export async function POST(req: Request) {
 
           console.log(`[💰 토큰] in=${usage?.promptTokens}, out=${usage?.completionTokens}, finish=${finishReason}`);
           await supabase.from('chat_threads').update({ updated_at: now }).eq('thread_id', threadId);
-
-          // 🌟 [개선 7 적용] 여기서 fetch 로직을 삭제하고, route 최상단 after() 훅으로 이동.
 
         } catch (dbError) {
           console.error("DB 저장 중 에러 발생:", dbError);
