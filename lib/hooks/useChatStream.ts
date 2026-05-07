@@ -47,7 +47,7 @@ export function useChatStream() {
       setAiStatus('');
 
       // ==============================================================================
-      // 🌟 [개선] 무응답 Watchdog (감시견) 분리
+      // 🌟 [개선 1] 무응답 Watchdog (감시견) 분리
       // 첫 청크까지(connection): 60초 / 그 이후 청크 사이(idle): 45초
       // ==============================================================================
       let watchdogId: ReturnType<typeof setTimeout> | null = null;
@@ -145,6 +145,23 @@ export function useChatStream() {
             }
           }
         }
+
+        // ==============================================================================
+        // 🌟 [개선 4] 마지막 buffer 잔재 flush — 서버가 \n 안 붙이고 끝내도 안전하게 수거
+        // ==============================================================================
+        const tail = buffer.trim();
+        if (tail) {
+          try {
+            const data = JSON.parse(tail);
+            if (data.type === 'content' && typeof data.delta === 'string') {
+              accumulated += data.delta;
+              handlers.onDelta?.(data.delta, accumulated);
+            } else if (data.type === 'done') {
+              handlers.onDone?.(data.full_content ?? accumulated);
+            }
+          } catch {/* 쓰레기 값이면 조용히 무시 */}
+        }
+
       } catch (err: any) {
         if (err.name === 'AbortError') {
           console.log('[useChatStream] 사용자에 의해 스트리밍이 중단되었습니다.');
