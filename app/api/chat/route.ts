@@ -200,39 +200,64 @@ export async function POST(req: Request) {
           parameters: z.object({ query: z.string().describe('한국어 자연어 검색어') }),
           execute: async ({ query }) => {
             try {
-              // 🌟 [해결 완료] 타입스크립트의 unknown 에러를 방지하기 위해 as any 적용
-              const embeddingResponse = (await withTimeout(
-                async (signal) => await rawOpenai.embeddings.create(
+              // 🛡️ [개선] OpenAI 응답 타입 좁히기 (Embedding API 공식 응답 형태 기반)
+              type EmbeddingResp = {
+                data?: Array<{ embedding?: number[] }>;
+              };
+              type RpcRow = { title?: string; provider?: string; summary?: string; url?: string };
+
+              const embeddingResponse = await withTimeout(
+                async (signal) => rawOpenai.embeddings.create(
                   { model: 'text-embedding-3-small', input: query },
                   { signal }
                 ),
                 TOOL_TIMEOUT_MS,
                 'embedding',
                 req.signal,
-              )) as any;
+              ) as EmbeddingResp;
 
+              // 🛡️ 빈 응답 / 변형 응답 즉시 graceful fallback
+              const queryEmbedding = embeddingResponse?.data?.[0]?.embedding;
+              if (!Array.isArray(queryEmbedding) || queryEmbedding.length === 0) {
+                console.error('[search_internal_db] empty embedding response', embeddingResponse);
+                return '임베딩 일시 실패. naver_web_search로 즉시 우회하세요. 이 검색은 더 시도하지 마세요.';
+              }
+
+              // 🛡️ [개선] 임계치 폴백 시 supabase 에러는 다음 임계치 시도, 진짜 0건일 때만 fallback 메시지
+              let lastDbError: string | null = null;
               for (const threshold of [0.55, 0.4]) {
-                // 🌟 [해결 완료] supabase.rpc()를 진짜 Promise로 변환 및 as any로 타입에러 원천 차단!
-                const { data, error } = (await withTimeout(
-                  async () => await supabase.rpc('match_policies', {
-                    query_embedding: embeddingResponse.data[0].embedding,
-                    match_threshold: threshold,
-                    match_count: 8,
-                  }),
-                  TOOL_TIMEOUT_MS,
-                  'pgvector',
-                  req.signal,
-                )) as any;
+                try {
+                  const { data, error } = await withTimeout(
+                    async () => supabase.rpc('match_policies', {
+                      query_embedding: queryEmbedding,
+                      match_threshold: threshold,
+                      match_count: 8,
+                    }),
+                    TOOL_TIMEOUT_MS,
+                    'pgvector',
+                    req.signal,
+                  ) as { data: RpcRow[] | null; error: { message: string } | null };
 
-                if (error) {
-                  console.error('[search_internal_db] supabase error:', error);
-                  return `내부 DB 일시 장애 (${error.message}). naver_web_search로 우회하세요.`;
+                  if (error) {
+                    lastDbError = error.message;
+                    console.error(`[search_internal_db] supabase error @threshold=${threshold}:`, error);
+                    continue; // 🛡️ 다음 임계치로 재시도 (네트워크 일시 깜빡임 방어)
+                  }
+                  if (data && data.length > 0) {
+                    return data
+                      .map((p) => `- 정책명: ${p?.title ?? '미상'} (${p?.provider ?? '미상'})\n  내용: ${p?.summary ?? ''}\n  링크: ${p?.url ?? ''}`)
+                      .join('\n\n');
+                  }
+                } catch (innerE: any) {
+                  if (isUserCancellation(innerE, req.signal)) throw innerE;
+                  lastDbError = innerE?.message ?? 'unknown';
+                  console.error(`[search_internal_db] @threshold=${threshold} caught:`, innerE);
+                  continue;
                 }
-                if (data && data.length > 0) {
-                  return data
-                    .map((p: any) => `- 정책명: ${p.title} (${p.provider})\n  내용: ${p.summary}\n  링크: ${p.url}`)
-                    .join('\n\n');
-                }
+              }
+
+              if (lastDbError) {
+                return `내부 DB 일시 장애(${lastDbError}). naver_web_search로 우회하세요. 이 검색은 더 시도하지 마세요.`;
               }
               return '내부 DB에 매칭되는 정책 없음. naver_web_search 또는 global_web_search로 보완하세요.';
             } catch (e: any) {
