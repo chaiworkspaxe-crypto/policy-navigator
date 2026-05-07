@@ -46,14 +46,23 @@ export function useChatStream() {
       setIsStreaming(true);
       setAiStatus('');
 
-      // 🌟 [개선 1] 무응답 Watchdog (감시견) — 30초 동안 데이터 없으면 자동 중단
+      // ==============================================================================
+      // 🌟 [개선] 무응답 Watchdog (감시견) 분리
+      // 첫 청크까지(connection): 60초 / 그 이후 청크 사이(idle): 45초
+      // ==============================================================================
       let watchdogId: ReturnType<typeof setTimeout> | null = null;
+      let isFirstChunk = true;
+
+      const CONNECT_TIMEOUT_MS = 60_000;
+      const IDLE_TIMEOUT_MS = 45_000;
+
       const resetWatchdog = () => {
         if (watchdogId) clearTimeout(watchdogId);
+        const ms = isFirstChunk ? CONNECT_TIMEOUT_MS : IDLE_TIMEOUT_MS;
         watchdogId = setTimeout(() => {
-          console.warn('[useChatStream] 30초 응답 지연 — 자동 중단 발동');
+          console.warn(`[useChatStream] ${ms / 1000}초 응답 지연 — 자동 중단 발동 (firstChunk=${isFirstChunk})`);
           abortControllerRef.current?.abort();
-        }, 30_000); // 30초
+        }, ms);
       };
 
       const newMessages = [
@@ -101,7 +110,8 @@ export function useChatStream() {
           const { done, value } = await reader.read();
           if (done) break;
           
-          resetWatchdog(); // 🌟 데이터가 올 때마다 30초 타이머 리셋
+          isFirstChunk = false;        // 🌟 첫 청크 도착했으니 idle 타이머로 전환
+          resetWatchdog();             // 🌟 데이터가 올 때마다 타이머 리셋
 
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split('\n');
