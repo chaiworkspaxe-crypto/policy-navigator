@@ -1,6 +1,7 @@
+// app/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState, useRef } from "react";
+import { memo, useEffect, useMemo, useState, useRef } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { api, ChatMessage, extractApiErrorMessage, ThreadInputs, ThreadItem } from "@/lib/api";
 import { CITY_TO_DISTRICTS, DONG_MAP } from "@/lib/regionData";
@@ -18,7 +19,53 @@ const DEFAULT_CITY = "선택하세요";
 const DEFAULT_DONG = "선택 안 함";
 const EMPTY_INPUTS: ThreadInputs = { selected_city: DEFAULT_CITY, selected_district: DEFAULT_CITY, selected_dong: DEFAULT_DONG, birth_year: "", extra_info: "" };
 
-// 🌟 [개선 3] 표 추출 매칭 로직 강화 (마크다운 굵기, 띄어쓰기, 별칭 완벽 대응)
+const MARKDOWN_COMPONENTS: React.ComponentProps<typeof ReactMarkdown>['components'] = {
+  p: ({ node, ...props }) => <p className="mb-3 leading-relaxed" {...props} />,
+  ul: ({ node, ...props }) => <ul className="list-disc pl-5 mb-4 space-y-1 marker:text-green-500" {...props} />,
+  ol: ({ node, ...props }) => <ol className="list-decimal pl-5 mb-4 space-y-1 marker:text-green-500 font-semibold" {...props} />,
+  li: ({ node, ...props }) => <li className="mb-1" {...props} />,
+  h1: ({ node, ...props }) => <h1 className="text-2xl font-extrabold mb-4 mt-6 text-gray-900 dark:text-white" {...props} />,
+  h2: ({ node, ...props }) => <h2 className="text-xl font-bold mb-3 mt-5 text-green-700 dark:text-green-400 border-b border-gray-200 dark:border-[#444] pb-2" {...props} />,
+  h3: ({ node, ...props }) => <h3 className="text-lg font-bold mb-3 mt-4 text-gray-800 dark:text-gray-100" {...props} />,
+  h4: ({ node, ...props }) => <h4 className="text-base font-bold mb-2 mt-4 text-gray-800 dark:text-gray-200" {...props} />,
+  h5: ({ node, ...props }) => <h5 className="text-sm font-bold mb-2 mt-3 text-gray-800 dark:text-gray-300" {...props} />,
+  strong: ({ node, ...props }) => <strong className="font-bold text-gray-900 dark:text-white" {...props} />,
+  mark: ({ node, ...props }) => <mark className="bg-yellow-200 dark:bg-yellow-500/30 text-gray-900 dark:text-yellow-100 px-1 rounded font-bold" {...props} />,
+  a: ({ node, ...props }) => <a className="text-blue-600 dark:text-blue-400 hover:underline break-all font-bold" target="_blank" rel="noopener noreferrer" {...props} />,
+  hr: ({ node, ...props }) => <hr className="my-5 border-gray-300 dark:border-[#444]" {...props} />,
+  table: ({ node, ...props }) => (
+    <div className="overflow-x-auto mb-5 w-full rounded-xl border border-gray-300 dark:border-[#444] shadow-sm">
+      <table className="min-w-full text-sm text-left" {...props} />
+    </div>
+  ),
+  thead: ({ node, ...props }) => <thead className="bg-gray-100 dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-300" {...props} />,
+  th: ({ node, ...props }) => <th className="px-4 py-3 border-b border-gray-300 dark:border-[#444] font-bold whitespace-nowrap" {...props} />,
+  td: ({ node, ...props }) => <td className="px-4 py-3 border-b border-gray-200 dark:border-[#444]" {...props} />,
+  pre: ({ node, ...props }) => <pre className="bg-gray-100 dark:bg-[#2a2a2a] p-4 rounded-xl overflow-x-auto text-sm font-mono mb-4 border border-gray-200 dark:border-[#444]" {...props} />,
+  code: ({ node, className, ...props }) => {
+    const isInline = !className;
+    return <code className={`${className || ''} ${isInline ? 'bg-gray-100 dark:bg-[#2a2a2a] text-pink-600 dark:text-pink-400 px-1.5 py-0.5 rounded text-sm font-mono font-bold' : ''}`} {...props} />
+  },
+};
+
+const MARKDOWN_REMARK_PLUGINS = [remarkGfm] as const;
+const MARKDOWN_REHYPE_PLUGINS = [rehypeRaw] as const;
+
+interface AssistantBubbleProps {
+  content: string;
+}
+const AssistantBubble = memo(function AssistantBubble({ content }: AssistantBubbleProps) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={MARKDOWN_REMARK_PLUGINS as any}
+      rehypePlugins={MARKDOWN_REHYPE_PLUGINS as any}
+      components={MARKDOWN_COMPONENTS}
+    >
+      {content}
+    </ReactMarkdown>
+  );
+});
+
 const extractSummaryTableText = (text: string) => {
   const lines = text.split('\n');
   let headerIdx = -1;
@@ -26,10 +73,7 @@ const extractSummaryTableText = (text: string) => {
     const line = lines[i];
     if (line === undefined) continue;
     
-    // 🌟 마크다운 강조(**)와 공백을 모두 제거하여 순수 텍스트만 추출
-    const normalized = line
-      .replace(/\*+/g, '')
-      .replace(/\s/g, '');
+    const normalized = line.replace(/\*+/g, '').replace(/\s/g, '');
     
     const hasField = normalized.includes('|분야|');
     const hasPolicy = normalized.includes('|정책명|');
@@ -59,10 +103,6 @@ const extractSummaryTableText = (text: string) => {
     tableLines.push(line);
   }
   return tableLines.join('\n');
-};
-
-const hasSummaryTable = (text: string) => {
-  return extractSummaryTableText(text).length > 0;
 };
 
 const downloadTextFile = (content: string, filename: string) => {
@@ -122,6 +162,10 @@ export default function Home() {
   const deleteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const scrollRafRef = useRef<number | null>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
 
   const [city, setCity] = useState(EMPTY_INPUTS.selected_city);
   const [district, setDistrict] = useState(EMPTY_INPUTS.selected_district);
@@ -134,6 +178,15 @@ export default function Home() {
   const availableDongs = useMemo(() => DONG_MAP[`${city}-${district}`] || [], [city, district]);
 
   const { stream, stop, isStreaming: loading, aiStatus, setAiStatus } = useChatStream();
+
+  useEffect(() => {
+    return () => {
+      if (deleteTimeoutRef.current) {
+        clearTimeout(deleteTimeoutRef.current);
+        deleteTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     let storedId = localStorage.getItem("pn_user_id");
@@ -158,10 +211,31 @@ export default function Home() {
   }, [currentThreadId, userId]);
 
   useEffect(() => {
-    if (loading) {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [messages, aiStatus, loading]);
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      setAutoScroll(distanceFromBottom < 80);
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
+
+  useEffect(() => {
+    if (!loading || !autoScroll) return;
+    
+    if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
+    scrollRafRef.current = requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+      scrollRafRef.current = null;
+    });
+  }, [messages, aiStatus, loading, autoScroll]);
+
+  useEffect(() => {
+    return () => {
+      if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
+    };
+  }, []);
 
   const toggleTheme = () => {
     setIsDarkMode(!isDarkMode);
@@ -237,7 +311,6 @@ export default function Home() {
       setMessages(loadedMessages); applyInputs(loadedInputs);
       if (loadedMessages.length > 0) setIsFormExpanded(false); else setIsFormExpanded(true);
       
-      // 🌟 [개선 2] 매직 넘버 100ms 제거 및 rAF 더블 버퍼링 적용 (완벽한 스크롤 보장)
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
@@ -248,9 +321,8 @@ export default function Home() {
   };
 
   const handleNewThread = async (uid = userId) => {
-    // 🌟 수정: DB에 당장 방을 만들지 않고 프론트엔드 상태만 초기화합니다! (지연 생성)
     setErrorMessage("");
-    setCurrentThreadId(""); // ID를 비워둠
+    setCurrentThreadId(""); 
     setMessages([]); 
     setQuery(""); 
     applyInputs(EMPTY_INPUTS);
@@ -270,17 +342,15 @@ export default function Home() {
     setErrorMessage('');
     if (!userId) return setErrorMessage('사용자 정보가 준비되지 않았습니다. 새로고침 해주세요.');
 
-    // 🌟 1. 유효성 검사(문지기)를 제일 먼저 실행! (여기를 통과 못 하면 아래 코드는 실행 안 됨)
     if (!isFollowUp) {
       const validationMessage = validateStructuredSearch();
-      if (validationMessage) return setErrorMessage(validationMessage); // 시/도 선택 안 했으면 여기서 컷!
+      if (validationMessage) return setErrorMessage(validationMessage);
       setIsFormExpanded(false);
     } else if (isFollowUp && !overridePrompt) {
       if (!query.trim()) return setErrorMessage('추가 질문을 입력해주세요.');
       if (messages.length === 0) return setErrorMessage('먼저 기본 조건으로 혜택을 조회해주세요.');
     }
 
-    // 🌟 2. 검사를 무사히 통과했는데 아직 만들어진 방이 없다면? '이때' 진짜 DB에 방을 생성!
     let targetThreadId = currentThreadId;
     if (!targetThreadId) {
       try {
@@ -304,7 +374,8 @@ export default function Home() {
     setMessages(optimisticMessages);
     if (isFollowUp && !overridePrompt) setQuery('');
 
-    // 안전하게 생성된 방 ID(targetThreadId)에 유저 정보 저장
+    setAutoScroll(true);
+
     await api
       .saveThreadInputs(userId, targetThreadId, {
         selected_city: city,
@@ -315,7 +386,8 @@ export default function Home() {
       })
       .catch((e) => console.error(e));
 
-    // AI 스트리밍 호출 (기존 코드 동일)
+    let firstDeltaArrived = false;
+
     await stream(
       {
         userId,
@@ -324,6 +396,7 @@ export default function Home() {
         newUserContent: userText,
       },
       {
+        onFirstDelta: () => { firstDeltaArrived = true; },
         onDelta: (_, acc) =>
           setMessages((prev) => {
             const next = [...prev];
@@ -335,13 +408,18 @@ export default function Home() {
           }),
         onError: (msg) => {
           setErrorMessage(msg);
-          setMessages((prev) => prev.slice(0, -1));
+          setMessages((prev) => {
+            const trimmed = prev.slice(0, -1);
+            if (!firstDeltaArrived) {
+              return trimmed.slice(0, -1);
+            }
+            return trimmed;
+          });
           setIsFormExpanded(true);
         },
       }
     );
 
-    // 대화 목록 새로고침
     void api.listThreads(userId).then(setThreads);
   };
 
@@ -364,7 +442,6 @@ export default function Home() {
         <div className="flex-1 overflow-y-auto px-3 pb-3">
           <p className="mb-2 px-1 text-xs font-bold text-gray-500">대화 목록</p>
           {threads.map((thread) => (
-            // 🌟 [개선 1] 중첩된 버튼(Nested Button) 위반 해결 및 접근성 강화
             <div
               key={thread.thread_id}
               role="button"
@@ -476,7 +553,10 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col overflow-y-auto p-4 sm:p-8 scroll-smooth z-10">
+        <div 
+          ref={scrollContainerRef}
+          className="mx-auto flex w-full max-w-4xl flex-1 flex-col overflow-y-auto p-4 sm:p-8 z-10"
+        >
           {messages.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center text-gray-400 dark:text-gray-500 text-center px-4">
               <MapPin size={48} className="mb-4 opacity-20" />
@@ -486,10 +566,13 @@ export default function Home() {
             <div className="space-y-6 pb-4">
               {messages.map((message, index) => {
                 const isLastMessage = index === messages.length - 1;
-                
                 const isAssistant = message.role !== "user"; 
                 
-                const displayContent = (!loading && isLastMessage && isAssistant && !hasSummaryTable(message.content)) 
+                // 🌟 [개선 5-5] 메시지당 딱 한 번만 정규식/추출 계산 실행 (모바일 버벅임 원천 차단)
+                const summaryTableText = isAssistant ? extractSummaryTableText(message.content) : "";
+                const hasSummary = summaryTableText.length > 0;
+                
+                const displayContent = (!loading && isLastMessage && isAssistant && !hasSummary) 
                   ? message.content + "\n\n" 
                   : message.content;
 
@@ -506,40 +589,7 @@ export default function Home() {
                       
                       <div id={`capture-area-${index}`} className="p-1 rounded-xl">
                         {isAssistant ? (
-                          <ReactMarkdown
-                            remarkPlugins={[remarkGfm]}
-                            rehypePlugins={[rehypeRaw]} 
-                            components={{
-                              p: ({ node, ...props }) => <p className="mb-3 leading-relaxed" {...props} />,
-                              ul: ({ node, ...props }) => <ul className="list-disc pl-5 mb-4 space-y-1 marker:text-green-500" {...props} />,
-                              ol: ({ node, ...props }) => <ol className="list-decimal pl-5 mb-4 space-y-1 marker:text-green-500 font-semibold" {...props} />,
-                              li: ({ node, ...props }) => <li className="mb-1" {...props} />,
-                              h1: ({ node, ...props }) => <h1 className="text-2xl font-extrabold mb-4 mt-6 text-gray-900 dark:text-white" {...props} />,
-                              h2: ({ node, ...props }) => <h2 className="text-xl font-bold mb-3 mt-5 text-green-700 dark:text-green-400 border-b border-gray-200 dark:border-[#444] pb-2" {...props} />,
-                              h3: ({ node, ...props }) => <h3 className="text-lg font-bold mb-3 mt-4 text-gray-800 dark:text-gray-100" {...props} />,
-                              h4: ({ node, ...props }) => <h4 className="text-base font-bold mb-2 mt-4 text-gray-800 dark:text-gray-200" {...props} />,
-                              h5: ({ node, ...props }) => <h5 className="text-sm font-bold mb-2 mt-3 text-gray-800 dark:text-gray-300" {...props} />,
-                              strong: ({ node, ...props }) => <strong className="font-bold text-gray-900 dark:text-white" {...props} />,
-                              mark: ({ node, ...props }) => <mark className="bg-yellow-200 dark:bg-yellow-500/30 text-gray-900 dark:text-yellow-100 px-1 rounded font-bold" {...props} />,
-                              a: ({ node, ...props }) => <a className="text-blue-600 dark:text-blue-400 hover:underline break-all font-bold" target="_blank" rel="noopener noreferrer" {...props} />,
-                              hr: ({ node, ...props }) => <hr className="my-5 border-gray-300 dark:border-[#444]" {...props} />,
-                              table: ({ node, ...props }) => (
-                                <div className="overflow-x-auto mb-5 w-full rounded-xl border border-gray-300 dark:border-[#444] shadow-sm">
-                                  <table className="min-w-full text-sm text-left" {...props} />
-                                </div>
-                              ),
-                              thead: ({ node, ...props }) => <thead className="bg-gray-100 dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-300" {...props} />,
-                              th: ({ node, ...props }) => <th className="px-4 py-3 border-b border-gray-300 dark:border-[#444] font-bold whitespace-nowrap" {...props} />,
-                              td: ({ node, ...props }) => <td className="px-4 py-3 border-b border-gray-200 dark:border-[#444]" {...props} />,
-                              pre: ({ node, ...props }) => <pre className="bg-gray-100 dark:bg-[#2a2a2a] p-4 rounded-xl overflow-x-auto text-sm font-mono mb-4 border border-gray-200 dark:border-[#444]" {...props} />,
-                              code: ({ node, className, ...props }) => {
-                                const isInline = !className;
-                                return <code className={`${className || ''} ${isInline ? 'bg-gray-100 dark:bg-[#2a2a2a] text-pink-600 dark:text-pink-400 px-1.5 py-0.5 rounded text-sm font-mono font-bold' : ''}`} {...props} />
-                              },
-                            }}
-                          >
-                            {displayContent}
-                          </ReactMarkdown>
+                          <AssistantBubble content={displayContent} />
                         ) : (
                           <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>
                         )}
@@ -559,8 +609,9 @@ export default function Home() {
                             <FileText size={14}/> 텍스트 저장
                           </button>
                           
-                          {hasSummaryTable(message.content) && (
-                            <button onClick={() => downloadTextFile(extractSummaryTableText(message.content), `정책내비게이터_요약표.txt`)} className="text-xs font-bold bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 px-3 py-1.5 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors flex items-center gap-1 border border-blue-200 dark:border-blue-800/30">
+                          {/* 🌟 [개선 5-5] 캐싱된 hasSummary와 summaryTableText 재사용 */}
+                          {hasSummary && (
+                            <button onClick={() => downloadTextFile(summaryTableText, `정책내비게이터_요약표.txt`)} className="text-xs font-bold bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 px-3 py-1.5 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors flex items-center gap-1 border border-blue-200 dark:border-blue-800/30">
                               <Download size={14}/> 표 텍스트 저장
                             </button>
                           )}
@@ -590,7 +641,8 @@ export default function Home() {
                         </div>
                       )}
 
-                      {!loading && isLastMessage && isAssistant && message.content.length > 50 && !hasSummaryTable(message.content) && (
+                      {/* 🌟 [개선 5-5] 캐싱된 hasSummary 재사용 */}
+                      {!loading && isLastMessage && isAssistant && message.content.length > 50 && !hasSummary && (
                          <div className="mt-4 p-4 bg-gray-50 dark:bg-[#1a1a1a] rounded-xl border border-gray-200 dark:border-[#444] animate-in fade-in duration-300">
                            <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
                              <AlertCircle size={16} className="text-yellow-500" />
