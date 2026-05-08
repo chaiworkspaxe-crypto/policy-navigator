@@ -7,7 +7,6 @@ import { api, ChatMessage, extractApiErrorMessage, ThreadInputs, ThreadItem } fr
 import { CITY_TO_DISTRICTS } from "@/lib/regionData"; 
 import { useChatStream } from '@/lib/hooks/useChatStream';
 import ReactMarkdown from 'react-markdown';
-// 🌟 [핵심 개선] 중복 코드를 지우고 markdownConfig에서 단일 출처로 가져옵니다!
 import { 
   MARKDOWN_COMPONENTS, 
   MARKDOWN_REMARK_PLUGINS, 
@@ -23,10 +22,9 @@ const DEFAULT_CITY = "선택하세요";
 const DEFAULT_DONG = "선택 안 함";
 const EMPTY_INPUTS: ThreadInputs = { selected_city: DEFAULT_CITY, selected_district: DEFAULT_CITY, selected_dong: DEFAULT_DONG, birth_year: "", extra_info: "" };
 
-// 🌟 [핵심 개선] 스트리밍 중 버벅임(Jank)을 방지하는 쓰로틀링(Throttling) 버블 컴포넌트
 interface AssistantBubbleProps {
   content: string;
-  isStreaming: boolean; // 스트리밍 중인지 여부 판별
+  isStreaming: boolean; 
 }
 
 const AssistantBubble = memo(function AssistantBubble({ content, isStreaming }: AssistantBubbleProps) {
@@ -36,12 +34,10 @@ const AssistantBubble = memo(function AssistantBubble({ content, isStreaming }: 
   
   useEffect(() => {
     if (!isStreaming) {
-      // 스트림이 끝났거나 과거 메시지라면 즉시 100% 반영
       setRenderedContent(content);
       return;
     }
     
-    // 스트리밍 중에는 80ms(약 12fps) 간격으로만 화면을 갱신하여 CPU 부하를 10분의 1로 줄임
     const FLUSH_INTERVAL_MS = 80; 
     const now = performance.now();
     const elapsed = now - lastFlushRef.current;
@@ -403,6 +399,9 @@ export default function Home() {
       ? followUpText 
       : `📍 ${city} ${district} ${dong !== DEFAULT_DONG ? dong : ''} | 🎂 ${birthYear}년생 | 📝 ${extraInfo}`;
 
+    // 🌟 [고도화 8] 사용자가 입력한 텍스트 스냅샷 보관 (복원용)
+    const userTextSnapshot = isFollowUp ? followUpText : "";
+
     const optimisticMessages = [
       ...messages,
       { role: 'user' as const, content: userText },
@@ -446,12 +445,16 @@ export default function Home() {
         onError: (msg) => {
           setErrorMessage(msg);
           setMessages((prev) => {
+            // 🌟 [고도화 8] assistant placeholder만 항상 제거. 사용자 메시지는 절대 지우지 않음!
             const trimmed = prev.slice(0, -1);
-            if (!firstDeltaArrived) {
-              return trimmed.slice(0, -1);
-            }
             return trimmed;
           });
+          
+          // 🌟 [고도화 8] 첫 delta 도착 전 실패라면, 유저가 다시 전송 버튼만 누를 수 있게 인풋창 복원
+          if (!firstDeltaArrived && isFollowUp) {
+            setQuery(userTextSnapshot);
+          }
+          
           setIsFormExpanded(true);
         },
       }
@@ -627,7 +630,6 @@ export default function Home() {
                   ? message.content + "\n\n" 
                   : message.content;
 
-                // 🌟 [핵심 개선] 이 메시지가 현재 스트리밍 중인지 판별하여 prop으로 전달
                 const isThisStreaming = isLastMessage && isAssistant && loading;
 
                 return (
