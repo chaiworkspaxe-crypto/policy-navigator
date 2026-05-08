@@ -4,7 +4,8 @@
 import { memo, useEffect, useMemo, useState, useRef } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { api, ChatMessage, extractApiErrorMessage, ThreadInputs, ThreadItem } from "@/lib/api";
-import { CITY_TO_DISTRICTS, DONG_MAP } from "@/lib/regionData";
+// 🌟 [핵심 개선] 504KB짜리 무거운 DONG_MAP은 빼고, 가벼운 CITY_TO_DISTRICTS만 임포트!
+import { CITY_TO_DISTRICTS } from "@/lib/regionData"; 
 import { useChatStream } from '@/lib/hooks/useChatStream';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -175,7 +176,11 @@ export default function Home() {
   const [query, setQuery] = useState("");
 
   const availableDistricts = useMemo(() => CITY_TO_DISTRICTS[city] || [], [city]);
-  const availableDongs = useMemo(() => DONG_MAP[`${city}-${district}`] || [], [city, district]);
+  
+  // 🌟 [핵심 개선] 동(Dong) 데이터를 동적으로 가져오기 위한 상태와 캐시
+  const [availableDongs, setAvailableDongs] = useState<string[]>([]);
+  const [dongLoading, setDongLoading] = useState(false);
+  const dongCacheRef = useRef<Map<string, string[]>>(new Map());
 
   const { stream, stop, isStreaming: loading, aiStatus, setAiStatus } = useChatStream();
 
@@ -231,11 +236,40 @@ export default function Home() {
     });
   }, [messages, aiStatus, loading, autoScroll]);
 
+  // 🌟 [핵심 개선] 시/군/구가 바뀔 때마다 서버 API를 찔러서 동 리스트를 가져오는 로직
   useEffect(() => {
-    return () => {
-      if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
-    };
-  }, []);
+    if (city === DEFAULT_CITY || district === DEFAULT_CITY) {
+      setAvailableDongs([]);
+      setDong(DEFAULT_DONG);
+      return;
+    }
+    const key = `${city}-${district}`;
+    
+    // 이미 한 번 조회한 동네면 캐시에서 바로 꺼냄 (네트워크 낭비 방지)
+    const cached = dongCacheRef.current.get(key);
+    if (cached) { 
+      setAvailableDongs(cached); 
+      return; 
+    }
+    
+    let cancelled = false;
+    setDongLoading(true);
+    
+    // API 라우트로 동 목록 요청
+    fetch(`/api/regions/dong?city=${encodeURIComponent(city)}&district=${encodeURIComponent(district)}`)
+      .then((r) => r.ok ? r.json() : { dongs: [] })
+      .then((data) => {
+        if (cancelled) return;
+        const list = data.dongs || [];
+        dongCacheRef.current.set(key, list);
+        setAvailableDongs(list);
+        setDong(DEFAULT_DONG);
+      })
+      .catch(() => { if (!cancelled) setAvailableDongs([]); })
+      .finally(() => { if (!cancelled) setDongLoading(false); });
+    
+    return () => { cancelled = true; };
+  }, [city, district]);
 
   const toggleTheme = () => {
     setIsDarkMode(!isDarkMode);
@@ -530,7 +564,23 @@ export default function Home() {
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                 <select className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500" value={city} onChange={(e) => { setCity(e.target.value); setDistrict(DEFAULT_CITY); setDong(DEFAULT_DONG); }}><option>{DEFAULT_CITY}</option>{Object.keys(CITY_TO_DISTRICTS).map((c) => <option key={c}>{c}</option>)}</select>
                 <select className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500" value={district} onChange={(e) => { setDistrict(e.target.value); setDong(DEFAULT_DONG); }} disabled={city === DEFAULT_CITY}><option>{DEFAULT_CITY}</option>{availableDistricts.map((d) => <option key={d}>{d}</option>)}</select>
-                <select className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500" value={dong} onChange={(e) => setDong(e.target.value)} disabled={district === DEFAULT_CITY}><option>{DEFAULT_DONG}</option>{availableDongs.map((d) => <option key={d}>{d}</option>)}</select>
+                
+                {/* 🌟 동 리스트 셀렉트 (로딩 상태 반영) */}
+                <select 
+                  className={`w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500 ${dongLoading ? 'opacity-50 cursor-wait' : ''}`} 
+                  value={dong} 
+                  onChange={(e) => setDong(e.target.value)} 
+                  disabled={district === DEFAULT_CITY || dongLoading}
+                >
+                  {dongLoading ? (
+                    <option>데이터 불러오는 중...</option>
+                  ) : (
+                    <>
+                      <option>{DEFAULT_DONG}</option>
+                      {availableDongs.map((d) => <option key={d}>{d}</option>)}
+                    </>
+                  )}
+                </select>
               </div>
               <div className="flex flex-col gap-2 sm:flex-row">
                 <input type="tel" placeholder="출생연도 (예: 1999)" maxLength={4} className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500 sm:w-1/3" value={birthYear} onChange={(e) => setBirthYear(e.target.value.replace(/[^0-9]/g, ""))} />
@@ -568,7 +618,6 @@ export default function Home() {
                 const isLastMessage = index === messages.length - 1;
                 const isAssistant = message.role !== "user"; 
                 
-                // 🌟 [개선 5-5] 메시지당 딱 한 번만 정규식/추출 계산 실행 (모바일 버벅임 원천 차단)
                 const summaryTableText = isAssistant ? extractSummaryTableText(message.content) : "";
                 const hasSummary = summaryTableText.length > 0;
                 
@@ -609,7 +658,6 @@ export default function Home() {
                             <FileText size={14}/> 텍스트 저장
                           </button>
                           
-                          {/* 🌟 [개선 5-5] 캐싱된 hasSummary와 summaryTableText 재사용 */}
                           {hasSummary && (
                             <button onClick={() => downloadTextFile(summaryTableText, `정책내비게이터_요약표.txt`)} className="text-xs font-bold bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 px-3 py-1.5 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors flex items-center gap-1 border border-blue-200 dark:border-blue-800/30">
                               <Download size={14}/> 표 텍스트 저장
@@ -632,7 +680,7 @@ export default function Home() {
                                   await navigator.share(shareData); 
                                 } else { 
                                   await navigator.clipboard.writeText(shareData.text + shareData.url); 
-                                  alert('전체 결과가 클립보드에 복사되었습니다! 메모장이나 카톡 PC버전에 붙여넣기 해보세요.'); 
+                                  alert('전체 결과가 클립보드에 복사되었습니다!'); 
                                 } 
                               } catch (err) { console.error('공유/복사 실패:', err); }
                             }} className="text-xs font-bold bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-3 py-1.5 rounded-lg hover:bg-green-200 dark:hover:bg-green-800/50 transition-colors flex items-center gap-1 border border-green-200 dark:border-green-800/30">
@@ -641,7 +689,6 @@ export default function Home() {
                         </div>
                       )}
 
-                      {/* 🌟 [개선 5-5] 캐싱된 hasSummary 재사용 */}
                       {!loading && isLastMessage && isAssistant && message.content.length > 50 && !hasSummary && (
                          <div className="mt-4 p-4 bg-gray-50 dark:bg-[#1a1a1a] rounded-xl border border-gray-200 dark:border-[#444] animate-in fade-in duration-300">
                            <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
