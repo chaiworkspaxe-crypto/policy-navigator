@@ -236,8 +236,9 @@ export async function POST(req: Request) {
         },
       }),
 
+      // 🌟 [수정 포인트 1] 네이버 툴: 공식 사이트 타겟팅 & 정보량 2배 (display=10, sort=sim)
       naver_web_search: tool({
-        description: '지자체/읍면동 단위 특화 정책, 최신 공고를 찾을 때 우선 사용. 키워드는 "OOO시 OOO 지원금" 형태가 효과적.',
+        description: '지자체/읍면동 정책 및 최신 공고를 찾을 때 가장 먼저 사용하는 1순위 웹 검색 도구. 신뢰할 수 있는 공식 정보가 필요하다면 검색어에 "site:go.kr"을 포함하세요. (예: "서울시 청년월세지원 site:go.kr"). 공식 사이트 정보가 없다면 블로그/뉴스를 참고하되 팩트체크에 유의하세요. 결과가 "..."으로 잘려 내용이 불확실하다면 절대 추측하지 마세요.',
         parameters: z.object({ 
           query: z.string()
             .min(1, '검색어가 비어있습니다.')
@@ -248,13 +249,11 @@ export async function POST(req: Request) {
           try {
             const clientId = process.env.NAVER_CLIENT_ID;
             const clientSecret = process.env.NAVER_CLIENT_SECRET;
-            if (!clientId || !clientSecret) {
-              return '네이버 API 키 미설정. global_web_search를 사용하세요.';
-            }
+            if (!clientId || !clientSecret) return '네이버 API 키 미설정. global_web_search를 사용하세요.';
             
             const res = (await withTimeout(
               async (signal) => await fetch(
-                `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(query)}&display=5&sort=date`,
+                `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(query)}&display=10&sort=sim`,
                 { headers: { 'X-Naver-Client-Id': clientId, 'X-Naver-Client-Secret': clientSecret }, signal }
               ),
               TOOL_TIMEOUT_MS,
@@ -282,8 +281,9 @@ export async function POST(req: Request) {
         },
       }),
 
+      // 🌟 [수정 포인트 2] Tavily 툴: 정밀 타격용. 비용 절감(basic) 및 커버리지 확대(max_results=5)
       global_web_search: tool({
-        description: '정부 공식 문서 / 최신 신청 일정 교차 검증. 네이버에서 못 찾았거나 마감일 확인이 필요할 때 사용.',
+        description: '정밀 타격용 2순위 웹 검색 도구. 네이버 검색 결과가 "..."으로 잘려있거나, 마감일/지원금액/공식링크 등 핵심 팩트가 누락되었을 때만 "최후의 수단"으로 무제한 사용하세요. 텍스트 전체를 읽어오므로 빈틈을 메꿀 때 탁월합니다.',
         parameters: z.object({ 
           query: z.string()
             .min(1, '검색어가 비어있습니다.')
@@ -308,8 +308,8 @@ export async function POST(req: Request) {
                 body: JSON.stringify({
                   api_key: tavilyKey,
                   query: localizedQuery,
-                  max_results: 4,
-                  search_depth: 'advanced',
+                  max_results: 5,           // 🌟 5개로 늘려서 정보량 확보
+                  search_depth: 'basic',    // 🌟 advanced(2코인) -> basic(1코인)으로 50% 절감!
                 }),
                 signal,
               }),
@@ -343,7 +343,6 @@ export async function POST(req: Request) {
       }),
     };
 
-    // 🌟 [고도화 12] onFinish 로직: 대화 종료 시 제목 자동 업데이트 기능 추가!
     const handleFinish = async ({ text, usage, finishReason, modelName }: any) => {
       console.log(`[💰 ${modelName}] in=${usage?.promptTokens}, out=${usage?.completionTokens}, finish=${finishReason}`);
       if (!userId || !threadId) return;
@@ -363,8 +362,6 @@ export async function POST(req: Request) {
           updated_at: now 
         });
 
-        // 🌟 [핵심] 첫 답변이면 thread title 자동 갱신
-        // DB에 현재 채팅방의 메시지 수를 물어봄
         const { count } = await supabase
           .from('chat_messages')
           .select('*', { count: 'exact', head: true })
@@ -373,16 +370,13 @@ export async function POST(req: Request) {
 
         let titleUpdate: Record<string, unknown> = { updated_at: now };
         
-        // 메시지가 딱 2개(유저 질문 1개 + AI 답변 1개)일 때 = 첫 대화 완료 시점!
         if (count === 2 && lastMsg?.role === 'user' && typeof lastMsg.content === 'string') {
-          // 사용자 첫 메시지의 의미 있는 부분만 추출 (불필요한 기호 싹 날리기)
           const raw = lastMsg.content
-            .replace(/^📍.*?\|/g, '')         // 📍 지역 정보 패스
-            .replace(/[🎂📝📍|]/g, ' ')       // 이모지와 파이프 기호 공백으로 치환
-            .replace(/\s+/g, ' ')             // 여러 개의 공백을 하나로 압축
+            .replace(/^📍.*?\|/g, '')         
+            .replace(/[🎂📝📍|]/g, ' ')       
+            .replace(/\s+/g, ' ')             
             .trim();
             
-          // 최대 30글자로 예쁘게 자르기
           const title = raw.slice(0, 30) + (raw.length > 30 ? '…' : '');
           if (title.length >= 2) titleUpdate.title = title;
         }
@@ -400,7 +394,7 @@ export async function POST(req: Request) {
         model: openai(PRIMARY_MODEL), 
         system: systemPromptWithTime,
         messages: trimmedMessages,
-        maxSteps: 10,
+        maxSteps: 10, // 🌟 퀄리티 유지를 위해 10번 유지 (정보가 부족하면 Tavily를 계속 돌리도록 허용)
         abortSignal: req.signal, 
         onError: (err) => { console.error(`[streamText PRIMARY onError]`, err); },
         tools: commonTools,
@@ -414,7 +408,7 @@ export async function POST(req: Request) {
         model: openai(FALLBACK_MODEL),
         system: systemPromptWithTime,
         messages: trimmedMessages,
-        maxSteps: 10,
+        maxSteps: 10, // 🌟 퀄리티 유지를 위해 10번 유지
         abortSignal: req.signal,
         onError: (err) => { console.error('[streamText FALLBACK onError]', err); },
         tools: commonTools,
