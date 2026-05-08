@@ -396,6 +396,9 @@ export async function POST(req: Request) {
     let fullAnswer = "";
     let streamErrored = false;
 
+    // 🌟 [고도화 7] 도구 메시지를 다채롭게 바꿔주는 헬퍼 생성기 (클로저 패턴)
+    const pickFriendlyMessage = makeFriendlyMessagePicker();
+
     const customStream = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder();
@@ -434,7 +437,6 @@ export async function POST(req: Request) {
             }
           }
         } catch (loopErr: any) {
-          // 🌟 [고도화 5] 사용자 abort는 정상 시나리오 — Sentry/UX 에러로 처리하지 않음
           const aborted = req.signal.aborted
             || loopErr?.name === 'AbortError'
             || /aborted|abort/i.test(loopErr?.message ?? '');
@@ -446,7 +448,6 @@ export async function POST(req: Request) {
             console.error('\n[💀 스트림 루프 치명 에러]', loopErr);
             Sentry.captureException(loopErr, { tags: { phase: 'stream-loop' } });
             
-            // 클라이언트 연결이 살아있을 가능성이 있을 때만 메시지 시도
             try {
               send({
                 type: 'error',
@@ -457,7 +458,6 @@ export async function POST(req: Request) {
         } finally {
           console.log(`\n[🏁 스트림 종료] 길이=${fullAnswer.length}, error=${streamErrored}, aborted=${req.signal.aborted}`);
           
-          // done 이벤트도 abort 시엔 생략 가능 (이미 클라이언트가 끊었으므로)
           if (!req.signal.aborted) {
             try {
               send({ type: 'done', full_content: fullAnswer, errored: streamErrored });
@@ -507,20 +507,39 @@ export async function POST(req: Request) {
   }
 }
 
-function pickFriendlyMessage(toolName: string, args: any): string {
-  const argHint =
-    typeof args?.query === 'string' && args.query.length > 0
-      ? ` ("${args.query.slice(0, 18)}${args.query.length > 18 ? '…' : ''}")`
-      : '';
-      
-  switch (toolName) {
-    case 'search_internal_db':
-      return `정부 정책 창고 셔터 올리는 중${argHint}! 먼지가 쫌 날려도(쿨럭) 싹 다 찾아올게요 😷💨`;
-    case 'naver_web_search':
-      return `동네방네 지자체 전단지 긁어모으는 중${argHint}! 🏃‍♂️💨🔥`;
-    case 'global_web_search':
-      return `정부 공식 문서 풀스캔 중${argHint}! 하나도 안 놓칠게요 🔎💻`;
-    default:
-      return '하나라도 더 찾아내려고 AI가 풀야근 중! 쪼~금만 더 기다려주세요 😭🌙';
-  }
+// 🌟 [고도화 7] 도구별 메시지 풀 + 호출 카운터 헬퍼 영역
+const TOOL_MSG_POOL: Record<string, string[]> = {
+  search_internal_db: [
+    '정부 정책 창고 셔터 올리는 중! 먼지 좀 날려도 다 찾아올게요 😷💨',
+    'DB 한 번 더 깊게 뒤지는 중… 보석 같은 정책 어디 숨었나 🔎',
+    '내부 정책 인덱스 다시 한 번 훑는 중! 놓친 게 있나 다시 점검 📚',
+  ],
+  naver_web_search: [
+    '동네방네 지자체 전단지 긁어모으는 중! 🏃‍♂️💨',
+    '네이버 최신 공고 게시판 훑는 중! 따끈따끈한 거 골라올게요 🔥',
+    '읍면동 보도자료 살펴보는 중… 작은 동네 혜택도 놓치지 않으려고요 🏘️',
+  ],
+  global_web_search: [
+    '정부 공식 문서 풀스캔 중! 하나도 안 놓칠게요 🔎💻',
+    '공식 사이트들 마감일 교차 검증 중… 진짜 신청 가능한지 ✅',
+    '민간 재단/NGO 지원금까지 발굴하는 중! 숨은 진주 찾기 💎',
+  ],
+};
+
+function makeFriendlyMessagePicker() {
+  const counts: Record<string, number> = {};
+  return (toolName: string, args: any): string => {
+    const argHint =
+      typeof args?.query === 'string' && args.query.length > 0
+        ? ` ("${String(args.query).slice(0, 18)}${args.query.length > 18 ? '…' : ''}")`
+        : '';
+    
+    const pool = TOOL_MSG_POOL[toolName];
+    if (!pool || pool.length === 0) {
+      return `하나라도 더 찾아내려고 AI가 풀야근 중! 쪼~금만 더 기다려주세요 😭🌙${argHint}`;
+    }
+    const idx = (counts[toolName] ?? 0) % pool.length;
+    counts[toolName] = (counts[toolName] ?? 0) + 1;
+    return `${pool[idx]}${argHint}`;
+  };
 }
