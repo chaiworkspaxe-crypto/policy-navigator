@@ -16,7 +16,7 @@ interface StreamHandlers {
   onStatus?: (status: string) => void;
   onError?: (msg: string) => void;
   onDone?: (full: string) => void;
-  onFirstDelta?: () => void;     // 🌟 [개선 5-3] 신규: 첫 글자 수신 신호 (DB 저장 확신)
+  onFirstDelta?: () => void;     // 🌟 첫 글자 수신 신호 (DB 저장 확신)
 }
 
 export function useChatStream() {
@@ -26,7 +26,7 @@ export function useChatStream() {
   // 🌟 네트워크 요청을 강제로 끊을 수 있는 컨트롤러
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // 🌟 답변 생성 중지 함수
+  // 🌟 답변 생성 중지 함수 (사용자 요청)
   const stop = useCallback(() => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort(); // 네트워크 요청 즉시 차단
@@ -48,12 +48,13 @@ export function useChatStream() {
       setAiStatus('');
 
       // ==============================================================================
-      // 🌟 [개선 1] 무응답 Watchdog (감시견) 분리
+      // 🌟 [고도화 10] 무응답 Watchdog (감시견) 분리 및 타임아웃 추적
       // 첫 청크까지(connection): 60초 / 그 이후 청크 사이(idle): 45초
       // ==============================================================================
       let watchdogId: ReturnType<typeof setTimeout> | null = null;
       let isFirstChunk = true;
-      let firstDeltaFired = false; // 🌟 [개선 5-3] 첫 delta 발송 여부 추적
+      let firstDeltaFired = false; 
+      let watchdogTimedOut = false;  // 🌟 워치독 자동 abort 여부 추적 표식
 
       const CONNECT_TIMEOUT_MS = 60_000;
       const IDLE_TIMEOUT_MS = 45_000;
@@ -63,6 +64,7 @@ export function useChatStream() {
         const ms = isFirstChunk ? CONNECT_TIMEOUT_MS : IDLE_TIMEOUT_MS;
         watchdogId = setTimeout(() => {
           console.warn(`[useChatStream] ${ms / 1000}초 응답 지연 — 자동 중단 발동 (firstChunk=${isFirstChunk})`);
+          watchdogTimedOut = true;     // 🌟 시스템이 강제로 끊었음을 기록
           abortControllerRef.current?.abort();
         }, ms);
       };
@@ -120,7 +122,6 @@ export function useChatStream() {
           buffer = lines.pop() ?? ''; // 마지막 부분 청크는 buffer에 남김
 
           for (const line of lines) {
-            // 🌟 [개선 3] 의미 없는 SSE 잔재(data:) 치환 로직 제거, 순수 NDJSON 처리
             const trimmed = line.trim();
             if (!trimmed) continue;
 
@@ -128,19 +129,19 @@ export function useChatStream() {
             try {
               data = JSON.parse(trimmed);
             } catch (parseErr) {
-              // 🌟 [개선 2] 진짜 파싱 실패는 로깅하여 데이터 깨짐 현상 추적
               console.warn('[useChatStream] JSON parse 실패:', trimmed.slice(0, 100));
               continue;
             }
 
             if (data.type === 'content' && typeof data.delta === 'string') {
-              // 🌟 [개선 5-3 적용] 화면에 텍스트를 처음 그릴 때 '저장 성공' 신호 발송
               if (!firstDeltaFired) {
                 firstDeltaFired = true;
                 handlers.onFirstDelta?.();
               }
               accumulated += data.delta;
               handlers.onDelta?.(data.delta, accumulated);
+              
+              // 🌟 텍스트 스트리밍 중에는 상태 메시지를 숨김
               setAiStatus(''); 
             } else if (data.type === 'status') {
               setAiStatus(data.message);
@@ -153,15 +154,12 @@ export function useChatStream() {
           }
         }
 
-        // ==============================================================================
-        // 🌟 [개선 4] 마지막 buffer 잔재 flush — 서버가 \n 안 붙이고 끝내도 안전하게 수거
-        // ==============================================================================
+        // 마지막 buffer 잔재 flush
         const tail = buffer.trim();
         if (tail) {
           try {
             const data = JSON.parse(tail);
             if (data.type === 'content' && typeof data.delta === 'string') {
-              // 🌟 꼬리 잔재에서 첫 글자가 나오는 극단적 엣지 케이스도 방어
               if (!firstDeltaFired) {
                 firstDeltaFired = true;
                 handlers.onFirstDelta?.();
@@ -176,7 +174,14 @@ export function useChatStream() {
 
       } catch (err: any) {
         if (err.name === 'AbortError') {
-          console.log('[useChatStream] 사용자에 의해 스트리밍이 중단되었습니다.');
+          // 🌟 [고도화 10] 시스템 자동 중단과 사용자 수동 중단을 분리해서 처리
+          if (watchdogTimedOut) {
+            handlers.onError?.(
+              '응답이 오래 걸려 자동으로 끊었어요. 잠시 후 다시 시도해주세요. (네트워크 상태나 검색 양 때문일 수 있어요!)',
+            );
+          } else {
+            console.log('[useChatStream] 사용자에 의해 스트리밍이 중단되었습니다.');
+          }
         } else {
           console.error('[useChatStream]', err);
           handlers.onError?.('서버 상태가 불안정합니다. 잠시 후 다시 시도해주세요.');
