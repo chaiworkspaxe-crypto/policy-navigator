@@ -1,3 +1,4 @@
+// app/admin/dashboard/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -67,6 +68,7 @@ export default function AdminDashboardPage() {
   const [formData, setFormData] = useState<Policy>(EMPTY_POLICY);
 
   // 🌟 [수정됨] 통계 불러오기 (기존 통계 + 활성 유저 통계 동시 호출)
+  // 클라이언트의 useEffect 내부이므로 매번 새롭게 통신합니다. (API 캐싱만 없으면 완벽!)
   const fetchStats = async () => {
     setLoading(true);
     try {
