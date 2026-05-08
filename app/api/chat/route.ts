@@ -343,14 +343,17 @@ export async function POST(req: Request) {
       }),
     };
 
+    // 🌟 [고도화 12] onFinish 로직: 대화 종료 시 제목 자동 업데이트 기능 추가!
     const handleFinish = async ({ text, usage, finishReason, modelName }: any) => {
       console.log(`[💰 ${modelName}] in=${usage?.promptTokens}, out=${usage?.completionTokens}, finish=${finishReason}`);
       if (!userId || !threadId) return;
+      
       try {
         const now = new Date().toISOString(); 
         if (userInsertPromise) {
           await userInsertPromise.catch(() => {});
         }
+        
         await supabase.from('chat_messages').insert({
           thread_id: threadId,
           user_id: userId,
@@ -359,7 +362,33 @@ export async function POST(req: Request) {
           created_at: now,
           updated_at: now 
         });
-        await supabase.from('chat_threads').update({ updated_at: now }).eq('thread_id', threadId);
+
+        // 🌟 [핵심] 첫 답변이면 thread title 자동 갱신
+        // DB에 현재 채팅방의 메시지 수를 물어봄
+        const { count } = await supabase
+          .from('chat_messages')
+          .select('*', { count: 'exact', head: true })
+          .eq('thread_id', threadId)
+          .eq('user_id', userId);
+
+        let titleUpdate: Record<string, unknown> = { updated_at: now };
+        
+        // 메시지가 딱 2개(유저 질문 1개 + AI 답변 1개)일 때 = 첫 대화 완료 시점!
+        if (count === 2 && lastMsg?.role === 'user' && typeof lastMsg.content === 'string') {
+          // 사용자 첫 메시지의 의미 있는 부분만 추출 (불필요한 기호 싹 날리기)
+          const raw = lastMsg.content
+            .replace(/^📍.*?\|/g, '')         // 📍 지역 정보 패스
+            .replace(/[🎂📝📍|]/g, ' ')       // 이모지와 파이프 기호 공백으로 치환
+            .replace(/\s+/g, ' ')             // 여러 개의 공백을 하나로 압축
+            .trim();
+            
+          // 최대 30글자로 예쁘게 자르기
+          const title = raw.slice(0, 30) + (raw.length > 30 ? '…' : '');
+          if (title.length >= 2) titleUpdate.title = title;
+        }
+        
+        await supabase.from('chat_threads').update(titleUpdate).eq('thread_id', threadId);
+        
       } catch (dbError) {
         console.error("DB 저장 중 에러 발생:", dbError);
       }
@@ -396,7 +425,6 @@ export async function POST(req: Request) {
     let fullAnswer = "";
     let streamErrored = false;
 
-    // 🌟 [고도화 7] 도구 메시지를 다채롭게 바꿔주는 헬퍼 생성기 (클로저 패턴)
     const pickFriendlyMessage = makeFriendlyMessagePicker();
 
     const customStream = new ReadableStream({
@@ -507,7 +535,6 @@ export async function POST(req: Request) {
   }
 }
 
-// 🌟 [고도화 7] 도구별 메시지 풀 + 호출 카운터 헬퍼 영역
 const TOOL_MSG_POOL: Record<string, string[]> = {
   search_internal_db: [
     '정부 정책 창고 셔터 올리는 중! 먼지 좀 날려도 다 찾아올게요 😷💨',
