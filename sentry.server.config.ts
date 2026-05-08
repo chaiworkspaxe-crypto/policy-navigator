@@ -1,4 +1,5 @@
 // sentry.server.config.ts
+
 import * as Sentry from '@sentry/nextjs';
 import { SHARED_SENTRY_INIT, COMMON_IGNORE } from './sentry.shared';
 
