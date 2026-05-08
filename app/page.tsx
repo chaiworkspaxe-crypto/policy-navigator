@@ -217,6 +217,7 @@ export default function Home() {
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, [currentThreadId, userId]);
 
+  // 스크롤 감지 (사용자가 직접 스크롤을 올렸는지 체크)
   useEffect(() => {
     const el = scrollContainerRef.current;
     if (!el) return;
@@ -228,15 +229,32 @@ export default function Home() {
     return () => el.removeEventListener('scroll', onScroll);
   }, []);
 
+  // 🌟 [스크롤 버그 픽스] 데이터가 아닌 '실제 화면(DOM)'이 변할 때 스크롤을 추적합니다.
   useEffect(() => {
-    if (!loading || !autoScroll) return;
-    
-    if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
-    scrollRafRef.current = requestAnimationFrame(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
-      scrollRafRef.current = null;
+    const container = scrollContainerRef.current;
+    if (!container || !autoScroll) return;
+
+    // 브라우저의 MutationObserver를 사용해 실제 요소나 글자가 렌더링되는 순간을 감지!
+    const observer = new MutationObserver(() => {
+      if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
+      scrollRafRef.current = requestAnimationFrame(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+        scrollRafRef.current = null;
+      });
     });
-  }, [messages, aiStatus, loading, autoScroll]);
+
+    // 채팅창 내부의 자식 요소 추가나 텍스트(마크다운) 변화를 모두 감시
+    observer.observe(container, { 
+      childList: true, 
+      subtree: true, 
+      characterData: true 
+    });
+
+    return () => {
+      observer.disconnect();
+      if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
+    };
+  }, [autoScroll]); // autoScroll이 true일 때만 작동 (유저가 스크롤 올려서 볼 때는 방해 안 함)
 
   useEffect(() => {
     if (city === DEFAULT_CITY || district === DEFAULT_CITY) {
@@ -399,7 +417,6 @@ export default function Home() {
       ? followUpText 
       : `📍 ${city} ${district} ${dong !== DEFAULT_DONG ? dong : ''} | 🎂 ${birthYear}년생 | 📝 ${extraInfo}`;
 
-    // 🌟 [고도화 8] 사용자가 입력한 텍스트 스냅샷 보관 (복원용)
     const userTextSnapshot = isFollowUp ? followUpText : "";
 
     const optimisticMessages = [
@@ -445,12 +462,10 @@ export default function Home() {
         onError: (msg) => {
           setErrorMessage(msg);
           setMessages((prev) => {
-            // 🌟 [고도화 8] assistant placeholder만 항상 제거. 사용자 메시지는 절대 지우지 않음!
             const trimmed = prev.slice(0, -1);
             return trimmed;
           });
           
-          // 🌟 [고도화 8] 첫 delta 도착 전 실패라면, 유저가 다시 전송 버튼만 누를 수 있게 인풋창 복원
           if (!firstDeltaArrived && isFollowUp) {
             setQuery(userTextSnapshot);
           }
