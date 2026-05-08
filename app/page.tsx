@@ -4,12 +4,15 @@
 import { memo, useEffect, useMemo, useState, useRef } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { api, ChatMessage, extractApiErrorMessage, ThreadInputs, ThreadItem } from "@/lib/api";
-// 🌟 [핵심 개선] 504KB짜리 무거운 DONG_MAP은 빼고, 가벼운 CITY_TO_DISTRICTS만 임포트!
 import { CITY_TO_DISTRICTS } from "@/lib/regionData"; 
 import { useChatStream } from '@/lib/hooks/useChatStream';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import rehypeRaw from 'rehype-raw';
+// 🌟 [핵심 개선] 중복 코드를 지우고 markdownConfig에서 단일 출처로 가져옵니다!
+import { 
+  MARKDOWN_COMPONENTS, 
+  MARKDOWN_REMARK_PLUGINS, 
+  MARKDOWN_REHYPE_PLUGINS 
+} from '@/components/markdownConfig';
 import { 
   MessageSquare, Plus, Send, Loader2, MapPin, Search, AlertCircle, 
   Menu, X, Trash2, Sun, Moon, Coffee, ChevronUp, ChevronDown, 
@@ -20,49 +23,53 @@ const DEFAULT_CITY = "선택하세요";
 const DEFAULT_DONG = "선택 안 함";
 const EMPTY_INPUTS: ThreadInputs = { selected_city: DEFAULT_CITY, selected_district: DEFAULT_CITY, selected_dong: DEFAULT_DONG, birth_year: "", extra_info: "" };
 
-const MARKDOWN_COMPONENTS: React.ComponentProps<typeof ReactMarkdown>['components'] = {
-  p: ({ node, ...props }) => <p className="mb-3 leading-relaxed" {...props} />,
-  ul: ({ node, ...props }) => <ul className="list-disc pl-5 mb-4 space-y-1 marker:text-green-500" {...props} />,
-  ol: ({ node, ...props }) => <ol className="list-decimal pl-5 mb-4 space-y-1 marker:text-green-500 font-semibold" {...props} />,
-  li: ({ node, ...props }) => <li className="mb-1" {...props} />,
-  h1: ({ node, ...props }) => <h1 className="text-2xl font-extrabold mb-4 mt-6 text-gray-900 dark:text-white" {...props} />,
-  h2: ({ node, ...props }) => <h2 className="text-xl font-bold mb-3 mt-5 text-green-700 dark:text-green-400 border-b border-gray-200 dark:border-[#444] pb-2" {...props} />,
-  h3: ({ node, ...props }) => <h3 className="text-lg font-bold mb-3 mt-4 text-gray-800 dark:text-gray-100" {...props} />,
-  h4: ({ node, ...props }) => <h4 className="text-base font-bold mb-2 mt-4 text-gray-800 dark:text-gray-200" {...props} />,
-  h5: ({ node, ...props }) => <h5 className="text-sm font-bold mb-2 mt-3 text-gray-800 dark:text-gray-300" {...props} />,
-  strong: ({ node, ...props }) => <strong className="font-bold text-gray-900 dark:text-white" {...props} />,
-  mark: ({ node, ...props }) => <mark className="bg-yellow-200 dark:bg-yellow-500/30 text-gray-900 dark:text-yellow-100 px-1 rounded font-bold" {...props} />,
-  a: ({ node, ...props }) => <a className="text-blue-600 dark:text-blue-400 hover:underline break-all font-bold" target="_blank" rel="noopener noreferrer" {...props} />,
-  hr: ({ node, ...props }) => <hr className="my-5 border-gray-300 dark:border-[#444]" {...props} />,
-  table: ({ node, ...props }) => (
-    <div className="overflow-x-auto mb-5 w-full rounded-xl border border-gray-300 dark:border-[#444] shadow-sm">
-      <table className="min-w-full text-sm text-left" {...props} />
-    </div>
-  ),
-  thead: ({ node, ...props }) => <thead className="bg-gray-100 dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-300" {...props} />,
-  th: ({ node, ...props }) => <th className="px-4 py-3 border-b border-gray-300 dark:border-[#444] font-bold whitespace-nowrap" {...props} />,
-  td: ({ node, ...props }) => <td className="px-4 py-3 border-b border-gray-200 dark:border-[#444]" {...props} />,
-  pre: ({ node, ...props }) => <pre className="bg-gray-100 dark:bg-[#2a2a2a] p-4 rounded-xl overflow-x-auto text-sm font-mono mb-4 border border-gray-200 dark:border-[#444]" {...props} />,
-  code: ({ node, className, ...props }) => {
-    const isInline = !className;
-    return <code className={`${className || ''} ${isInline ? 'bg-gray-100 dark:bg-[#2a2a2a] text-pink-600 dark:text-pink-400 px-1.5 py-0.5 rounded text-sm font-mono font-bold' : ''}`} {...props} />
-  },
-};
-
-const MARKDOWN_REMARK_PLUGINS = [remarkGfm] as const;
-const MARKDOWN_REHYPE_PLUGINS = [rehypeRaw] as const;
-
+// 🌟 [핵심 개선] 스트리밍 중 버벅임(Jank)을 방지하는 쓰로틀링(Throttling) 버블 컴포넌트
 interface AssistantBubbleProps {
   content: string;
+  isStreaming: boolean; // 스트리밍 중인지 여부 판별
 }
-const AssistantBubble = memo(function AssistantBubble({ content }: AssistantBubbleProps) {
+
+const AssistantBubble = memo(function AssistantBubble({ content, isStreaming }: AssistantBubbleProps) {
+  const [renderedContent, setRenderedContent] = useState(content);
+  const rafRef = useRef<number | null>(null);
+  const lastFlushRef = useRef<number>(0);
+  
+  useEffect(() => {
+    if (!isStreaming) {
+      // 스트림이 끝났거나 과거 메시지라면 즉시 100% 반영
+      setRenderedContent(content);
+      return;
+    }
+    
+    // 스트리밍 중에는 80ms(약 12fps) 간격으로만 화면을 갱신하여 CPU 부하를 10분의 1로 줄임
+    const FLUSH_INTERVAL_MS = 80; 
+    const now = performance.now();
+    const elapsed = now - lastFlushRef.current;
+    
+    if (elapsed >= FLUSH_INTERVAL_MS) {
+      lastFlushRef.current = now;
+      setRenderedContent(content);
+    } else {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+      rafRef.current = requestAnimationFrame(() => {
+        lastFlushRef.current = performance.now();
+        setRenderedContent(content);
+        rafRef.current = null;
+      });
+    }
+    
+    return () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    };
+  }, [content, isStreaming]);
+  
   return (
     <ReactMarkdown
       remarkPlugins={MARKDOWN_REMARK_PLUGINS as any}
       rehypePlugins={MARKDOWN_REHYPE_PLUGINS as any}
       components={MARKDOWN_COMPONENTS}
     >
-      {content}
+      {renderedContent}
     </ReactMarkdown>
   );
 });
@@ -177,7 +184,6 @@ export default function Home() {
 
   const availableDistricts = useMemo(() => CITY_TO_DISTRICTS[city] || [], [city]);
   
-  // 🌟 [핵심 개선] 동(Dong) 데이터를 동적으로 가져오기 위한 상태와 캐시
   const [availableDongs, setAvailableDongs] = useState<string[]>([]);
   const [dongLoading, setDongLoading] = useState(false);
   const dongCacheRef = useRef<Map<string, string[]>>(new Map());
@@ -236,7 +242,6 @@ export default function Home() {
     });
   }, [messages, aiStatus, loading, autoScroll]);
 
-  // 🌟 [핵심 개선] 시/군/구가 바뀔 때마다 서버 API를 찔러서 동 리스트를 가져오는 로직
   useEffect(() => {
     if (city === DEFAULT_CITY || district === DEFAULT_CITY) {
       setAvailableDongs([]);
@@ -245,7 +250,6 @@ export default function Home() {
     }
     const key = `${city}-${district}`;
     
-    // 이미 한 번 조회한 동네면 캐시에서 바로 꺼냄 (네트워크 낭비 방지)
     const cached = dongCacheRef.current.get(key);
     if (cached) { 
       setAvailableDongs(cached); 
@@ -255,7 +259,6 @@ export default function Home() {
     let cancelled = false;
     setDongLoading(true);
     
-    // API 라우트로 동 목록 요청
     fetch(`/api/regions/dong?city=${encodeURIComponent(city)}&district=${encodeURIComponent(district)}`)
       .then((r) => r.ok ? r.json() : { dongs: [] })
       .then((data) => {
@@ -565,7 +568,6 @@ export default function Home() {
                 <select className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500" value={city} onChange={(e) => { setCity(e.target.value); setDistrict(DEFAULT_CITY); setDong(DEFAULT_DONG); }}><option>{DEFAULT_CITY}</option>{Object.keys(CITY_TO_DISTRICTS).map((c) => <option key={c}>{c}</option>)}</select>
                 <select className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500" value={district} onChange={(e) => { setDistrict(e.target.value); setDong(DEFAULT_DONG); }} disabled={city === DEFAULT_CITY}><option>{DEFAULT_CITY}</option>{availableDistricts.map((d) => <option key={d}>{d}</option>)}</select>
                 
-                {/* 🌟 동 리스트 셀렉트 (로딩 상태 반영) */}
                 <select 
                   className={`w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500 ${dongLoading ? 'opacity-50 cursor-wait' : ''}`} 
                   value={dong} 
@@ -625,6 +627,9 @@ export default function Home() {
                   ? message.content + "\n\n" 
                   : message.content;
 
+                // 🌟 [핵심 개선] 이 메시지가 현재 스트리밍 중인지 판별하여 prop으로 전달
+                const isThisStreaming = isLastMessage && isAssistant && loading;
+
                 return (
                   <div key={`${message.role}-${index}`} className={`flex gap-3 sm:gap-4 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
                     
@@ -638,7 +643,7 @@ export default function Home() {
                       
                       <div id={`capture-area-${index}`} className="p-1 rounded-xl">
                         {isAssistant ? (
-                          <AssistantBubble content={displayContent} />
+                          <AssistantBubble content={displayContent} isStreaming={isThisStreaming} />
                         ) : (
                           <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>
                         )}
