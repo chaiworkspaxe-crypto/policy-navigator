@@ -19,7 +19,7 @@ export const runtime = 'edge';
 const TOOL_TIMEOUT_MS = 10_000;
 
 const PRIMARY_MODEL  = process.env.OPENAI_CHAT_MODEL          ?? 'gpt-5.4';
-const FALLBACK_MODEL = process.env.OPENAI_CHAT_FALLBACK_MODEL ?? 'gpt-4o-mini';
+const FALLBACK_MODEL = process.env.OPENAI_CHAT_FALLBACK_MODEL ?? 'gpt-5.4-nano';
 
 const isUserCancellation = (e: any, parentSignal?: AbortSignal): boolean => {
   if (!parentSignal?.aborted) return false;
