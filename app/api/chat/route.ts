@@ -471,7 +471,6 @@ export async function POST(req: Request) {
         messages: trimmedMessages,
         maxSteps: 10,
         abortSignal: req.signal,
-        providerOptions: isFallbackReasoning ? REASONING_OPTIONS : undefined, 
         onError: (err) => { console.error('[streamText FALLBACK onError]', err); },
         tools: commonTools,
         onFinish: (params) => handleFinish({ ...params, modelName: FALLBACK_MODEL })
