@@ -1,3 +1,4 @@
+// app/api/profile/extract/_logic.ts
 import { createClient } from '@supabase/supabase-js';
 import { generateObject } from 'ai';
 import { openai } from '@ai-sdk/openai';
@@ -34,13 +35,38 @@ export async function extractProfileCore(args: {
     return { ok: false, reason: 'missing fields' };
   }
 
-  // 1) 현재 프로필 SELECT (LLM 프롬프트용 — 락 없이도 OK, 어차피 RPC가 락으로 다시 읽음)
+  // 🌟 [최적화 1] 메시지가 너무 짧거나 단순 대답/팔로우업이면 LLM 호출 즉시 스킵
+  const trimmed = lastUserMessage.trim();
+  if (trimmed.length < 6 || /^(이어서|계속|더|다시|네|예|아니|그래|맞아|응|응응)/i.test(trimmed)) {
+    return { ok: false, reason: 'too_short_or_followup' };
+  }
+
+  // 1) 현재 프로필 및 최근 추출 해시 SELECT
   const { data: existing } = await supabase
     .from('chat_thread_inputs')
-    .select('profile_json')
+    .select('profile_json, last_extract_msg_hash')
     .eq('thread_id', threadId)
     .eq('user_id', userId)
     .maybeSingle();
+
+  // 🌟 [최적화 2] 같은 메시지로 직전에 추출했다면 스킵 (De-dup)
+  // 아주 가볍고 빠른 FNV-1a 해시 알고리즘 사용
+  const fnv1a = (s: string) => {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    return (h >>> 0).toString(16);
+  };
+  
+  // 보안 및 효율성을 위해 앞 1000자만 해싱
+  const msgHash = fnv1a(trimmed.slice(0, 1000));
+  
+  // 만약 DB에 저장된 최근 해시와 방금 들어온 해시가 같다면 조용히 종료
+  if (existing?.last_extract_msg_hash === msgHash) {
+    return { ok: false, reason: 'already_extracted' };
+  }
 
   const existingProfile = (existing?.profile_json && typeof existing.profile_json === 'object')
     ? existing.profile_json as Record<string, any>
@@ -53,7 +79,7 @@ export async function extractProfileCore(args: {
     : '기존 정보 없음';
 
   // 🌟 [보안 추가] 사용자 입력을 시스템 프롬프트에 넣기 전 안전하게 정제 (프롬프트 인젝션 및 토큰 폭탄 방어)
-  const safeMessage = lastUserMessage
+  const safeMessage = trimmed
     .replace(/[\r\n]+/g, ' ')
     .replace(/\[(?:시스템|system|SYSTEM|지시|규칙|rules?)\b[^\]]{0,40}\]/gi, '[차단됨]')
     .slice(0, 1000);
@@ -87,7 +113,7 @@ export async function extractProfileCore(args: {
     Object.entries(extractedFields).filter(([_, v]) => v && v !== '미상')
   );
 
-  // 4) 🛡️ RPC로 원자적 patch (read→modify→write를 Postgres가 락으로 보장)
+  // 4) 🛡️ RPC로 원자적 patch
   const { data: merged, error: rpcErr } = await supabase.rpc('patch_profile_json', {
     p_user_id: userId,
     p_thread_id: threadId,
@@ -99,6 +125,13 @@ export async function extractProfileCore(args: {
     console.error('[extract profile rpc]', rpcErr);
     return { ok: false, reason: rpcErr.message };
   }
+
+  // 🌟 [최종 단계] 프로필 추출(RPC)이 성공했으므로, 이번 메시지의 해시값을 DB에 갱신
+  await supabase
+    .from('chat_thread_inputs')
+    .update({ last_extract_msg_hash: msgHash })
+    .eq('thread_id', threadId)
+    .eq('user_id', userId);
 
   return { ok: true, profile: merged, reasoning: _reasoning };
 }
