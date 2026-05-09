@@ -388,14 +388,26 @@ export async function POST(req: Request) {
       }
     };
 
+    // 🌟 1. Provider Options 설정 (추론 모델 전용)
+    const REASONING_OPTIONS = {
+      openai: {
+        reasoningEffort: 'low' as const, 
+      },
+    } as const;
+
     let result;
     try {
+      // 🌟 2. PRIMARY_MODEL이 추론 모델('o1', 'o3', 'gpt-5.4' 등 특정 키워드)일 때만 옵션 적용
+      const isPrimaryReasoning = PRIMARY_MODEL.includes('o1') || PRIMARY_MODEL.includes('o3') || PRIMARY_MODEL.includes('gpt-5.4');
+
       result = await streamText({
         model: openai(PRIMARY_MODEL), 
         system: systemPromptWithTime,
         messages: trimmedMessages,
-        maxSteps: 10, // 🌟 퀄리티 유지를 위해 10번 유지 (정보가 부족하면 Tavily를 계속 돌리도록 허용)
+        maxSteps: 10,
+        // 🌟 maxOutputTokens 제거: 답변이 중간에 잘리지 않도록 무제한 허용
         abortSignal: req.signal, 
+        providerOptions: isPrimaryReasoning ? REASONING_OPTIONS : undefined, // 호환성 에러 방어
         onError: (err) => { console.error(`[streamText PRIMARY onError]`, err); },
         tools: commonTools,
         onFinish: (params) => handleFinish({ ...params, modelName: PRIMARY_MODEL })
@@ -404,12 +416,16 @@ export async function POST(req: Request) {
       console.error(`[💥 PRIMARY model ${PRIMARY_MODEL} init failed → fallback]`, primaryErr);
       Sentry.captureException(primaryErr, { tags: { phase: 'primary-model-init', model: PRIMARY_MODEL } });
       
+      const isFallbackReasoning = FALLBACK_MODEL.includes('o1') || FALLBACK_MODEL.includes('o3') || FALLBACK_MODEL.includes('gpt-5.4');
+
       result = await streamText({
         model: openai(FALLBACK_MODEL),
         system: systemPromptWithTime,
         messages: trimmedMessages,
-        maxSteps: 10, // 🌟 퀄리티 유지를 위해 10번 유지
+        maxSteps: 10,
+        // 🌟 maxOutputTokens 제거: 
         abortSignal: req.signal,
+        providerOptions: isFallbackReasoning ? REASONING_OPTIONS : undefined, // 호환성 에러 방어
         onError: (err) => { console.error('[streamText FALLBACK onError]', err); },
         tools: commonTools,
         onFinish: (params) => handleFinish({ ...params, modelName: FALLBACK_MODEL })
