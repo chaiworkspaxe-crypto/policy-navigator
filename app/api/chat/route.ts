@@ -401,7 +401,6 @@ export async function POST(req: Request) {
           updated_at: now 
         });
 
-        // 🌟 [수정 포인트] count 방식에서 실제 title 체크 방식으로 변경 (Race condition 방지 및 IDOR 방어)
         const { data: threadRow } = await supabase
           .from('chat_threads')
           .select('title')
@@ -431,30 +430,24 @@ export async function POST(req: Request) {
           .from('chat_threads')
           .update(titleUpdate)
           .eq('thread_id', threadId)
-          .eq('user_id', userId); // 🌟 악의적 수정 방지 (IDOR)
+          .eq('user_id', userId); 
         
       } catch (dbError) {
         console.error("DB 저장 중 에러 발생:", dbError);
       }
     };
 
-    const REASONING_OPTIONS = {
-      openai: {
-        reasoningEffort: 'low' as const, 
-      },
-    } as const;
+    // 🌟 100% 제거: REASONING_OPTIONS 변수 완전히 삭제됨.
 
     let result;
     try {
-      const isPrimaryReasoning = PRIMARY_MODEL.includes('o1') || PRIMARY_MODEL.includes('o3') || PRIMARY_MODEL.includes('gpt-5.4');
-
       result = await streamText({
         model: openai(PRIMARY_MODEL), 
         system: systemPromptWithTime,
         messages: trimmedMessages,
         maxSteps: 10,
         abortSignal: req.signal, 
-        providerOptions: isPrimaryReasoning ? REASONING_OPTIONS : undefined, 
+        // 🌟 providerOptions 완전 삭제
         onError: (err) => { console.error(`[streamText PRIMARY onError]`, err); },
         tools: commonTools,
         onFinish: (params) => handleFinish({ ...params, modelName: PRIMARY_MODEL })
@@ -463,14 +456,13 @@ export async function POST(req: Request) {
       console.error(`[💥 PRIMARY model ${PRIMARY_MODEL} init failed → fallback]`, primaryErr);
       Sentry.captureException(primaryErr, { tags: { phase: 'primary-model-init', model: PRIMARY_MODEL } });
       
-      const isFallbackReasoning = FALLBACK_MODEL.includes('o1') || FALLBACK_MODEL.includes('o3') || FALLBACK_MODEL.includes('gpt-5.4');
-
       result = await streamText({
         model: openai(FALLBACK_MODEL),
         system: systemPromptWithTime,
         messages: trimmedMessages,
         maxSteps: 10,
         abortSignal: req.signal,
+        // 🌟 providerOptions 완전 삭제
         onError: (err) => { console.error('[streamText FALLBACK onError]', err); },
         tools: commonTools,
         onFinish: (params) => handleFinish({ ...params, modelName: FALLBACK_MODEL })
