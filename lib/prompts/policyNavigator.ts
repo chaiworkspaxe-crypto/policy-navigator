@@ -72,6 +72,7 @@ D. 가치가 큰 정책만 추려서 정리하지 말고 사용자가 신청 가
 `;
 
 // 🌟 [신규] 시스템 프롬프트 빌더 — 시간 주입 + 페르소나 변주
+// 항상 호출 시점의 최신 시간을 주입하도록 함수로만 제공합니다.
 export function buildSystemPrompt(opts?: {
   ageGroup?: 'youth' | 'middle' | 'senior';
 }): string {
@@ -100,5 +101,6 @@ export function buildSystemPrompt(opts?: {
   return prompt;
 }
 
-// 🛡️ 하위 호환: 기존 import (POLICY_NAVIGATOR_SYSTEM_PROMPT)도 유지
-export const POLICY_NAVIGATOR_SYSTEM_PROMPT = buildSystemPrompt();
+// 🌟 [삭제됨] export const POLICY_NAVIGATOR_SYSTEM_PROMPT = buildSystemPrompt(); 
+// 이유: Vercel Edge 워커 환경에서 콜드 스타트 시점의 날짜가 영구 캐싱되는 문제 방지.
+// 호출부(app/api/chat/route.ts 등)에서 항상 buildSystemPrompt() 함수를 직접 호출해야 함.
