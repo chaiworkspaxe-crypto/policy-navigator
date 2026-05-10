@@ -20,11 +20,22 @@ export async function GET(req: Request) {
   const limitRaw = Number(searchParams.get('limit') ?? DEFAULT_LIMIT);
   const limit = Math.min(Math.max(1, Number.isFinite(limitRaw) ? limitRaw : DEFAULT_LIMIT), MAX_LIMIT);
 
-  // 🌟 입력 검증
+  // 🌟 1차 입력 검증: 값의 존재 유무 확인
   if (!threadId || !userId) {
     return NextResponse.json(
       { error: 'thread_id와 user_id가 모두 필요합니다.' },
       { status: 400 },
+    );
+  }
+
+  // 🌟 [신규] 2차 보안 검증: 포맷 검증 (IDOR 무차별 대입 방어)
+  // threadId는 순수 UUID 형태, userId는 'user_ + UUID' 형태여야 함
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  
+  if (!UUID_RE.test(threadId) || !/^user_[0-9a-f-]{36}$/i.test(userId)) {
+    return NextResponse.json(
+      { error: '올바르지 않은 ID 형식입니다.' }, 
+      { status: 400 }
     );
   }
 
