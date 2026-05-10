@@ -40,14 +40,24 @@ export async function POST(req: Request) {
     const thread_id = uuidv4();
     const now = new Date().toISOString();
 
-    const { error } = await supabase
+    // 🌟 1. 메인 대화방(Thread) 생성
+    const { error: tErr } = await supabase
       .from('chat_threads')
       .insert({ thread_id, user_id, title: '새 대화', created_at: now, updated_at: now });
 
-    if (error) {
-      console.error('[POST /api/threads]', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    if (tErr) {
+      console.error('[POST /api/threads]', tErr);
+      return NextResponse.json({ error: tErr.message }, { status: 500 });
     }
+
+    // 🌟 [개선] 2. 빈 Inputs 레코드 동시 생성 (Race Condition 및 고아 상태 방어)
+    // inputs는 실패하더라도 치명적인 에러가 아니므로, 기록만 남기고 방 생성 성공을 반환합니다.
+    await supabase.from('chat_thread_inputs')
+      .insert({ thread_id, user_id, updated_at: now })
+      .then(({ error }) => {
+        if (error) console.error('[POST /api/threads inputs init]', error);
+      });
+
     return NextResponse.json({ thread_id });
   } catch (e: any) {
     console.error('[POST /api/threads] parse:', e);
