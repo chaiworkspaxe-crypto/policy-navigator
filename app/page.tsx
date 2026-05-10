@@ -70,28 +70,28 @@ const AssistantBubble = memo(function AssistantBubble({ content, isStreaming }: 
   );
 });
 
+// 🌟 [수정 포인트] 정규화 강건성 보강: AI 응답 변동성에 대비한 느슨한 매칭
 const extractSummaryTableText = (text: string) => {
   const lines = text.split('\n');
   let headerIdx = -1;
+  
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (line === undefined) continue;
     
-    const normalized = line.replace(/\*+/g, '').replace(/\s/g, '');
+    const normalized = line.replace(/\*+/g, '').replace(/\s/g, '').toLowerCase();
     
-    const hasField = normalized.includes('|분야|');
-    const hasPolicy = normalized.includes('|정책명|');
-    const hasDeadlineOrBenefit = 
-      normalized.includes('|신청마감일|') || 
-      normalized.includes('|마감일|') ||
-      normalized.includes('|핵심혜택|') ||
-      normalized.includes('|혜택|');
+    // 매칭 토큰 set으로 변경 — "정책" 또는 "정책명", "마감" 또는 "마감일" 등 모델이 조금 다르게 출력해도 OK
+    const tokens = ['분야', '정책', '주관', '혜택', '마감'];
+    const hits = tokens.filter(t => normalized.includes(`|${t}`)).length;
     
-    if (hasField && hasPolicy && hasDeadlineOrBenefit) {
+    // 5개 중 3개 이상 매치되면 요약 표의 헤더로 판정
+    if (line.startsWith('|') && hits >= 3) {
       headerIdx = i;
       break;
     }
   }
+  
   if (headerIdx === -1) return "";
   
   const headerLine = lines[headerIdx];
@@ -551,7 +551,6 @@ export default function Home() {
       <main className="relative flex h-full flex-1 flex-col w-full">
         {/* 데스크탑 헤더 */}
         <div className="absolute top-4 right-4 z-50 hidden md:flex items-center gap-3">
-          {/* 🌟 데스크탑 후원하기 버튼 추가 */}
           <button onClick={() => setShowDonation(true)} className="px-3 py-2 rounded-xl bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800/30 text-yellow-700 dark:text-yellow-400 text-sm font-bold shadow-sm hover:scale-105 transition-transform flex items-center gap-1.5">
             ☕ 후원하기
           </button>
@@ -571,14 +570,12 @@ export default function Home() {
           <div className="font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>맞춤 혜택 찾기</div>
           
           <div className="flex items-center gap-2 sm:gap-3">
-            {/* 🌟 모바일용 콤팩트 후원하기 버튼 추가 */}
             <button onClick={() => setShowDonation(true)} className="px-2 py-1.5 sm:px-2.5 rounded-lg bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800/30 text-yellow-700 dark:text-yellow-400 text-xs font-bold shadow-sm hover:scale-105 transition-transform flex items-center gap-1">
               ☕ 후원하기
             </button>
             <button onClick={() => setShowManual(true)} className="px-2 py-1.5 sm:px-2.5 rounded-lg bg-white dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] text-gray-700 dark:text-gray-200 text-xs font-bold shadow-sm hover:scale-105 transition-transform flex items-center gap-1">
               📖 메뉴얼
             </button>
-            {/* 🌟 인스타 숨김(hidden) 클래스 제거해서 폰에서도 항상 보이게! */}
             <a href="https://www.instagram.com/policyai.kr/" target="_blank" rel="noopener noreferrer" className="hover:scale-110 transition-transform flex items-center justify-center">
               <img src="/instagram-logo.png" alt="Instagram" className="w-5 h-5 object-contain" />
             </a>
