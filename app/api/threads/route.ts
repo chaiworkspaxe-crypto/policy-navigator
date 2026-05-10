@@ -1,4 +1,4 @@
-// app/api/threads/route.ts — 전체 교체
+// app/api/threads/route.ts
 
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
@@ -12,6 +12,7 @@ const supabase = createClient(
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const userId = searchParams.get('user_id');
+  
   if (!userId) {
     return NextResponse.json({ error: 'user_id 누락' }, { status: 400 });
   }
@@ -20,8 +21,8 @@ export async function GET(req: Request) {
     .from('chat_threads')
     .select('thread_id, title, created_at, updated_at')
     .eq('user_id', userId)
-    .order('updated_at', { ascending: false }) // 🌟 created_at → updated_at: 최근 활동순
-    .limit(100); // 🌟 무한 누적 방지
+    .order('updated_at', { ascending: false }) // 최근 활동순
+    .limit(100); // 무한 누적 방지
 
   if (error) {
     console.error('[GET /api/threads]', error);
@@ -70,50 +71,21 @@ export async function DELETE(req: Request) {
     );
   }
 
-  // 🌟 [개선] 자식 테이블 → 부모 테이블 순서로 삭제 (FK 고아 데이터 방지)
-  //          + 모든 결과를 모아서 첫 에러 발생 즉시 응답 반환
-  const safeDelete = async (
-    table: string,
-    apply: (q: any) => any,
-  ): Promise<{ ok: true } | { ok: false; error: string }> => {
-    try {
-      const { error } = await apply(supabase.from(table).delete());
-      if (error) return { ok: false, error: `${table}: ${error.message}` };
-      return { ok: true };
-    } catch (e: any) {
-      return { ok: false, error: `${table}: ${e?.message ?? 'unknown'}` };
-    }
-  };
-
+  // 🌟 [최적화] 부모 thread만 지우면 DB의 ON DELETE CASCADE가 자식 테이블을 자동 정리함
+  // 트랜잭션 무결성 보장 및 쿼리 속도 대폭 향상!
   const isAll = deleteAll === 'true';
-
-  // 🛡️ 자식(inputs, messages) 먼저 지우고 부모(threads)를 나중에 지우는 안전한 순서 보장!
-  const targets: Array<[string, (q: any) => any]> = [
-    ['chat_messages', (q) => isAll
-      ? q.eq('user_id', userId)
-      : q.eq('user_id', userId).eq('thread_id', threadId!)
-    ],
-    ['chat_thread_inputs', (q) => isAll
-      ? q.eq('user_id', userId)
-      : q.eq('user_id', userId).eq('thread_id', threadId!)
-    ],
-    ['chat_threads', (q) => isAll
-      ? q.eq('user_id', userId)
-      : q.eq('user_id', userId).eq('thread_id', threadId!)
-    ],
-  ];
-
-  const errors: string[] = [];
-  for (const [table, apply] of targets) {
-    const r = await safeDelete(table, apply);
-    if (!r.ok) errors.push(r.error);
+  let q = supabase.from('chat_threads').delete().eq('user_id', userId);
+  
+  if (!isAll) {
+    q = q.eq('thread_id', threadId!);
   }
 
-  if (errors.length > 0) {
-    console.error('[DELETE /api/threads] partial failure:', errors);
-    // 🛡️ 부분 실패라도 사용자에게는 "다시 시도" 신호 (멱등성 보장되므로 재시도 안전)
+  const { error } = await q;
+
+  if (error) {
+    console.error('[DELETE /api/threads]', error);
     return NextResponse.json(
-      { error: `삭제 일부 실패: ${errors.join(' / ')}. 다시 시도해주세요.` },
+      { error: `삭제 실패: ${error.message}` },
       { status: 500 },
     );
   }
