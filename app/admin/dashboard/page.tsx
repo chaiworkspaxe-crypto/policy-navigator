@@ -3,15 +3,12 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { createClient } from '@supabase/supabase-js';
+import { getPeriodUserCount } from "./actions"; // 🌟 방금 만든 서버 액션을 불러옵니다!
 import { Users, UserPlus, MessageSquare, AlertOctagon, Calendar, Activity, RefreshCw, MessageCircle, Database, Plus, Edit, Trash2, X, Save, Bot, Landmark, Loader2 } from "lucide-react";
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   PieChart, Pie, Cell, AreaChart, Area
 } from "recharts";
-
-// 🌟 [수정됨] 파일 맨 위에 있던 Supabase 클라이언트 초기화 코드를 지웠어! 
-// 빌드 에러(Prerendering Error)를 막기 위해 아래 useEffect 내부로 이동시켰어.
 
 // --- 타입 정의 ---
 interface DashboardStats {
@@ -77,39 +74,16 @@ export default function AdminDashboardPage() {
   const [periodUsers, setPeriodUsers] = useState<number>(0);
   const [isPeriodLoading, setIsPeriodLoading] = useState(false);
 
-  // 날짜 변경 시 해당 기간 유저 수 가져오기 로직
+  // 🌟 날짜 변경 시 해당 기간 유저 수 가져오기 로직 (서버 액션 활용)
   useEffect(() => {
     if (!startDate || !endDate) return;
 
     const fetchPeriodUsers = async () => {
       setIsPeriodLoading(true);
       try {
-        const startIso = `${startDate}T00:00:00.000Z`;
-        const endIso = `${endDate}T23:59:59.999Z`;
-
-        // 🌟 [수정됨] 브라우저 환경에서만 Supabase 클라이언트 동적 생성 (빌드 에러 완벽 방어)
-        const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-        const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-        
-        if (!url || !key) {
-          console.error("Supabase 환경 변수가 설정되지 않았습니다.");
-          return;
-        }
-        
-        const supabase = createClient(url, key);
-
-        const { data, error } = await supabase
-          .from('chat_threads')
-          .select('user_id')
-          .gte('updated_at', startIso)
-          .lte('updated_at', endIso);
-
-        if (error) throw error;
-
-        // Set을 이용해 중복된 user_id 제거 후 순수 이용자 수 카운트
-        const uniqueUsers = new Set(data?.map(d => d.user_id)).size;
-        setPeriodUsers(uniqueUsers);
-
+        // 클라이언트에서 직접 DB를 찌르지 않고, 서버 액션을 호출해 RLS 보안을 우회합니다.
+        const count = await getPeriodUserCount(startDate, endDate);
+        setPeriodUsers(count);
       } catch (error) {
         console.error("기간별 유저 로드 에러:", error);
       } finally {
