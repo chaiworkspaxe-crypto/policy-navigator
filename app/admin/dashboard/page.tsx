@@ -3,11 +3,17 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { Users, UserPlus, MessageSquare, AlertOctagon, Calendar, Activity, RefreshCw, MessageCircle, Database, Plus, Edit, Trash2, X, Save, Bot, Landmark } from "lucide-react";
+import { createClient } from '@supabase/supabase-js';
+import { Users, UserPlus, MessageSquare, AlertOctagon, Calendar, Activity, RefreshCw, MessageCircle, Database, Plus, Edit, Trash2, X, Save, Bot, Landmark, Loader2 } from "lucide-react";
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   PieChart, Pie, Cell, AreaChart, Area
 } from "recharts";
+
+// --- Supabase 클라이언트 초기화 (클라이언트 사이드용) ---
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 // --- 타입 정의 ---
 interface DashboardStats {
@@ -39,7 +45,7 @@ interface Policy {
   region_req: string;
   summary?: string;
   url?: string;
-  is_auto?: boolean; // 🌟 AI 수집 여부
+  is_auto?: boolean; 
   updated_at?: string;
 }
 
@@ -59,7 +65,7 @@ export default function AdminDashboardPage() {
 
   // 통계/데이터 상태
   const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [activeUsers, setActiveUsers] = useState<ActiveUserStats>({ today: 0, week: 0, month: 0 }); // 🌟 신규: 활성 유저 상태
+  const [activeUsers, setActiveUsers] = useState<ActiveUserStats>({ today: 0, week: 0, month: 0 });
   const [officialPolicies, setOfficialPolicies] = useState<Policy[]>([]);
   const [agentPolicies, setAgentPolicies] = useState<Policy[]>([]);
 
@@ -67,14 +73,50 @@ export default function AdminDashboardPage() {
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState<Policy>(EMPTY_POLICY);
 
-  // 🌟 [수정됨] 통계 불러오기 (기존 통계 + 활성 유저 통계 동시 호출)
-  // 클라이언트의 useEffect 내부이므로 매번 새롭게 통신합니다. (API 캐싱만 없으면 완벽!)
+  // 🌟 신규: 기간 선택 날짜 상태
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [periodUsers, setPeriodUsers] = useState<number>(0);
+  const [isPeriodLoading, setIsPeriodLoading] = useState(false);
+
+  // 🌟 신규: 날짜 변경 시 해당 기간 유저 수 가져오기 로직
+  useEffect(() => {
+    if (!startDate || !endDate) return;
+
+    const fetchPeriodUsers = async () => {
+      setIsPeriodLoading(true);
+      try {
+        const startIso = `${startDate}T00:00:00.000Z`;
+        const endIso = `${endDate}T23:59:59.999Z`;
+
+        const { data, error } = await supabase
+          .from('chat_threads')
+          .select('user_id')
+          .gte('updated_at', startIso)
+          .lte('updated_at', endIso);
+
+        if (error) throw error;
+
+        // Set을 이용해 중복된 user_id 제거 후 순수 이용자 수 카운트
+        const uniqueUsers = new Set(data?.map(d => d.user_id)).size;
+        setPeriodUsers(uniqueUsers);
+
+      } catch (error) {
+        console.error("기간별 유저 로드 에러:", error);
+      } finally {
+        setIsPeriodLoading(false);
+      }
+    };
+
+    fetchPeriodUsers();
+  }, [startDate, endDate]);
+
   const fetchStats = async () => {
     setLoading(true);
     try {
       const [statsData, activeUsersData] = await Promise.all([
         api.getAdminStats(),
-        api.getActiveUserStats() // 우리가 만든 신규 API 호출!
+        api.getActiveUserStats() 
       ]);
       setStats(statsData as DashboardStats);
       setActiveUsers(activeUsersData);
@@ -85,7 +127,6 @@ export default function AdminDashboardPage() {
     }
   };
 
-  // 정책 리스트 불러오기
   const fetchPolicies = async () => {
     setLoading(true);
     try {
@@ -113,7 +154,6 @@ export default function AdminDashboardPage() {
     }
   }, []);
 
-  // 탭 전환 핸들러
   const handleTabChange = (tab: 'stats' | 'db') => {
     setActiveTab(tab);
     if (tab === 'db') fetchPolicies();
@@ -182,39 +222,72 @@ export default function AdminDashboardPage() {
         {activeTab === 'stats' && (
           <div className="space-y-6 animate-in fade-in duration-300 pt-4">
             
-            {/* 🌟 신규: 유저 활성도 (DAU, WAU, MAU, Total) 카드 */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* 🌟 수정됨: 유저 활성도 카드 (오늘, 기간별, 누적) */}
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+              
+              {/* 1. 오늘 이용 유저 */}
               <div className="bg-[#1e1e1e] border border-gray-800 rounded-2xl p-5 shadow-lg flex flex-col transition-transform hover:-translate-y-1">
                 <div className="flex items-center gap-3 mb-3">
                   <div className="p-2.5 bg-blue-500/10 rounded-lg"><Activity size={20} className="text-blue-500" /></div>
-                  <h2 className="text-gray-400 text-sm font-semibold">오늘 접속 유저 (DAU)</h2>
+                  <h2 className="text-gray-400 text-sm font-semibold">오늘 이용 유저</h2>
                 </div>
-                <div className="text-3xl font-extrabold text-white mt-auto">{loading ? "-" : activeUsers.today.toLocaleString()} <span className="text-base text-gray-500 font-medium">명</span></div>
+                <div className="text-3xl font-extrabold text-white mt-auto">
+                  {loading ? "-" : activeUsers.today.toLocaleString()} <span className="text-base text-gray-500 font-medium">명</span>
+                </div>
               </div>
 
-              <div className="bg-[#1e1e1e] border border-gray-800 rounded-2xl p-5 shadow-lg flex flex-col transition-transform hover:-translate-y-1">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="p-2.5 bg-green-500/10 rounded-lg"><Calendar size={20} className="text-green-500" /></div>
-                  <h2 className="text-gray-400 text-sm font-semibold">이번 주 유저 (WAU)</h2>
+              {/* 2. 기간별 이용 유저 (2칸 차지) */}
+              <div className="bg-[#1e1e1e] border border-gray-800 rounded-2xl p-5 shadow-lg lg:col-span-2 flex flex-col transition-transform hover:-translate-y-1">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 bg-green-500/10 rounded-lg"><Calendar size={20} className="text-green-500" /></div>
+                    <h2 className="text-gray-400 text-sm font-semibold">기간별 이용 유저</h2>
+                  </div>
+                  
+                  {/* 날짜 선택기 */}
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="date"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      className="bg-[#2d2d2d] border border-[#444] text-white text-xs rounded-lg p-2 outline-none focus:border-green-500 transition-colors cursor-pointer"
+                    />
+                    <span className="text-gray-500">~</span>
+                    <input
+                      type="date"
+                      value={endDate}
+                      min={startDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      className="bg-[#2d2d2d] border border-[#444] text-white text-xs rounded-lg p-2 outline-none focus:border-green-500 transition-colors cursor-pointer"
+                    />
+                  </div>
                 </div>
-                <div className="text-3xl font-extrabold text-white mt-auto">{loading ? "-" : activeUsers.week.toLocaleString()} <span className="text-base text-gray-500 font-medium">명</span></div>
+                
+                <div className="text-3xl font-extrabold text-white mt-auto flex items-baseline gap-2">
+                  {isPeriodLoading ? (
+                    <Loader2 size={24} className="animate-spin text-green-500" />
+                  ) : (
+                    <>
+                      {startDate && endDate ? periodUsers.toLocaleString() : "-"} <span className="text-base text-gray-500 font-medium">명</span>
+                    </>
+                  )}
+                  {!startDate || !endDate ? (
+                    <span className="text-xs text-gray-500 ml-2 font-normal">우측 상단에서 날짜를 선택해주세요.</span>
+                  ) : null}
+                </div>
               </div>
 
+              {/* 3. 총 누적 사용자 */}
               <div className="bg-[#1e1e1e] border border-gray-800 rounded-2xl p-5 shadow-lg flex flex-col transition-transform hover:-translate-y-1">
                 <div className="flex items-center gap-3 mb-3">
-                  <div className="p-2.5 bg-purple-500/10 rounded-lg"><Users size={20} className="text-purple-500" /></div>
-                  <h2 className="text-gray-400 text-sm font-semibold">한 달 유저 (MAU)</h2>
-                </div>
-                <div className="text-3xl font-extrabold text-white mt-auto">{loading ? "-" : activeUsers.month.toLocaleString()} <span className="text-base text-gray-500 font-medium">명</span></div>
-              </div>
-
-              <div className="bg-[#1e1e1e] border border-gray-800 rounded-2xl p-5 shadow-lg flex flex-col transition-transform hover:-translate-y-1">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="p-2.5 bg-blue-500/10 rounded-lg"><UserPlus size={20} className="text-blue-500" /></div>
+                  <div className="p-2.5 bg-purple-500/10 rounded-lg"><UserPlus size={20} className="text-purple-500" /></div>
                   <h2 className="text-gray-400 text-sm font-semibold">총 누적 사용자</h2>
                 </div>
-                <div className="text-3xl font-extrabold text-white mt-auto">{loading ? "-" : (stats?.total_users || 0).toLocaleString()} <span className="text-base text-gray-500 font-medium">명</span></div>
+                <div className="text-3xl font-extrabold text-white mt-auto">
+                  {loading ? "-" : (stats?.total_users || 0).toLocaleString()} <span className="text-base text-gray-500 font-medium">명</span>
+                </div>
               </div>
+              
             </div>
 
             {/* 기존: 시스템 통계 (대화방, 티키타카, 방어) */}
