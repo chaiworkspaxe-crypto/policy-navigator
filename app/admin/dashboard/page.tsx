@@ -10,10 +10,8 @@ import {
   PieChart, Pie, Cell, AreaChart, Area
 } from "recharts";
 
-// --- Supabase 클라이언트 초기화 (클라이언트 사이드용) ---
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const supabase = createClient(supabaseUrl, supabaseKey);
+// 🌟 [수정됨] 파일 맨 위에 있던 Supabase 클라이언트 초기화 코드를 지웠어! 
+// 빌드 에러(Prerendering Error)를 막기 위해 아래 useEffect 내부로 이동시켰어.
 
 // --- 타입 정의 ---
 interface DashboardStats {
@@ -73,13 +71,13 @@ export default function AdminDashboardPage() {
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState<Policy>(EMPTY_POLICY);
 
-  // 🌟 신규: 기간 선택 날짜 상태
+  // 기간 선택 날짜 상태
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [periodUsers, setPeriodUsers] = useState<number>(0);
   const [isPeriodLoading, setIsPeriodLoading] = useState(false);
 
-  // 🌟 신규: 날짜 변경 시 해당 기간 유저 수 가져오기 로직
+  // 날짜 변경 시 해당 기간 유저 수 가져오기 로직
   useEffect(() => {
     if (!startDate || !endDate) return;
 
@@ -88,6 +86,17 @@ export default function AdminDashboardPage() {
       try {
         const startIso = `${startDate}T00:00:00.000Z`;
         const endIso = `${endDate}T23:59:59.999Z`;
+
+        // 🌟 [수정됨] 브라우저 환경에서만 Supabase 클라이언트 동적 생성 (빌드 에러 완벽 방어)
+        const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+        const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+        
+        if (!url || !key) {
+          console.error("Supabase 환경 변수가 설정되지 않았습니다.");
+          return;
+        }
+        
+        const supabase = createClient(url, key);
 
         const { data, error } = await supabase
           .from('chat_threads')
@@ -222,7 +231,6 @@ export default function AdminDashboardPage() {
         {activeTab === 'stats' && (
           <div className="space-y-6 animate-in fade-in duration-300 pt-4">
             
-            {/* 🌟 수정됨: 유저 활성도 카드 (오늘, 기간별, 누적) */}
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
               
               {/* 1. 오늘 이용 유저 */}
