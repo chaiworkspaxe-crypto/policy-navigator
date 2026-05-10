@@ -578,7 +578,8 @@ export default function Home() {
             <button onClick={() => setShowManual(true)} className="px-2 py-1.5 sm:px-2.5 rounded-lg bg-white dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] text-gray-700 dark:text-gray-200 text-xs font-bold shadow-sm hover:scale-105 transition-transform flex items-center gap-1">
               📖 메뉴얼
             </button>
-            <a href="https://www.instagram.com/policyai.kr/" target="_blank" rel="noopener noreferrer" className="hover:scale-110 transition-transform hidden sm:flex items-center justify-center">
+            {/* 🌟 인스타 숨김(hidden) 클래스 제거해서 폰에서도 항상 보이게! */}
+            <a href="https://www.instagram.com/policyai.kr/" target="_blank" rel="noopener noreferrer" className="hover:scale-110 transition-transform flex items-center justify-center">
               <img src="/instagram-logo.png" alt="Instagram" className="w-5 h-5 object-contain" />
             </a>
             <button onClick={toggleTheme} className="text-gray-500 dark:text-gray-300"><Sun size={22} className="block dark:hidden"/><Moon size={22} className="hidden dark:block"/></button>
