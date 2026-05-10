@@ -1,6 +1,6 @@
+// lib/api.ts
 import axios from 'axios';
 
-// 🌟 [핵심 수술 1] 파이썬 외부 주소를 버리고, Next.js 내부 API(/api)로 연결!
 const apiClient = axios.create({
   baseURL: '/api', 
   timeout: 300000, 
@@ -28,8 +28,13 @@ export interface ThreadInputs {
   extra_info: string;
 }
 
+// 🌟 [추가] 페이지네이션 응답 타입
+export interface LoadMessagesResult {
+  messages: ChatMessage[];
+  nextBefore: string | null;     // 더 이전 메시지가 있을 때 cursor
+}
+
 export const api = {
-  // 🌟 [핵심 수술 2] 복잡했던 주소들을 직관적인 쿼리 파라미터 구조로 단순화!
   listThreads: async (userId: string): Promise<ThreadItem[]> => {
     const res = await apiClient.get("/threads", { params: { user_id: userId } });
     return res.data.threads || [];
@@ -40,9 +45,24 @@ export const api = {
     return res.data.thread_id;
   },
 
-  loadMessages: async (userId: string, threadId: string): Promise<ChatMessage[]> => {
-    const res = await apiClient.get("/messages", { params: { user_id: userId, thread_id: threadId } });
-    return res.data.messages || [];
+  // 🌟 [수정] 첫 진입은 가벼운 양만, "더 보기" 버튼으로 lazy load
+  loadMessages: async (
+    userId: string,
+    threadId: string,
+    opts?: { limit?: number; before?: string }
+  ): Promise<LoadMessagesResult> => {
+    const res = await apiClient.get("/messages", {
+      params: {
+        user_id: userId,
+        thread_id: threadId,
+        limit: opts?.limit ?? 20, // 🌟 default 50 -> 20으로 대폭 축소
+        ...(opts?.before ? { before: opts.before } : {}),
+      },
+    });
+    return {
+      messages: res.data.messages || [],
+      nextBefore: res.data.nextBefore ?? null,
+    };
   },
 
   loadThreadInputs: async (userId: string, threadId: string): Promise<ThreadInputs | null> => {
@@ -54,7 +74,6 @@ export const api = {
     await apiClient.post("/inputs", { user_id: userId, thread_id: threadId, ...payload });
   },
 
-  // 🌟 [수술 10️⃣] deleteThread 보정 적용 완료!
   deleteThread: async (userId: string, threadId: string): Promise<void> => {
     await apiClient.delete('/threads', {
       params: { user_id: userId, thread_id: threadId },
@@ -75,7 +94,6 @@ export const api = {
     return res.data;
   },
 
-  // 🌟 [추가] 대시보드 활성 사용자 통계 가져오기
   getActiveUserStats: async (): Promise<{ today: number; week: number; month: number }> => {
     try {
       const res = await apiClient.get("/admin/active-users");
