@@ -1,3 +1,4 @@
+// app/admin/test/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -83,6 +84,22 @@ export default function AdminTestPage() {
     }
   }, []);
 
+  // 🌟 [수정 포인트 1] 화면을 껐다 켰을 때(visibilitychange) 호출되는 부분도 객체 배열 타입에 대응
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && currentThreadId && userId) {
+        api.loadMessages(userId, currentThreadId)
+          .then((res: any) => {
+            const msgs = Array.isArray(res) ? res : res.messages || [];
+            if (msgs.length > 0) setMessages(msgs);
+          })
+          .catch(console.error);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [currentThreadId, userId]);
+
   const toggleTheme = () => {
     setIsDarkMode(!isDarkMode);
     if (isDarkMode) document.documentElement.classList.remove('dark');
@@ -125,12 +142,20 @@ export default function AdminTestPage() {
     } catch { setErrorMessage("서버와 연결할 수 없습니다."); }
   };
 
+  // 🌟 [수정 포인트 2] 빌드 에러의 주범! selectThread 부분 타입 대응 완료
   const selectThread = async (uid: string, tid: string) => {
     try {
       setErrorMessage(""); setCurrentThreadId(tid); setMessages([]); setQuery(""); setIsSidebarOpen(false);
-      const [loadedMessages, loadedInputs] = await Promise.all([ api.loadMessages(uid, tid), api.loadThreadInputs(uid, tid) ]);
-      setMessages(loadedMessages); applyInputs(loadedInputs);
-      if (loadedMessages.length > 0) setIsFormExpanded(false); else setIsFormExpanded(true);
+      
+      const [loadedData, loadedInputs] = await Promise.all([ api.loadMessages(uid, tid), api.loadThreadInputs(uid, tid) ]);
+      
+      // API 반환 타입 변경에 대응 (배열인지 객체인지 판별하여 메시지만 추출)
+      const msgs = Array.isArray(loadedData) ? loadedData : (loadedData as any).messages || [];
+      
+      setMessages(msgs); 
+      applyInputs(loadedInputs);
+      
+      if (msgs.length > 0) setIsFormExpanded(false); else setIsFormExpanded(true);
     } catch (error) { setErrorMessage(extractApiErrorMessage(error)); }
   };
 
@@ -356,7 +381,6 @@ export default function AdminTestPage() {
                     <div className={`max-w-[90%] sm:max-w-[85%] rounded-2xl p-4 shadow-sm overflow-hidden ${message.role === "user" ? "whitespace-pre-wrap border border-gray-200 dark:border-[#444] bg-white dark:bg-[#2d2d2d] text-gray-800 dark:text-gray-200 text-sm sm:text-base" : "bg-transparent text-gray-800 dark:text-gray-300"}`}>
                       {isAssistant ? <MarkdownMessage content={message.content} /> : <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>}
                       
-                      {/* 🌟 PC와 모바일을 완벽하게 구분해서 작동하는 똑똑한 공유 버튼! */}
                       {isAssistant && message.content.length > 50 && (
                         <div className="mt-4 pt-3 border-t border-gray-200 dark:border-[#444] flex justify-end">
                           <button onClick={async () => {
@@ -369,10 +393,8 @@ export default function AdminTestPage() {
                                 const isMobile = /Mobi|Android/i.test(navigator.userAgent);
                                 
                                 if (isMobile && navigator.share) { 
-                                  // 스마트폰: 카카오톡 등 네이티브 앱 선택 창 띄우기
                                   await navigator.share(shareData); 
                                 } else { 
-                                  // PC: 윈도우 공유창 무시하고, 바로 클립보드에 풀 텍스트 복사!
                                   await navigator.clipboard.writeText(shareData.text + shareData.url); 
                                   alert('전체 결과가 클립보드에 복사되었습니다! 메모장이나 카톡 PC버전에 붙여넣기 해보세요.'); 
                                 } 
@@ -383,7 +405,6 @@ export default function AdminTestPage() {
                         </div>
                       )}
 
-                      {/* 🌟 수정 1: 답변 이어서 생성하기 깜빡임 해결 (message.content.length > 50 적용) */}
                       {!loading && isLastMessage && isAssistant && message.content.length > 50 && !hasSummaryTable(message.content) && (
                          <div className="mt-4 p-4 bg-gray-50 dark:bg-[#1a1a1a] rounded-xl border border-gray-200 dark:border-[#444] animate-in fade-in duration-300">
                            <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
