@@ -2,11 +2,21 @@
 
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { z } from 'zod'; // 🌟 Zod 임포트
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
 );
+
+// 🌟 [개선] 입력값 검증을 위한 Zod 스키마 정의
+const InputsSchema = z.object({
+  selected_city: z.string().max(50).optional(),
+  selected_district: z.string().max(50).optional(),
+  selected_dong: z.string().max(50).optional(),
+  birth_year: z.string().regex(/^\d{4}$/, "출생연도는 4자리 숫자여야 합니다.").optional(), // 4자리 숫자 정규식
+  extra_info: z.string().max(500, "추가 정보는 500자 이내여야 합니다.").optional(),
+});
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -22,11 +32,11 @@ export async function GET(req: Request) {
     .select('*')
     .eq('thread_id', threadId)
     .eq('user_id', userId)
-    .maybeSingle(); // 🌟 single() 대신 maybeSingle() — row 없을 때 에러 안 던짐
+    .maybeSingle(); 
 
   if (error) {
     console.error('[GET /api/inputs]', error);
-    return NextResponse.json({ inputs: null }); // UX 우선: 폼만 비우고 진행
+    return NextResponse.json({ inputs: null }); 
   }
   return NextResponse.json({ inputs: data });
 }
@@ -36,29 +46,23 @@ export async function POST(req: Request) {
     const body = await req.json();
     const { thread_id, user_id, ...rawInputs } = body;
     
+    // 1. 필수 기본 아이디 검증
     if (!thread_id || !user_id || typeof thread_id !== 'string' || typeof user_id !== 'string') {
       return NextResponse.json({ error: 'thread_id, user_id 필요' }, { status: 400 });
     }
 
-    // 🛡️ [개선 1] 화이트리스트로 inputs 필드 제한 — 임의 컬럼 주입 차단
-    const allowedFields = [
-      'selected_city',
-      'selected_district',
-      'selected_dong',
-      'birth_year',
-      'extra_info',
-    ] as const;
-    
-    const safeInputs: Record<string, unknown> = {};
-    for (const k of allowedFields) {
-      if (rawInputs[k] !== undefined) {
-        // 길이 제한 방어막 추가
-        const v = rawInputs[k];
-        safeInputs[k] = typeof v === 'string' ? v.slice(0, 500) : v;
-      }
+    // 🌟 [개선] 2. Zod를 이용한 강력한 형식 검증 및 살균
+    const parsed = InputsSchema.safeParse(rawInputs);
+    if (!parsed.success) {
+      // 검증 실패 시 구체적인 에러 사유를 반환 (디버깅 용이)
+      return NextResponse.json({ 
+        error: 'invalid inputs', 
+        details: parsed.error.flatten() 
+      }, { status: 400 });
     }
+    const safeInputs = parsed.data;
 
-    // 🛡️ [개선 2] 소유권 사전 검증 — 다른 사용자의 thread를 덮어쓰는 IDOR 차단
+    // 3. 소유권 사전 검증 (IDOR 방어)
     const { data: existingThread, error: ownErr } = await supabase
       .from('chat_threads')
       .select('user_id')
@@ -70,12 +74,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: ownErr.message }, { status: 500 });
     }
     
-    // thread가 없으면(새로 만든 직후 race일 수 있음) 통과 — upsert가 처리
-    // thread가 있는데 user_id가 다르면 차단 (IDOR 공격 방어)
     if (existingThread && existingThread.user_id !== user_id) {
       return NextResponse.json({ error: 'forbidden' }, { status: 403 });
     }
 
+    // 4. 안전한 데이터만 DB에 저장
     const { error } = await supabase.from('chat_thread_inputs').upsert(
       {
         thread_id,
@@ -90,9 +93,11 @@ export async function POST(req: Request) {
       console.error('[POST /api/inputs]', error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+    
     return NextResponse.json({ success: true });
     
   } catch (e: any) {
+    console.error('[POST /api/inputs] Unexpected Error:', e);
     return NextResponse.json({ error: 'invalid body' }, { status: 400 });
   }
 }
