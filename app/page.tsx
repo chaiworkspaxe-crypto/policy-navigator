@@ -15,7 +15,7 @@ import {
 import { 
   MessageSquare, Plus, Send, Loader2, MapPin, Search, AlertCircle, 
   Menu, X, Trash2, Sun, Moon, Coffee, ChevronUp, ChevronDown, 
-  Download, RefreshCw, FileText, Image as ImageIcon, Square
+  Download, RefreshCw, FileText, Image as ImageIcon, Square, Clock
 } from "lucide-react";
 
 const DEFAULT_CITY = "선택하세요";
@@ -81,11 +81,9 @@ const extractSummaryTableText = (text: string) => {
     
     const normalized = line.replace(/\*+/g, '').replace(/\s/g, '').toLowerCase();
     
-    // 매칭 토큰 set으로 변경 — "정책" 또는 "정책명", "마감" 또는 "마감일" 등 모델이 조금 다르게 출력해도 OK
     const tokens = ['분야', '정책', '주관', '혜택', '마감'];
     const hits = tokens.filter(t => normalized.includes(`|${t}`)).length;
     
-    // 5개 중 3개 이상 매치되면 요약 표의 헤더로 판정
     if (line.startsWith('|') && hits >= 3) {
       headerIdx = i;
       break;
@@ -155,6 +153,11 @@ export default function Home() {
   const [threads, setThreads] = useState<ThreadItem[]>([]);
   const [currentThreadId, setCurrentThreadId] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  
+  // 🌟 [추가] 페이지네이션 커서 및 더보기 로딩 상태
+  const [nextBefore, setNextBefore] = useState<string | null>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+
   const [errorMessage, setErrorMessage] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [showDonation, setShowDonation] = useState(false);
@@ -207,8 +210,13 @@ export default function Home() {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && currentThreadId && userId) {
         api.loadMessages(userId, currentThreadId)
-          .then((reloadedMessages) => {
-            if (reloadedMessages.length > 0) setMessages(reloadedMessages);
+          .then((res: any) => {
+            // 🌟 API 반환 타입 대응 (배열 -> 객체 구조)
+            const msgs = Array.isArray(res) ? res : res.messages || [];
+            if (msgs.length > 0) {
+              setMessages(msgs);
+              if (!Array.isArray(res) && res.nextBefore) setNextBefore(res.nextBefore);
+            }
           })
           .catch(console.error);
       }
@@ -228,7 +236,6 @@ export default function Home() {
     return () => el.removeEventListener('scroll', onScroll);
   }, []);
 
-  // 🌟 [최적화] MutationObserver 비용 절감 (모바일 버벅임 방지)
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container || !autoScroll) return;
@@ -244,7 +251,7 @@ export default function Home() {
     observer.observe(container, { 
       childList: true, 
       subtree: true, 
-      characterData: false // 🌟 성능을 위해 글자 단위 이벤트 무시
+      characterData: false 
     });
 
     return () => {
@@ -300,6 +307,7 @@ export default function Home() {
       if (currentThreadId === tid) {
         setCurrentThreadId('');
         setMessages([]);
+        setNextBefore(null);
         applyInputs(EMPTY_INPUTS);
         setIsFormExpanded(true);
       }
@@ -354,10 +362,18 @@ export default function Home() {
 
   const selectThread = async (uid: string, tid: string) => {
     try {
-      setErrorMessage(""); setCurrentThreadId(tid); setMessages([]); setQuery(""); setIsSidebarOpen(false);
-      const [loadedMessages, loadedInputs] = await Promise.all([ api.loadMessages(uid, tid), api.loadThreadInputs(uid, tid) ]);
-      setMessages(loadedMessages); applyInputs(loadedInputs);
-      if (loadedMessages.length > 0) setIsFormExpanded(false); else setIsFormExpanded(true);
+      setErrorMessage(""); setCurrentThreadId(tid); setMessages([]); setNextBefore(null); setQuery(""); setIsSidebarOpen(false);
+      
+      const [loadedData, loadedInputs] = await Promise.all([ api.loadMessages(uid, tid), api.loadThreadInputs(uid, tid) ]);
+      
+      // 🌟 API 객체 반환 구조 대응 및 커서 갱신
+      const msgs = Array.isArray(loadedData) ? loadedData : (loadedData as any).messages || [];
+      setMessages(msgs); 
+      setNextBefore((loadedData as any).nextBefore ?? null);
+      
+      applyInputs(loadedInputs);
+      
+      if (msgs.length > 0) setIsFormExpanded(false); else setIsFormExpanded(true);
       
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
@@ -372,10 +388,44 @@ export default function Home() {
     setErrorMessage("");
     setCurrentThreadId(""); 
     setMessages([]); 
+    setNextBefore(null);
     setQuery(""); 
     applyInputs(EMPTY_INPUTS);
     setIsSidebarOpen(false); 
     setIsFormExpanded(true);
+  };
+
+  // 🌟 [신규] 이전 대화 더 보기 함수
+  const loadOlderMessages = async () => {
+    if (!nextBefore || loadingOlder || !currentThreadId) return;
+    setLoadingOlder(true);
+    
+    // 이전 스크롤 높이를 기억해서 스크롤 튀는 현상 방지
+    const container = scrollContainerRef.current;
+    const prevScrollHeight = container?.scrollHeight || 0;
+
+    try {
+      const res = await api.loadMessages(userId, currentThreadId, { 
+        limit: 20, 
+        before: nextBefore 
+      });
+      
+      const newMsgs = Array.isArray(res) ? res : res.messages || [];
+      setMessages(prev => [...newMsgs, ...prev]);
+      setNextBefore(Array.isArray(res) ? null : res.nextBefore);
+
+      // 렌더링 후 스크롤 위치 보정
+      requestAnimationFrame(() => {
+        if (container) {
+          const currentScrollHeight = container.scrollHeight;
+          container.scrollTop = container.scrollTop + (currentScrollHeight - prevScrollHeight);
+        }
+      });
+    } catch (error) {
+      console.error("이전 메시지 불러오기 실패:", error);
+    } finally {
+      setLoadingOlder(false);
+    }
   };
 
   const validateStructuredSearch = () => {
@@ -640,6 +690,20 @@ export default function Home() {
             </div>
           ) : (
             <div className="space-y-6 pb-4">
+              {/* 🌟 [신규] 이전 대화 더 보기 버튼 */}
+              {nextBefore && messages.length > 0 && (
+                <div className="flex justify-center mb-4 pt-2">
+                  <button 
+                    onClick={loadOlderMessages} 
+                    disabled={loadingOlder}
+                    className="flex items-center gap-2 text-xs font-bold text-gray-500 hover:text-green-600 px-4 py-2 rounded-full bg-white dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] shadow-sm transition-colors"
+                  >
+                    {loadingOlder ? <Loader2 size={14} className="animate-spin" /> : <Clock size={14} />}
+                    {loadingOlder ? '불러오는 중...' : '이전 대화 더 보기'}
+                  </button>
+                </div>
+              )}
+
               {messages.map((message, index) => {
                 const isLastMessage = index === messages.length - 1;
                 const isAssistant = message.role !== "user"; 
