@@ -217,7 +217,6 @@ export default function Home() {
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, [currentThreadId, userId]);
 
-  // 스크롤 감지 (사용자가 직접 스크롤을 올렸는지 체크)
   useEffect(() => {
     const el = scrollContainerRef.current;
     if (!el) return;
@@ -229,12 +228,10 @@ export default function Home() {
     return () => el.removeEventListener('scroll', onScroll);
   }, []);
 
-  // 🌟 [스크롤 버그 픽스] 데이터가 아닌 '실제 화면(DOM)'이 변할 때 스크롤을 추적합니다.
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container || !autoScroll) return;
 
-    // 브라우저의 MutationObserver를 사용해 실제 요소나 글자가 렌더링되는 순간을 감지!
     const observer = new MutationObserver(() => {
       if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
       scrollRafRef.current = requestAnimationFrame(() => {
@@ -243,7 +240,6 @@ export default function Home() {
       });
     });
 
-    // 채팅창 내부의 자식 요소 추가나 텍스트(마크다운) 변화를 모두 감시
     observer.observe(container, { 
       childList: true, 
       subtree: true, 
@@ -254,7 +250,7 @@ export default function Home() {
       observer.disconnect();
       if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
     };
-  }, [autoScroll]); // autoScroll이 true일 때만 작동 (유저가 스크롤 올려서 볼 때는 방해 안 함)
+  }, [autoScroll]); 
 
   useEffect(() => {
     if (city === DEFAULT_CITY || district === DEFAULT_CITY) {
@@ -553,7 +549,12 @@ export default function Home() {
       </aside>
 
       <main className="relative flex h-full flex-1 flex-col w-full">
+        {/* 데스크탑 헤더 */}
         <div className="absolute top-4 right-4 z-50 hidden md:flex items-center gap-3">
+          {/* 🌟 데스크탑 후원하기 버튼 추가 */}
+          <button onClick={() => setShowDonation(true)} className="px-3 py-2 rounded-xl bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800/30 text-yellow-700 dark:text-yellow-400 text-sm font-bold shadow-sm hover:scale-105 transition-transform flex items-center gap-1.5">
+            ☕ 후원하기
+          </button>
           <button onClick={() => setShowManual(true)} className="px-3 py-2 rounded-xl bg-white dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] text-gray-700 dark:text-gray-200 text-sm font-bold shadow-sm hover:scale-105 transition-transform flex items-center gap-1.5">
             📖 메뉴얼
           </button>
@@ -565,16 +566,22 @@ export default function Home() {
           </button>
         </div>
 
+        {/* 모바일 헤더 */}
         <div className="flex items-center justify-between bg-white dark:bg-[#1a1a1a] p-4 border-b border-gray-200 dark:border-[#333] md:hidden shrink-0">
           <div className="font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>맞춤 혜택 찾기</div>
-          <div className="flex items-center gap-3">
-            <button onClick={() => setShowManual(true)} className="px-2.5 py-1.5 rounded-lg bg-white dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] text-gray-700 dark:text-gray-200 text-xs font-bold shadow-sm hover:scale-105 transition-transform flex items-center gap-1">
+          
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* 🌟 모바일용 콤팩트 후원하기 버튼 추가 */}
+            <button onClick={() => setShowDonation(true)} className="px-2 py-1.5 sm:px-2.5 rounded-lg bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800/30 text-yellow-700 dark:text-yellow-400 text-xs font-bold shadow-sm hover:scale-105 transition-transform flex items-center gap-1">
+              ☕ 후원하기
+            </button>
+            <button onClick={() => setShowManual(true)} className="px-2 py-1.5 sm:px-2.5 rounded-lg bg-white dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] text-gray-700 dark:text-gray-200 text-xs font-bold shadow-sm hover:scale-105 transition-transform flex items-center gap-1">
               📖 메뉴얼
             </button>
-            <a href="https://www.instagram.com/policyai.kr/" target="_blank" rel="noopener noreferrer" className="hover:scale-110 transition-transform flex items-center justify-center">
-              <img src="/instagram-logo.png" alt="Instagram" className="w-6 h-6 object-contain" />
+            <a href="https://www.instagram.com/policyai.kr/" target="_blank" rel="noopener noreferrer" className="hover:scale-110 transition-transform hidden sm:flex items-center justify-center">
+              <img src="/instagram-logo.png" alt="Instagram" className="w-5 h-5 object-contain" />
             </a>
-            <button onClick={toggleTheme} className="text-gray-500 dark:text-gray-300"><Sun size={24} className="block dark:hidden"/><Moon size={24} className="hidden dark:block"/></button>
+            <button onClick={toggleTheme} className="text-gray-500 dark:text-gray-300"><Sun size={22} className="block dark:hidden"/><Moon size={22} className="hidden dark:block"/></button>
             <button onClick={() => setIsSidebarOpen(true)} className="text-gray-500 dark:text-gray-300"><Menu size={24} /></button>
           </div>
         </div>
