@@ -2,10 +2,22 @@
 import React from 'react';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import type { Components } from 'react-markdown';
 
+// 🌟 [보안/XSS 방어] 기본 살균 스키마에 안전한 속성(className 등)만 추가 허용
+const customSchema = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+    // 모든 태그에서 className을 허용하여 우리가 정의한 Tailwind 스타일이 안 깨지게 보호
+    '*': [...(defaultSchema.attributes?.['*'] ?? []), 'className'],
+  },
+};
+
 export const MARKDOWN_REMARK_PLUGINS = [remarkGfm] as const;
-export const MARKDOWN_REHYPE_PLUGINS = [rehypeRaw] as const;
+// 🌟 [핵심] raw HTML을 변환한 직후, 즉시 sanitize(살균)하여 악성 스크립트를 제거! 순서가 매우 중요함.
+export const MARKDOWN_REHYPE_PLUGINS = [rehypeRaw, [rehypeSanitize, customSchema]] as const;
 
 export const MARKDOWN_COMPONENTS: Components = {
   p: ({ node, ...props }) => <p className="mb-3 leading-relaxed" {...props} />,
