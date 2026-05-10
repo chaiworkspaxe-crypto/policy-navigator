@@ -70,7 +70,7 @@ const AssistantBubble = memo(function AssistantBubble({ content, isStreaming }: 
   );
 });
 
-// 🌟 [수정 포인트] 정규화 강건성 보강: AI 응답 변동성에 대비한 느슨한 매칭
+// 정규화 강건성 보강: AI 응답 변동성에 대비한 느슨한 매칭
 const extractSummaryTableText = (text: string) => {
   const lines = text.split('\n');
   let headerIdx = -1;
@@ -228,6 +228,7 @@ export default function Home() {
     return () => el.removeEventListener('scroll', onScroll);
   }, []);
 
+  // 🌟 [최적화] MutationObserver 비용 절감 (모바일 버벅임 방지)
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container || !autoScroll) return;
@@ -243,7 +244,7 @@ export default function Home() {
     observer.observe(container, { 
       childList: true, 
       subtree: true, 
-      characterData: true 
+      characterData: false // 🌟 성능을 위해 글자 단위 이벤트 무시
     });
 
     return () => {
