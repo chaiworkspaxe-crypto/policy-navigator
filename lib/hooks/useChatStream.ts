@@ -90,6 +90,8 @@ export function useChatStream() {
         { role: 'user' as const, content: opts.newUserContent },
       ];
 
+      let accumulated = ''; // catch 블록에서 접근할 수 있도록 밖으로 빼기
+
       try {
         const response = await fetch('/api/chat', {
           method: 'POST',
@@ -116,7 +118,6 @@ export function useChatStream() {
 
         const reader = response.body?.getReader();
         const decoder = new TextDecoder('utf-8');
-        let accumulated = '';
         let buffer = '';
 
         if (!reader) {
@@ -127,7 +128,6 @@ export function useChatStream() {
         resetWatchdog(); 
 
         while (true) {
-          // 🌟 통신 중 컴포넌트가 파괴되었다면 즉시 루프 탈출 (불필요한 연산 방지)
           if (!isMountedRef.current) break;
 
           const { done, value } = await reader.read();
@@ -141,7 +141,7 @@ export function useChatStream() {
           buffer = lines.pop() ?? ''; 
 
           for (const line of lines) {
-            if (!isMountedRef.current) break; // 🌟 이중 방어망
+            if (!isMountedRef.current) break;
 
             const trimmed = line.trim();
             if (!trimmed) continue;
@@ -174,7 +174,6 @@ export function useChatStream() {
           }
         }
 
-        // 마지막 buffer 잔재 flush
         const tail = buffer.trim();
         if (tail && isMountedRef.current) {
           try {
@@ -193,19 +192,23 @@ export function useChatStream() {
         }
 
       } catch (err: any) {
-        if (!isMountedRef.current) return; // Unmount로 인한 에러면 무시
+        if (!isMountedRef.current) return; 
         
+        // 🌟 [수정 포인트] Abort 처리 로직 고도화: 부분 답변을 살려서 화면에 고정
         if (err.name === 'AbortError') {
           if (watchdogTimedOut) {
+            if (accumulated.length > 0) handlers.onDone?.(accumulated);
             handlers.onError?.(
-              '응답이 오래 걸려 자동으로 끊었어요. 잠시 후 다시 시도해주세요. (네트워크 상태나 검색 양 때문일 수 있어요!)',
+              '응답이 오래 걸려 자동으로 끊었어요. 받은 내용까지는 살려뒀으니, 이어쓰기 버튼을 눌러 마저 받아보세요.',
             );
           } else {
             console.log('[useChatStream] 사용자에 의해 스트리밍이 중단되었습니다.');
+            if (accumulated.length > 0) handlers.onDone?.(accumulated);
           }
         } else {
           console.error('[useChatStream]', err);
           handlers.onError?.('서버 상태가 불안정합니다. 잠시 후 다시 시도해주세요.');
+          if (accumulated.length > 0) handlers.onDone?.(accumulated); // 🌟 알 수 없는 에러 대비 안전망
         }
       } finally {
         if (watchdogId) clearTimeout(watchdogId); 
