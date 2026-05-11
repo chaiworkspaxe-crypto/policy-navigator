@@ -440,7 +440,7 @@ export default function Home() {
       {
         userId,
         threadId: targetThreadId,
-        messages, // 🌟 여기서 기존 배열에 새 메시지를 추가하지 않고, 순수 히스토리 상태만 넘김!
+        messages, 
         newUserContent: userText,
       },
       {
@@ -457,8 +457,12 @@ export default function Home() {
         onError: (msg) => {
           setErrorMessage(msg);
           setMessages((prev) => {
-            const trimmed = prev.slice(0, -1);
-            return trimmed;
+            // 🛡️ [핵심 개선] 부분 답변이 이미 들어와 있으면 그대로 보존, 빈 placeholder만 제거
+            const last = prev[prev.length - 1];
+            if (last?.role === 'assistant' && (last.content ?? '').trim().length > 0) {
+              return prev;   // 받은 만큼은 살린다
+            }
+            return prev.slice(0, -1);
           });
           
           if (!firstDeltaArrived && isFollowUp) {
