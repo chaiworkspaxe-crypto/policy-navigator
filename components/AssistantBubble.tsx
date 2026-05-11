@@ -9,20 +9,22 @@ interface Props {
 }
 
 export default memo(function AssistantBubble({ content, isStreaming }: Props) {
-  // 🌟 스트리밍 중이 아니면 렌더링 지연(Throttle) 없이 즉시 MarkdownMessage로 넘김!
-  // (중복 코드가 완전히 사라지고 재사용성 극대화)
-  if (!isStreaming) return <MarkdownMessage content={content} />;
-  
+  // 🛡️ [핵심] 훅은 무조건 컴포넌트 최상단에서 호출 (Rules of Hooks 준수!)
   const [renderedContent, setRenderedContent] = useState(content);
   const rafRef = useRef<number | null>(null);
   const lastFlushRef = useRef<number>(0);
-  
+
   useEffect(() => {
-    // 모바일 기기에서도 버벅임 없이 스트리밍 텍스트를 부드럽게 그리기 위한 최적화 로직
+    // 🌟 스트리밍 중이 아닐 땐 즉시 동기화하여 throttle 우회
+    if (!isStreaming) {
+      setRenderedContent(content);
+      return;
+    }
+
     const FLUSH_INTERVAL_MS = 80;
     const now = performance.now();
     const elapsed = now - lastFlushRef.current;
-    
+
     if (elapsed >= FLUSH_INTERVAL_MS) {
       lastFlushRef.current = now;
       setRenderedContent(content);
@@ -34,11 +36,13 @@ export default memo(function AssistantBubble({ content, isStreaming }: Props) {
         rafRef.current = null;
       });
     }
-    
-    return () => { 
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current); 
+
+    return () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
     };
-  }, [content]);
-  
+  }, [content, isStreaming]); // 의존성 배열에 isStreaming 추가
+
+  // 🛡️ 스트리밍 마지막 청크가 throttle에 걸려 누락되는 걸 막기 위해,
+  // 완료 직후 강제 동기화(setRenderedContent)도 useEffect가 책임집니다. 별도 early return 불필요.
   return <MarkdownMessage content={renderedContent} />;
 });
