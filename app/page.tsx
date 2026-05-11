@@ -435,11 +435,12 @@ export default function Home() {
 
     let firstDeltaArrived = false;
 
+    // 🌟 [핵심 개선 - Option B] 히스토리(messages)만 보내고, 새 메시지는 newUserContent로 분리 전송!
     await stream(
       {
         userId,
         threadId: targetThreadId,
-        messages: [...messages, { role: 'user' as const, content: userText }],
+        messages, // 🌟 여기서 기존 배열에 새 메시지를 추가하지 않고, 순수 히스토리 상태만 넘김!
         newUserContent: userText,
       },
       {
