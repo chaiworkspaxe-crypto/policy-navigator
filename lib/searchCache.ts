@@ -14,15 +14,35 @@ const supabase = createClient(
 
 export type CacheableTool = 'naver' | 'tavily';
 
+// 🌟 한국어 검색 정규화 강화: 띄어쓰기/조사/특수문자 차이 무시
+const STOPWORDS = new Set([
+  // 조사
+  '은', '는', '이', '가', '을', '를', '에', '의', '와', '과', '도', '로', '으로', '에서', '한테', '께',
+  // 흔한 접미어
+  '관련', '대한', '대해', '관해', '말씀', '알려', '주세요', '주실래', '있나요', '있어요',
+]);
+
 // ────────────────────────────────────────────────────────────
 // 1) 쿼리 정규화 — 작은 표기 차이를 같은 캐시 키로 모음
 // ────────────────────────────────────────────────────────────
 function normalizeQuery(q: string): string {
-  return q
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, ' ')                     // 다중 공백 → 단일
-    .slice(0, 200);                            // 안전 상한
+  // 1) 기본 정규화: 소문자화 + 모든 공백 제거 + 흔한 구두점 제거
+  let s = q.trim().toLowerCase()
+    .replace(/[\s\u00A0]+/g, '')           // "청년 월세" === "청년월세"
+    .replace(/[?!,.~`'"()\[\]{}<>·•\-_]+/g, ''); // 기호 날리기
+
+  // 2) 조사/불용어 제거 (간이 morphology)
+  for (const sw of STOPWORDS) {
+    s = s.split(sw).join('');
+  }
+
+  // 3) site: 같은 검색 연산자는 순서가 달라도 같게 취급되도록 일관된 위치로 정렬
+  const siteMatches = Array.from(s.matchAll(/site:[a-z0-9.-]+/g)).map(m => m[0]).sort();
+  if (siteMatches.length > 0) {
+    s = s.replace(/site:[a-z0-9.-]+/g, '') + '|' + siteMatches.join(',');
+  }
+
+  return s.slice(0, 200); // 안전 상한 (해시 생성 전 너무 긴 쿼리 방지)
 }
 
 // ────────────────────────────────────────────────────────────
@@ -58,13 +78,13 @@ export async function getCachedSearch(
       .maybeSingle();
 
     if (error) {
-      // 캐시 장애는 정상 흐름에 영향 주지 않음 — null 반환해서 fresh fetch로
+      // 캐시 장애는 정상 흐름에 영향 주지 않음 — null 반환해서 fresh fetch로 유도
       console.warn('[searchCache.get]', error.message);
       return null;
     }
     if (!data?.result) return null;
 
-    // 🌟 hit_count 증가는 fire-and-forget (사용자 응답에 영향 없음)
+    // 🌟 hit_count 증가는 fire-and-forget (사용자 응답 지연 없음)
     void supabase
       .rpc('inc_search_cache_hit', { p_query_hash: queryHash })
       .then(({ error: rpcErr }) => {
@@ -90,7 +110,7 @@ const SHOULD_NOT_CACHE_PATTERNS = [
   /타임아웃/,
   /결과 없음/,
   /API 키/,
-  /\b\d{3}\b.{0,10}에러/,                   // "400 에러", "500 에러" 등
+  /\b\d{3}\b.{0,10}에러/,                    // "400 에러", "500 에러" 등
 ];
 
 export async function setCachedSearch(
@@ -112,11 +132,11 @@ export async function setCachedSearch(
       {
         query_hash: queryHash,
         tool_name: tool,
-        query: normalized,
+        query: normalized, // 정규화된 형태를 저장해서 DB에서 확인하기 용이하게 함
         result,
         expires_at: expiresAt,
-        // hit_count는 upsert 시 기본값 1로 들어가지만,
-        // 같은 키 재저장 시 기존 hit_count를 보존하고 싶다면 RPC로 분리 (현재는 reset되어도 무방)
+        // hit_count는 upsert 시 기본값 1로 들어가지만, 
+        // 같은 키 재저장 시 기존 hit_count 리셋 방지를 원한다면 향후 RPC 도입 고려
       },
       { onConflict: 'query_hash' },
     );
