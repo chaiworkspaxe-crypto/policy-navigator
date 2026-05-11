@@ -8,15 +8,13 @@ import * as Sentry from '@sentry/nextjs';
 import { after } from 'next/server';
 import { buildSystemPrompt } from '@/lib/prompts/policyNavigator';
 import { extractProfileCore } from '@/app/api/profile/extract/_logic'; 
-import { getCachedSearch, setCachedSearch } from '@/lib/searchCache';   // 🌟 [신규] 검색 캐시 헬퍼
+import { getCachedSearch, setCachedSearch } from '@/lib/searchCache';   // 🌟 검색 캐시 헬퍼
 
 const rawOpenai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 // 🌟 [인프라 모니터링 노트]
-// supabase-js는 REST API 기반이므로 일반적인 Postgres Connection Pool 고갈(503 에러) 위험은 적습니다. (별도 Pooler/PgBouncer 불필요)
-// 단, 하단에서 호출하는 `match_policies` (pgvector 유사도 검색 RPC)는 내부적으로 DB 연결을 일시 점유합니다.
 // 🚀 런칭 후 트래픽 급증 시 반드시 Supabase 대시보드 > Database > 'Active connections'를 모니터링하세요! (Free 티어 한도 60개)
 const supabase = createClient(supabaseUrl, supabaseKey);
 
@@ -26,8 +24,6 @@ const TOOL_TIMEOUT_MS = 10_000;
 
 const PRIMARY_MODEL  = process.env.OPENAI_CHAT_MODEL          ?? 'gpt-5.4';
 const FALLBACK_MODEL = process.env.OPENAI_CHAT_FALLBACK_MODEL ?? 'gpt-5.4-nano';
-
-// 🌟 [정리 완료] 기존 TAVILY_CACHE 인메모리 관련 코드 완벽 삭제 (이제 DB 캐시로 통합)
 
 const isUserCancellation = (e: any, parentSignal?: AbortSignal): boolean => {
   if (!parentSignal?.aborted) return false;
@@ -171,333 +167,335 @@ export async function POST(req: Request) {
 
     const trimmedMessages = trimMessages(messages); 
 
-    const profileContext = await profileSelectPromise;
-    const systemPromptWithTime = buildSystemPrompt() + profileContext;
-
-    // 🌟 [핵심 개선] 부분 응답 DB 저장 문제 해결을 위한 멱등(Idempotent) 가드
-    let assistantPersisted = false;
-    
-    const persistAssistant = async (text: string, finishReason?: string) => {
-      if (assistantPersisted) return;        // 이미 저장됐으면 무시
-      if (!userId || !threadId) return;
-      if (!text || !text.trim()) return;     // 빈 응답은 저장 안 함
-
-      assistantPersisted = true;             // 🛡️ 동시 호출(race condition) 완벽 차단
-
-      try {
-        const now = new Date().toISOString();
-        if (userInsertPromise) await userInsertPromise.catch(() => {});
-
-        await supabase.from('chat_messages').insert({
-          thread_id: threadId,
-          user_id: userId,
-          role: 'assistant',
-          content: text,
-          created_at: now,
-          updated_at: now,
-        });
-
-        // 제목 업데이트 로직
-        const { data: threadRow } = await supabase
-          .from('chat_threads')
-          .select('title')
-          .eq('thread_id', threadId)
-          .eq('user_id', userId)
-          .maybeSingle();
-
-        const titleUpdate: Record<string, unknown> = { updated_at: now };
-        const isFirstTurnTitle = !threadRow?.title || threadRow.title === '새 대화';
-        
-        if (
-          isFirstTurnTitle &&
-          lastMsg?.role === 'user' &&
-          typeof lastMsg.content === 'string'
-        ) {
-          const raw = lastMsg.content
-            .replace(/^📍.*?\|/g, '')
-            .replace(/[🎂📝📍|]/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-          const title = raw.slice(0, 30) + (raw.length > 30 ? '…' : '');
-          if (title.length >= 2) titleUpdate.title = title;
-        }
-        
-        await supabase.from('chat_threads')
-          .update(titleUpdate)
-          .eq('thread_id', threadId)
-          .eq('user_id', userId);
-          
-      } catch (dbError) {
-        console.error("DB 저장 중 에러 발생:", dbError);
-        assistantPersisted = false;   // 🌟 실패하면 다시 시도 가능하게 플래그 해제
-      }
-    };
-
-    const commonTools = {
-      search_internal_db: tool({
-        description: '내부 DB(pgvector)에서 정부 정책의 의미적 유사도 상위 결과를 가져옵니다. 가장 먼저 호출하세요.',
-        parameters: z.object({ 
-          query: z.string()
-            .min(1, '검색어가 비어있습니다.')
-            .max(150, '검색어가 너무 깁니다.')
-            .describe('한국어 자연어 검색어') 
-        }),
-        execute: async ({ query }) => {
-          try {
-            type EmbeddingResp = { data?: Array<{ embedding?: number[] }> };
-            type RpcRow = { title?: string; provider?: string; summary?: string; url?: string; similarity?: number };
-
-            const embeddingResponse = await withTimeout(
-              async (signal) => rawOpenai.embeddings.create(
-                { model: 'text-embedding-3-small', input: query },
-                { signal }
-              ),
-              TOOL_TIMEOUT_MS,
-              'embedding',
-              req.signal,
-            ) as EmbeddingResp;
-
-            const queryEmbedding = embeddingResponse?.data?.[0]?.embedding;
-            if (!Array.isArray(queryEmbedding) || queryEmbedding.length === 0) {
-              return '임베딩 일시 실패. naver_web_search로 즉시 우회하세요. 이 검색은 더 시도하지 마세요.';
-            }
-
-            const { data, error } = await withTimeout(
-              async () => supabase.rpc('match_policies', {
-                query_embedding: queryEmbedding,
-                match_threshold: 0.4, 
-                match_count: 8,
-              }),
-              TOOL_TIMEOUT_MS,
-              'pgvector',
-              req.signal,
-            ) as { data: RpcRow[] | null; error: { message: string } | null };
-
-            if (error) {
-              return `내부 DB 일시 장애(${error.message}). naver_web_search로 우회하세요. 이 검색은 더 시도하지 마세요.`;
-            }
-
-            if (data && data.length > 0) {
-              return data
-                .map((p) => {
-                  const tier = (p.similarity ?? 0) >= 0.55 ? '🟢' : '🟡';
-                  return `- ${tier} 정책명: ${p?.title ?? '미상'} (${p?.provider ?? '미상'})\n  내용: ${p?.summary ?? ''}\n  링크: ${p?.url ?? ''}`;
-                })
-                .join('\n\n');
-            }
-
-            return '내부 DB에 매칭되는 정책 없음. naver_web_search 또는 global_web_search로 보완하세요.';
-          } catch (e: any) {
-            if (isUserCancellation(e, req.signal)) throw e; 
-            return `내부 DB 검색 일시 장애(${e?.message ?? 'unknown'}). 즉시 naver_web_search 또는 global_web_search로 우회하세요. 이 검색은 더 시도하지 마세요.`;
-          }
-        },
-      }),
-
-      naver_web_search: tool({
-        description: '지자체/읍면동 정책 및 최신 공고를 찾을 때 가장 먼저 사용하는 1순위 웹 검색 도구. 신뢰할 수 있는 공식 정보가 필요하다면 검색어에 "site:go.kr"을 포함하세요. (예: "서울시 청년월세지원 site:go.kr"). 공식 사이트 정보가 없다면 블로그/뉴스를 참고하되 팩트체크에 유의하세요. 결과가 "..."으로 잘려 내용이 불확실하다면 절대 추측하지 마세요.',
-        parameters: z.object({ 
-          query: z.string()
-            .min(1, '검색어가 비어있습니다.')
-            .max(150, '검색어가 너무 깁니다.')
-            .describe('한국어 자연어 검색어') 
-        }),
-        execute: async ({ query }) => {
-          try {
-            const clientId = process.env.NAVER_CLIENT_ID;
-            const clientSecret = process.env.NAVER_CLIENT_SECRET;
-            if (!clientId || !clientSecret) return '네이버 API 키 미설정. global_web_search를 사용하세요.';
-
-            // 🌟 [신규] 1단계: 캐시 hit 먼저 확인
-            const cached = await getCachedSearch('naver', query);
-            if (cached) {
-              console.log(`[💾 naver cache HIT] "${query.slice(0, 30)}"`);
-              return cached;
-            }
-
-            const enhancedQuery = /site:|go\.kr|or\.kr/i.test(query)
-              ? query
-              : `${query} 공고 (site:go.kr OR site:or.kr)`;
-
-            const headers = { 'X-Naver-Client-Id': clientId, 'X-Naver-Client-Secret': clientSecret };
-
-            const [webRes, newsRes] = await Promise.allSettled([
-              withTimeout(
-                async (signal) => fetch(
-                  `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(enhancedQuery)}&display=8&sort=sim`,
-                  { headers, signal }
-                ),
-                TOOL_TIMEOUT_MS, 'naver-web', req.signal,
-              ),
-              withTimeout(
-                async (signal) => fetch(
-                  `https://openapi.naver.com/v1/search/news?query=${encodeURIComponent(query)}&display=4&sort=date`,
-                  { headers, signal }
-                ),
-                TOOL_TIMEOUT_MS, 'naver-news', req.signal,
-              ),
-            ]);
-
-            const out: string[] = [];
-
-            if (webRes.status === 'fulfilled' && (webRes.value as Response).ok) {
-              const data = await (webRes.value as Response).json();
-              for (const item of (data.items ?? [])) {
-                const t = decodeNaverEntities(item?.title ?? '');
-                const d = decodeNaverEntities(item?.description ?? '');
-                const link = typeof item?.link === 'string' ? item.link : '';
-                const isOfficial = /\.go\.kr|\.or\.kr/i.test(link);
-                out.push(`- ${isOfficial ? '🏛️ 공식' : '📄 일반'} 제목: ${t}\n  내용: ${d}\n  링크: ${link}`);
-              }
-            }
-
-            if (newsRes.status === 'fulfilled' && (newsRes.value as Response).ok) {
-              const data = await (newsRes.value as Response).json();
-              for (const item of (data.items ?? [])) {
-                const t = decodeNaverEntities(item?.title ?? '');
-                const d = decodeNaverEntities(item?.description ?? '');
-                const link = typeof item?.link === 'string' ? item.link : '';
-                out.push(`- 📰 뉴스 제목: ${t}\n  내용: ${d}\n  링크: ${link}`);
-              }
-            }
-
-            if (out.length === 0) {
-              return '네이버 검색 결과 없음. 키워드를 더 구체적으로(지역명+분야) 바꿔 재시도하거나 global_web_search로 우회하세요.';
-            }
-
-            const formatted = out.join('\n\n');
-
-            // 🌟 [신규] 3단계: 결과 캐시에 저장 (fire-and-forget, 6시간 TTL)
-            void setCachedSearch('naver', query, formatted, 6);
-
-            return formatted;
-          } catch (e: any) {
-            if (isUserCancellation(e, req.signal)) throw e;
-            return `네이버 검색 일시 장애(${e?.message ?? 'unknown'}). global_web_search로 우회하세요. 이 검색은 더 시도하지 마세요.`;
-          }
-        },
-      }),
-
-      global_web_search: tool({
-        description: '정밀 타격용 2순위 웹 검색 도구. 네이버 검색 결과가 "..."으로 잘려있거나, 마감일/지원금액/공식링크 등 핵심 팩트가 누락되었을 때만 "최후의 수단"으로 무제한 사용하세요. 텍스트 전체를 읽어오므로 빈틈을 메꿀 때 탁월합니다.',
-        parameters: z.object({ 
-          query: z.string()
-            .min(1, '검색어가 비어있습니다.')
-            .max(150, '검색어가 너무 깁니다.')
-            .describe('한국어 자연어 검색어') 
-        }),
-        execute: async ({ query }) => {
-          try {
-            const tavilyKey = process.env.TAVILY_API_KEY;
-            if (!tavilyKey) return '글로벌 검색 미설정. DB와 네이버 결과만으로 답변하세요.';
-            
-            const seoulYear = new Intl.DateTimeFormat('en-US', {
-              timeZone: 'Asia/Seoul',
-              year: 'numeric',
-            }).format(new Date());
-            const localizedQuery = `${seoulYear}년 대한민국 정부 정책 지원금 ${query}`;
-
-            // 🌟 [신규] 1단계: 캐시 hit 먼저 확인
-            const cached = await getCachedSearch('tavily', query);
-            if (cached) {
-              console.log(`[💾 tavily cache HIT] "${query.slice(0, 30)}"`);
-              return cached;
-            }
-
-            // 🌟 [신규] 2단계: 캐시 miss → 기존 Tavily API 호출
-            const res = (await withTimeout(
-              async (signal) => fetch('https://api.tavily.com/search', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  api_key: tavilyKey,
-                  query: localizedQuery,
-                  max_results: 5,            
-                  search_depth: 'basic',    
-                }),
-                signal,
-              }),
-              TOOL_TIMEOUT_MS + 2000,
-              'tavily',
-              req.signal,
-            )) as Response;
-            
-            if (!res.ok) return `글로벌 검색 ${res.status}. 네이버 결과만으로 답변하세요.`;
-            
-            const data = await res.json() as { results?: Array<{ title: string; content: string; url: string }> };
-            if (!data.results?.length) return '글로벌 검색 결과 없음. 키워드를 바꿔 재시도하거나 보유 정보로 마무리하세요.';
-            
-            const tier = (url: string): number => {
-              try {
-                const host = new URL(url).hostname;
-                if (host.endsWith('.go.kr')) return 0;
-                if (host.endsWith('.or.kr')) return 1;
-                if (host.endsWith('.kr'))    return 2;
-                return 3;
-              } catch { return 4; }
-            };
-            const sorted = [...data.results].sort((a, b) => tier(a.url) - tier(b.url));
-
-            const formatted = sorted
-              .map((r: any) => `- 제목: ${r.title}\n  내용: ${r.content}\n  링크: ${r.url}`)
-              .join('\n\n');
-
-            // 🌟 [신규] 3단계: 결과 캐시에 저장 (fire-and-forget, 24시간 TTL)
-            void setCachedSearch('tavily', query, formatted, 24);
-
-            return formatted;
-          } catch (e: any) {
-            if (isUserCancellation(e, req.signal)) throw e;
-            return `글로벌 검색 일시 장애(${e?.message ?? 'unknown'}). 보유한 내부 DB/네이버 결과만으로 답변을 정리하세요.`;
-          }
-        },
-      }),
-    };
-
-    // 기존의 길었던 handleFinish는 안전한 persistAssistant 호출로 단순화
-    const handleFinish = async ({ text, usage, finishReason, modelName }: any) => {
-      console.log(`[💰 ${modelName}] in=${usage?.promptTokens}, out=${usage?.completionTokens}, finish=${finishReason}`);
-      await persistAssistant(text, finishReason);
-    };
-
-    let result;
-    try {
-      result = await streamText({
-        model: openai(PRIMARY_MODEL), 
-        system: systemPromptWithTime,
-        messages: trimmedMessages,
-        maxSteps: 10,
-        abortSignal: req.signal, 
-        onError: (err) => { console.error(`[streamText PRIMARY onError]`, err); },
-        tools: commonTools,
-        onFinish: (params) => handleFinish({ ...params, modelName: PRIMARY_MODEL })
-      });
-    } catch (primaryErr: any) {
-      console.error(`[💥 PRIMARY model ${PRIMARY_MODEL} init failed → fallback]`, primaryErr);
-      Sentry.captureException(primaryErr, { tags: { phase: 'primary-model-init', model: PRIMARY_MODEL } });
-      
-      result = await streamText({
-        model: openai(FALLBACK_MODEL),
-        system: systemPromptWithTime,
-        messages: trimmedMessages,
-        maxSteps: 10,
-        abortSignal: req.signal,
-        onError: (err) => { console.error('[streamText FALLBACK onError]', err); },
-        tools: commonTools,
-        onFinish: (params) => handleFinish({ ...params, modelName: FALLBACK_MODEL })
-      });
-    }
-
-    let fullAnswer = "";
-    let streamErrored = false;
-
-    const pickFriendlyMessage = makeFriendlyMessagePicker();
-
     const customStream = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder();
-        const send = (obj: Record<string, unknown>) =>
-          controller.enqueue(encoder.encode(JSON.stringify(obj) + '\n'));
+        const send = (obj: Record<string, unknown>) => {
+          try { controller.enqueue(encoder.encode(JSON.stringify(obj) + '\n')); } catch(e) {}
+        };
+
+        send({ type: 'status', message: '🔍 검색 준비 중이에요…' });
+
+        const profileContext = await Promise.race([
+          profileSelectPromise,
+          new Promise<string>((resolve) =>
+            setTimeout(() => {
+              console.warn('[profile select] 300ms 초과 → 프로필 없이 진행');
+              resolve('');
+            }, 300)
+          ),
+        ]);
+
+        const systemPromptWithTime = buildSystemPrompt() + profileContext;
+
+        let assistantPersisted = false;
+        
+        const persistAssistant = async (text: string, finishReason?: string) => {
+          if (assistantPersisted) return;        
+          if (!userId || !threadId) return;
+          if (!text || !text.trim()) return;     
+
+          assistantPersisted = true;             
+
+          try {
+            const now = new Date().toISOString();
+            if (userInsertPromise) await userInsertPromise.catch(() => {});
+
+            await supabase.from('chat_messages').insert({
+              thread_id: threadId,
+              user_id: userId,
+              role: 'assistant',
+              content: text,
+              created_at: now,
+              updated_at: now,
+            });
+
+            const { data: threadRow } = await supabase
+              .from('chat_threads')
+              .select('title')
+              .eq('thread_id', threadId)
+              .eq('user_id', userId)
+              .maybeSingle();
+
+            const titleUpdate: Record<string, unknown> = { updated_at: now };
+            const isFirstTurnTitle = !threadRow?.title || threadRow.title === '새 대화';
+            
+            if (
+              isFirstTurnTitle &&
+              lastMsg?.role === 'user' &&
+              typeof lastMsg.content === 'string'
+            ) {
+              const raw = lastMsg.content
+                .replace(/^📍.*?\|/g, '')
+                .replace(/[🎂📝📍|]/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+              const title = raw.slice(0, 30) + (raw.length > 30 ? '…' : '');
+              if (title.length >= 2) titleUpdate.title = title;
+            }
+            
+            await supabase.from('chat_threads')
+              .update(titleUpdate)
+              .eq('thread_id', threadId)
+              .eq('user_id', userId);
+              
+          } catch (dbError) {
+            console.error("DB 저장 중 에러 발생:", dbError);
+            assistantPersisted = false;   
+          }
+        };
+
+        const commonTools = {
+          search_internal_db: tool({
+            description: '내부 DB(pgvector)에서 정부 정책의 의미적 유사도 상위 결과를 가져옵니다. 가장 먼저 호출하세요.',
+            parameters: z.object({ 
+              query: z.string()
+                .min(1, '검색어가 비어있습니다.')
+                .max(150, '검색어가 너무 깁니다.')
+                .describe('한국어 자연어 검색어') 
+            }),
+            execute: async ({ query }) => {
+              try {
+                type EmbeddingResp = { data?: Array<{ embedding?: number[] }> };
+                type RpcRow = { title?: string; provider?: string; summary?: string; url?: string; similarity?: number };
+
+                const embeddingResponse = await withTimeout(
+                  async (signal) => rawOpenai.embeddings.create(
+                    { model: 'text-embedding-3-small', input: query },
+                    { signal }
+                  ),
+                  TOOL_TIMEOUT_MS,
+                  'embedding',
+                  req.signal,
+                ) as EmbeddingResp;
+
+                const queryEmbedding = embeddingResponse?.data?.[0]?.embedding;
+                if (!Array.isArray(queryEmbedding) || queryEmbedding.length === 0) {
+                  return '임베딩 일시 실패. naver_web_search로 즉시 우회하세요. 이 검색은 더 시도하지 마세요.';
+                }
+
+                const { data, error } = await withTimeout(
+                  async () => supabase.rpc('match_policies', {
+                    query_embedding: queryEmbedding,
+                    match_threshold: 0.4, 
+                    match_count: 8,
+                  }),
+                  TOOL_TIMEOUT_MS,
+                  'pgvector',
+                  req.signal,
+                ) as { data: RpcRow[] | null; error: { message: string } | null };
+
+                if (error) {
+                  return `내부 DB 일시 장애(${error.message}). naver_web_search로 우회하세요. 이 검색은 더 시도하지 마세요.`;
+                }
+
+                if (data && data.length > 0) {
+                  return data
+                    .map((p) => {
+                      const tier = (p.similarity ?? 0) >= 0.55 ? '🟢' : '🟡';
+                      return `- ${tier} 정책명: ${p?.title ?? '미상'} (${p?.provider ?? '미상'})\n  내용: ${p?.summary ?? ''}\n  링크: ${p?.url ?? ''}`;
+                    })
+                    .join('\n\n');
+                }
+
+                return '내부 DB에 매칭되는 정책 없음. naver_web_search 또는 global_web_search로 보완하세요.';
+              } catch (e: any) {
+                if (isUserCancellation(e, req.signal)) throw e; 
+                return `내부 DB 검색 일시 장애(${e?.message ?? 'unknown'}). 즉시 naver_web_search 또는 global_web_search로 우회하세요. 이 검색은 더 시도하지 마세요.`;
+              }
+            },
+          }),
+
+          naver_web_search: tool({
+            description: '지자체/읍면동 정책 및 최신 공고를 찾을 때 가장 먼저 사용하는 1순위 웹 검색 도구. 신뢰할 수 있는 공식 정보가 필요하다면 검색어에 "site:go.kr"을 포함하세요. (예: "서울시 청년월세지원 site:go.kr"). 공식 사이트 정보가 없다면 블로그/뉴스를 참고하되 팩트체크에 유의하세요. 결과가 "..."으로 잘려 내용이 불확실하다면 절대 추측하지 마세요.',
+            parameters: z.object({ 
+              query: z.string()
+                .min(1, '검색어가 비어있습니다.')
+                .max(150, '검색어가 너무 깁니다.')
+                .describe('한국어 자연어 검색어') 
+            }),
+            execute: async ({ query }) => {
+              try {
+                const clientId = process.env.NAVER_CLIENT_ID;
+                const clientSecret = process.env.NAVER_CLIENT_SECRET;
+                if (!clientId || !clientSecret) return '네이버 API 키 미설정. global_web_search를 사용하세요.';
+
+                const cached = await getCachedSearch('naver', query);
+                if (cached) {
+                  console.log(`[💾 naver cache HIT] "${query.slice(0, 30)}"`);
+                  return cached;
+                }
+
+                const enhancedQuery = /site:|go\.kr|or\.kr/i.test(query)
+                  ? query
+                  : `${query} 공고 (site:go.kr OR site:or.kr)`;
+
+                const headers = { 'X-Naver-Client-Id': clientId, 'X-Naver-Client-Secret': clientSecret };
+
+                const [webRes, newsRes] = await Promise.allSettled([
+                  withTimeout(
+                    async (signal) => fetch(
+                      `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(enhancedQuery)}&display=8&sort=sim`,
+                      { headers, signal }
+                    ),
+                    TOOL_TIMEOUT_MS, 'naver-web', req.signal,
+                  ),
+                  withTimeout(
+                    async (signal) => fetch(
+                      `https://openapi.naver.com/v1/search/news?query=${encodeURIComponent(query)}&display=4&sort=date`,
+                      { headers, signal }
+                    ),
+                    TOOL_TIMEOUT_MS, 'naver-news', req.signal,
+                  ),
+                ]);
+
+                const out: string[] = [];
+
+                if (webRes.status === 'fulfilled' && (webRes.value as Response).ok) {
+                  const data = await (webRes.value as Response).json();
+                  for (const item of (data.items ?? [])) {
+                    const t = decodeNaverEntities(item?.title ?? '');
+                    const d = decodeNaverEntities(item?.description ?? '');
+                    const link = typeof item?.link === 'string' ? item.link : '';
+                    const isOfficial = /\.go\.kr|\.or\.kr/i.test(link);
+                    out.push(`- ${isOfficial ? '🏛️ 공식' : '📄 일반'} 제목: ${t}\n  내용: ${d}\n  링크: ${link}`);
+                  }
+                }
+
+                if (newsRes.status === 'fulfilled' && (newsRes.value as Response).ok) {
+                  const data = await (newsRes.value as Response).json();
+                  for (const item of (data.items ?? [])) {
+                    const t = decodeNaverEntities(item?.title ?? '');
+                    const d = decodeNaverEntities(item?.description ?? '');
+                    const link = typeof item?.link === 'string' ? item.link : '';
+                    out.push(`- 📰 뉴스 제목: ${t}\n  내용: ${d}\n  링크: ${link}`);
+                  }
+                }
+
+                if (out.length === 0) {
+                  return '네이버 검색 결과 없음. 키워드를 더 구체적으로(지역명+분야) 바꿔 재시도하거나 global_web_search로 우회하세요.';
+                }
+
+                const formatted = out.join('\n\n');
+                void setCachedSearch('naver', query, formatted, 6);
+
+                return formatted;
+              } catch (e: any) {
+                if (isUserCancellation(e, req.signal)) throw e;
+                return `네이버 검색 일시 장애(${e?.message ?? 'unknown'}). global_web_search로 우회하세요. 이 검색은 더 시도하지 마세요.`;
+              }
+            },
+          }),
+
+          global_web_search: tool({
+            description: '정밀 타격용 2순위 웹 검색 도구. 네이버 검색 결과가 "..."으로 잘려있거나, 마감일/지원금액/공식링크 등 핵심 팩트가 누락되었을 때만 "최후의 수단"으로 무제한 사용하세요. 텍스트 전체를 읽어오므로 빈틈을 메꿀 때 탁월합니다.',
+            parameters: z.object({ 
+              query: z.string()
+                .min(1, '검색어가 비어있습니다.')
+                .max(150, '검색어가 너무 깁니다.')
+                .describe('한국어 자연어 검색어') 
+            }),
+            execute: async ({ query }) => {
+              try {
+                const tavilyKey = process.env.TAVILY_API_KEY;
+                if (!tavilyKey) return '글로벌 검색 미설정. DB와 네이버 결과만으로 답변하세요.';
+                
+                const seoulYear = new Intl.DateTimeFormat('en-US', {
+                  timeZone: 'Asia/Seoul',
+                  year: 'numeric',
+                }).format(new Date());
+                const localizedQuery = `${seoulYear}년 대한민국 정부 정책 지원금 ${query}`;
+
+                const cached = await getCachedSearch('tavily', query);
+                if (cached) {
+                  console.log(`[💾 tavily cache HIT] "${query.slice(0, 30)}"`);
+                  return cached;
+                }
+
+                const res = (await withTimeout(
+                  async (signal) => fetch('https://api.tavily.com/search', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      api_key: tavilyKey,
+                      query: localizedQuery,
+                      max_results: 5,            
+                      search_depth: 'basic',    
+                    }),
+                    signal,
+                  }),
+                  TOOL_TIMEOUT_MS + 2000,
+                  'tavily',
+                  req.signal,
+                )) as Response;
+                
+                if (!res.ok) return `글로벌 검색 ${res.status}. 네이버 결과만으로 답변하세요.`;
+                
+                const data = await res.json() as { results?: Array<{ title: string; content: string; url: string }> };
+                if (!data.results?.length) return '글로벌 검색 결과 없음. 키워드를 바꿔 재시도하거나 보유 정보로 마무리하세요.';
+                
+                const tier = (url: string): number => {
+                  try {
+                    const host = new URL(url).hostname;
+                    if (host.endsWith('.go.kr')) return 0;
+                    if (host.endsWith('.or.kr')) return 1;
+                    if (host.endsWith('.kr'))    return 2;
+                    return 3;
+                  } catch { return 4; }
+                };
+                const sorted = [...data.results].sort((a, b) => tier(a.url) - tier(b.url));
+
+                const formatted = sorted
+                  .map((r: any) => `- 제목: ${r.title}\n  내용: ${r.content}\n  링크: ${r.url}`)
+                  .join('\n\n');
+
+                void setCachedSearch('tavily', query, formatted, 24);
+
+                return formatted;
+              } catch (e: any) {
+                if (isUserCancellation(e, req.signal)) throw e;
+                return `글로벌 검색 일시 장애(${e?.message ?? 'unknown'}). 보유한 내부 DB/네이버 결과만으로 답변을 정리하세요.`;
+              }
+            },
+          }),
+        };
+
+        const handleFinish = async ({ text, usage, finishReason, modelName }: any) => {
+          console.log(`[💰 ${modelName}] in=${usage?.promptTokens}, out=${usage?.completionTokens}, finish=${finishReason}`);
+          await persistAssistant(text, finishReason);
+        };
+
+        let result;
+        try {
+          result = await streamText({
+            model: openai(PRIMARY_MODEL), 
+            system: systemPromptWithTime,
+            messages: trimmedMessages,
+            maxSteps: 10,
+            abortSignal: req.signal, 
+            onError: (err) => { console.error(`[streamText PRIMARY onError]`, err); },
+            tools: commonTools,
+            onFinish: (params) => handleFinish({ ...params, modelName: PRIMARY_MODEL })
+          });
+        } catch (primaryErr: any) {
+          console.error(`[💥 PRIMARY model ${PRIMARY_MODEL} init failed → fallback]`, primaryErr);
+          Sentry.captureException(primaryErr, { tags: { phase: 'primary-model-init', model: PRIMARY_MODEL } });
+          
+          result = await streamText({
+            model: openai(FALLBACK_MODEL),
+            system: systemPromptWithTime,
+            messages: trimmedMessages,
+            maxSteps: 10,
+            abortSignal: req.signal,
+            onError: (err) => { console.error('[streamText FALLBACK onError]', err); },
+            tools: commonTools,
+            onFinish: (params) => handleFinish({ ...params, modelName: FALLBACK_MODEL })
+          });
+        }
+
+        let fullAnswer = "";
+        let streamErrored = false;
+        const pickFriendlyMessage = makeFriendlyMessagePicker();
 
         try {
           for await (const part of result.fullStream) {
@@ -510,6 +508,19 @@ export async function POST(req: Request) {
               }
               case 'tool-result': {
                 console.log(`[✅ 도구 응답] ${part.toolName} 완료`);
+                break;
+              }
+              // 🌟 [신규] 도구 내부 throw 케이스 — 무성 실패 방지 및 Sentry 기록
+              case 'tool-error': {
+                const e = (part as any).error as Error;
+                console.error(`[⚠️ 도구 에러] ${(part as any).toolName}`, e);
+                Sentry.captureException(e, {
+                  tags: { phase: 'tool-execute', tool: (part as any).toolName },
+                });
+                send({
+                  type: 'status',
+                  message: '🔄 검색 도구 하나가 잠시 막혔어요. 다른 경로로 다시 찾는 중...',
+                });
                 break;
               }
               case 'text-delta': {
@@ -552,7 +563,6 @@ export async function POST(req: Request) {
         } finally {
           console.log(`\n[🏁 스트림 종료] 길이=${fullAnswer.length}, error=${streamErrored}, aborted=${req.signal.aborted}`);
           
-          // 🛡️ [핵심 안전망] onFinish가 호출되지 않은 케이스(Abort/에러)에도 받아둔 데까지 무조건 DB에 저장!
           if (fullAnswer.trim().length > 0) {
             void persistAssistant(fullAnswer, req.signal.aborted ? 'aborted' : 'errored');
           }
