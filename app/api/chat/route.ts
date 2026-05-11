@@ -532,7 +532,7 @@ export async function POST(req: Request) {
 
         try {
           for await (const part of result.fullStream) {
-            switch (part.type as string) {
+            switch (part.type) { // 🌟 as string 삭제 (타입 추론 정상화)
               case 'tool-call': {
                 console.log(`[🤖 도구 호출] ${part.toolName}`, part.args);
                 const friendlyMsg = pickFriendlyMessage(part.toolName, part.args);
