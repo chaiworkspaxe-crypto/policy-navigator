@@ -332,17 +332,18 @@ export async function POST(req: Request) {
 
                 const headers = { 'X-Naver-Client-Id': clientId, 'X-Naver-Client-Secret': clientSecret };
 
+                // 🌟 [핵심 개선] display 갯수 축소로 토큰 절약 (webkr 8->6, news 4->3)
                 const [webRes, newsRes] = await Promise.allSettled([
                   withTimeout(
                     async (signal) => fetch(
-                      `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(enhancedQuery)}&display=8&sort=sim`,
+                      `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(enhancedQuery)}&display=6&sort=sim`,
                       { headers, signal }
                     ),
                     TOOL_TIMEOUT_MS, 'naver-web', req.signal,
                   ),
                   withTimeout(
                     async (signal) => fetch(
-                      `https://openapi.naver.com/v1/search/news?query=${encodeURIComponent(query)}&display=4&sort=date`,
+                      `https://openapi.naver.com/v1/search/news?query=${encodeURIComponent(query)}&display=3&sort=date`,
                       { headers, signal }
                     ),
                     TOOL_TIMEOUT_MS, 'naver-news', req.signal,
@@ -351,24 +352,37 @@ export async function POST(req: Request) {
 
                 const out: string[] = [];
 
+                // 🌟 [핵심 개선] 글자수 제한 및 포맷팅 공통화 함수
+                const formatItem = (item: any, prefix: string) => {
+                  const t = decodeNaverEntities(item?.title ?? '');
+                  const d = decodeNaverEntities(item?.description ?? '').slice(0, 180); // 180자 Cap 적용
+                  const link = typeof item?.link === 'string' ? item.link : '';
+                  const isOfficial = /\.go\.kr|\.or\.kr/i.test(link);
+                  return `- [${prefix}] ${isOfficial ? '🏛️ 공식' : '📄 일반'} 제목: ${t}\n  내용: ${d}\n  링크: ${link}`;
+                };
+
+                // 🌟 [핵심 개선] 공식 웹사이트(.go.kr / .or.kr) 우선 정렬
                 if (webRes.status === 'fulfilled' && (webRes.value as Response).ok) {
                   const data = await (webRes.value as Response).json();
-                  for (const item of (data.items ?? [])) {
-                    const t = decodeNaverEntities(item?.title ?? '');
-                    const d = decodeNaverEntities(item?.description ?? '');
-                    const link = typeof item?.link === 'string' ? item.link : '';
-                    const isOfficial = /\.go\.kr|\.or\.kr/i.test(link);
-                    out.push(`- ${isOfficial ? '🏛️ 공식' : '📄 일반'} 제목: ${t}\n  내용: ${d}\n  링크: ${link}`);
+                  const items = (data.items ?? []) as any[];
+                  
+                  const sorted = items.sort((a, b) => {
+                    const aOff = /\.go\.kr|\.or\.kr/i.test(a?.link ?? '') ? 0 : 1;
+                    const bOff = /\.go\.kr|\.or\.kr/i.test(b?.link ?? '') ? 0 : 1;
+                    return aOff - bOff;
+                  });
+                  
+                  for (const item of sorted) {
+                    out.push(formatItem(item, '웹'));
                   }
                 }
 
                 if (newsRes.status === 'fulfilled' && (newsRes.value as Response).ok) {
                   const data = await (newsRes.value as Response).json();
-                  for (const item of (data.items ?? [])) {
-                    const t = decodeNaverEntities(item?.title ?? '');
-                    const d = decodeNaverEntities(item?.description ?? '');
-                    const link = typeof item?.link === 'string' ? item.link : '';
-                    out.push(`- 📰 뉴스 제목: ${t}\n  내용: ${d}\n  링크: ${link}`);
+                  const items = (data.items ?? []) as any[];
+                  
+                  for (const item of items) {
+                    out.push(formatItem(item, '뉴스'));
                   }
                 }
 
