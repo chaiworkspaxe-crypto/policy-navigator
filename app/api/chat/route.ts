@@ -499,7 +499,8 @@ export async function POST(req: Request) {
 
         try {
           for await (const part of result.fullStream) {
-            switch (part.type) {
+            // 🌟 [수정 포인트] TS 빌드 에러를 우회하기 위해 part.type을 string으로 타입 캐스팅!
+            switch (part.type as string) {
               case 'tool-call': {
                 console.log(`[🤖 도구 호출] ${part.toolName}`, part.args);
                 const friendlyMsg = pickFriendlyMessage(part.toolName, part.args);
@@ -510,7 +511,6 @@ export async function POST(req: Request) {
                 console.log(`[✅ 도구 응답] ${part.toolName} 완료`);
                 break;
               }
-              // 🌟 [신규] 도구 내부 throw 케이스 — 무성 실패 방지 및 Sentry 기록
               case 'tool-error': {
                 const e = (part as any).error as Error;
                 console.error(`[⚠️ 도구 에러] ${(part as any).toolName}`, e);
