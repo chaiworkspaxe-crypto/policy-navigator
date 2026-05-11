@@ -85,10 +85,16 @@ export function useChatStream() {
         }, ms);
       };
 
-      const newMessages = [
-        ...opts.messages,
-        { role: 'user' as const, content: opts.newUserContent },
-      ];
+      // 🌟 [핵심 개선] 중복 메시지 전송 방어 (Option A)
+      const lastMsg = opts.messages[opts.messages.length - 1];
+      const alreadyHasNewMsg =
+        lastMsg?.role === 'user' &&
+        typeof lastMsg.content === 'string' &&
+        lastMsg.content === opts.newUserContent;
+
+      const newMessages = alreadyHasNewMsg
+        ? opts.messages // 이미 컴포넌트 단에서 배열에 넣어서 보냈다면 그걸 그대로 씀
+        : [...opts.messages, { role: 'user' as const, content: opts.newUserContent }]; // 없으면 여기서 추가
 
       let accumulated = ''; // catch 블록에서 접근할 수 있도록 밖으로 빼기
 
@@ -194,7 +200,6 @@ export function useChatStream() {
       } catch (err: any) {
         if (!isMountedRef.current) return; 
         
-        // 🌟 [수정 포인트] Abort 처리 로직 고도화: 부분 답변을 살려서 화면에 고정
         if (err.name === 'AbortError') {
           if (watchdogTimedOut) {
             if (accumulated.length > 0) handlers.onDone?.(accumulated);
@@ -208,7 +213,7 @@ export function useChatStream() {
         } else {
           console.error('[useChatStream]', err);
           handlers.onError?.('서버 상태가 불안정합니다. 잠시 후 다시 시도해주세요.');
-          if (accumulated.length > 0) handlers.onDone?.(accumulated); // 🌟 알 수 없는 에러 대비 안전망
+          if (accumulated.length > 0) handlers.onDone?.(accumulated); 
         }
       } finally {
         if (watchdogId) clearTimeout(watchdogId); 
