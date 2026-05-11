@@ -1,17 +1,12 @@
 // app/page.tsx
 "use client";
 
-import { memo, useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { api, ChatMessage, extractApiErrorMessage, ThreadInputs, ThreadItem } from "@/lib/api";
 import { CITY_TO_DISTRICTS } from "@/lib/regionData"; 
 import { useChatStream } from '@/lib/hooks/useChatStream';
-import ReactMarkdown from 'react-markdown';
-import { 
-  MARKDOWN_COMPONENTS, 
-  MARKDOWN_REMARK_PLUGINS, 
-  MARKDOWN_REHYPE_PLUGINS 
-} from '@/components/markdownConfig';
+import AssistantBubble from '@/components/AssistantBubble'; // 🌟 [신규] 분리된 컴포넌트 import
 import { 
   MessageSquare, Plus, Send, Loader2, MapPin, Search, AlertCircle, 
   Menu, X, Trash2, Sun, Moon, Coffee, ChevronUp, ChevronDown, 
@@ -21,54 +16,6 @@ import {
 const DEFAULT_CITY = "선택하세요";
 const DEFAULT_DONG = "선택 안 함";
 const EMPTY_INPUTS: ThreadInputs = { selected_city: DEFAULT_CITY, selected_district: DEFAULT_CITY, selected_dong: DEFAULT_DONG, birth_year: "", extra_info: "" };
-
-interface AssistantBubbleProps {
-  content: string;
-  isStreaming: boolean; 
-}
-
-const AssistantBubble = memo(function AssistantBubble({ content, isStreaming }: AssistantBubbleProps) {
-  const [renderedContent, setRenderedContent] = useState(content);
-  const rafRef = useRef<number | null>(null);
-  const lastFlushRef = useRef<number>(0);
-  
-  useEffect(() => {
-    if (!isStreaming) {
-      setRenderedContent(content);
-      return;
-    }
-    
-    const FLUSH_INTERVAL_MS = 80; 
-    const now = performance.now();
-    const elapsed = now - lastFlushRef.current;
-    
-    if (elapsed >= FLUSH_INTERVAL_MS) {
-      lastFlushRef.current = now;
-      setRenderedContent(content);
-    } else {
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
-      rafRef.current = requestAnimationFrame(() => {
-        lastFlushRef.current = performance.now();
-        setRenderedContent(content);
-        rafRef.current = null;
-      });
-    }
-    
-    return () => {
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
-    };
-  }, [content, isStreaming]);
-  
-  return (
-    <ReactMarkdown
-      remarkPlugins={MARKDOWN_REMARK_PLUGINS as any}
-      rehypePlugins={MARKDOWN_REHYPE_PLUGINS as any}
-      components={MARKDOWN_COMPONENTS}
-    >
-      {renderedContent}
-    </ReactMarkdown>
-  );
-});
 
 // 정규화 강건성 보강: AI 응답 변동성에 대비한 느슨한 매칭
 const extractSummaryTableText = (text: string) => {
