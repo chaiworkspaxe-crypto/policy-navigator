@@ -1,10 +1,21 @@
 // lib/api.ts
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 
+// 🌟 [최적화] timeout을 300초(5분)에서 15초로 단축하여 Fail-Fast 유도
 const apiClient = axios.create({
   baseURL: '/api', 
-  timeout: 300000, 
+  timeout: 15_000, // 스트리밍은 useChatStream 내의 fetch로 처리되므로 영향 없음
 });
+
+// 🌟 [신규] 응답 인터셉터로 에러 메시지 일관 처리
+apiClient.interceptors.response.use(
+  (res) => res,
+  (err: AxiosError) => {
+    // 401/403 같은 권한 에러는 즉시 throw해서 호출처가 명확하게 분기 처리할 수 있게 함
+    if (err.response?.status === 403) return Promise.reject(err);
+    return Promise.reject(err);   // 그 외 에러도 호출처의 catch 블록으로 넘김
+  },
+);
 
 export interface ThreadItem {
   thread_id: string;
@@ -28,7 +39,6 @@ export interface ThreadInputs {
   extra_info: string;
 }
 
-// 🌟 [추가] 페이지네이션 응답 타입
 export interface LoadMessagesResult {
   messages: ChatMessage[];
   nextBefore: string | null;     // 더 이전 메시지가 있을 때 cursor
@@ -45,7 +55,6 @@ export const api = {
     return res.data.thread_id;
   },
 
-  // 🌟 [수정] 첫 진입은 가벼운 양만, "더 보기" 버튼으로 lazy load
   loadMessages: async (
     userId: string,
     threadId: string,
@@ -55,7 +64,7 @@ export const api = {
       params: {
         user_id: userId,
         thread_id: threadId,
-        limit: opts?.limit ?? 20, // 🌟 default 50 -> 20으로 대폭 축소
+        limit: opts?.limit ?? 20, 
         ...(opts?.before ? { before: opts.before } : {}),
       },
     });
