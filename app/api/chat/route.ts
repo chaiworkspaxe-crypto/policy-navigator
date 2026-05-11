@@ -1,6 +1,6 @@
 // app/api/chat/route.ts
 import { openai } from '@ai-sdk/openai';
-import { streamText, tool } from 'ai';
+import { streamText, tool, type CoreMessage } from 'ai'; // 🌟 CoreMessage 타입 추가
 import { z } from 'zod';
 import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
@@ -60,9 +60,31 @@ function withTimeout<T>(
 
 const MAX_HISTORY_TURNS = 12; 
 
-function trimMessages(messages: any[]): any[] {
-  if (messages.length <= MAX_HISTORY_TURNS) return messages;
-  const sliced = messages.slice(-MAX_HISTORY_TURNS);
+// 🌟 [핵심 개선] CoreMessage 타입 적용 및 강력한 필터링/압축 로직 도입
+function trimMessages(messages: CoreMessage[]): CoreMessage[] {
+  // 1) 빈 메시지 / 잘못된 role 필터링
+  const cleaned = messages.filter((m) => {
+    if (!m || typeof m !== 'object') return false;
+    if (m.role !== 'user' && m.role !== 'assistant' && m.role !== 'system') return false;
+    // content는 string 또는 array(멀티모달) 모두 허용
+    if (typeof m.content === 'string') return m.content.trim().length > 0;
+    return Array.isArray(m.content) && m.content.length > 0;
+  });
+
+  // 2) 연속된 같은 role(특히 user-user) 압축: 더 최신 메시지만 남김
+  const compacted: CoreMessage[] = [];
+  for (const m of cleaned) {
+    const prev = compacted[compacted.length - 1];
+    if (prev && prev.role === m.role && m.role === 'user') {
+      compacted[compacted.length - 1] = m;       // 같은 role 연속이면 최신으로 대체
+      continue;
+    }
+    compacted.push(m);
+  }
+
+  // 3) 윈도우 잘라내기 + 첫 메시지는 반드시 user
+  if (compacted.length <= MAX_HISTORY_TURNS) return compacted;
+  const sliced = compacted.slice(-MAX_HISTORY_TURNS);
   const firstUserIdx = sliced.findIndex((m) => m.role === 'user');
   return firstUserIdx <= 0 ? sliced : sliced.slice(firstUserIdx);
 }
@@ -332,7 +354,6 @@ export async function POST(req: Request) {
 
                 const headers = { 'X-Naver-Client-Id': clientId, 'X-Naver-Client-Secret': clientSecret };
 
-                // 🌟 [핵심 개선] display 갯수 축소로 토큰 절약 (webkr 8->6, news 4->3)
                 const [webRes, newsRes] = await Promise.allSettled([
                   withTimeout(
                     async (signal) => fetch(
@@ -352,16 +373,14 @@ export async function POST(req: Request) {
 
                 const out: string[] = [];
 
-                // 🌟 [핵심 개선] 글자수 제한 및 포맷팅 공통화 함수
                 const formatItem = (item: any, prefix: string) => {
                   const t = decodeNaverEntities(item?.title ?? '');
-                  const d = decodeNaverEntities(item?.description ?? '').slice(0, 180); // 180자 Cap 적용
+                  const d = decodeNaverEntities(item?.description ?? '').slice(0, 180); 
                   const link = typeof item?.link === 'string' ? item.link : '';
                   const isOfficial = /\.go\.kr|\.or\.kr/i.test(link);
                   return `- [${prefix}] ${isOfficial ? '🏛️ 공식' : '📄 일반'} 제목: ${t}\n  내용: ${d}\n  링크: ${link}`;
                 };
 
-                // 🌟 [핵심 개선] 공식 웹사이트(.go.kr / .or.kr) 우선 정렬
                 if (webRes.status === 'fulfilled' && (webRes.value as Response).ok) {
                   const data = await (webRes.value as Response).json();
                   const items = (data.items ?? []) as any[];
@@ -513,7 +532,7 @@ export async function POST(req: Request) {
 
         try {
           for await (const part of result.fullStream) {
-            switch (part.type) {
+            switch (part.type as string) {
               case 'tool-call': {
                 console.log(`[🤖 도구 호출] ${part.toolName}`, part.args);
                 const friendlyMsg = pickFriendlyMessage(part.toolName, part.args);
