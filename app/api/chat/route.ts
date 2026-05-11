@@ -8,6 +8,7 @@ import * as Sentry from '@sentry/nextjs';
 import { after } from 'next/server';
 import { buildSystemPrompt } from '@/lib/prompts/policyNavigator';
 import { extractProfileCore } from '@/app/api/profile/extract/_logic'; 
+import { getCachedSearch, setCachedSearch } from '@/lib/searchCache';   // 🌟 [신규] 검색 캐시 헬퍼
 
 const rawOpenai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -21,10 +22,7 @@ const TOOL_TIMEOUT_MS = 10_000;
 const PRIMARY_MODEL  = process.env.OPENAI_CHAT_MODEL          ?? 'gpt-5.4';
 const FALLBACK_MODEL = process.env.OPENAI_CHAT_FALLBACK_MODEL ?? 'gpt-5.4-nano';
 
-// 🌟 Tavily 메모리 캐시 설정 (Edge Worker 스코프)
-const TAVILY_CACHE = new Map<string, { result: string; expiresAt: number }>();
-const TAVILY_CACHE_TTL_MS = 30 * 60 * 1000;   // 30분
-const TAVILY_CACHE_MAX = 200; // 메모리 초과 방지용 캡
+// 🌟 [정리 완료] 기존 TAVILY_CACHE 인메모리 관련 코드 완벽 삭제 (이제 DB 캐시로 통합)
 
 const isUserCancellation = (e: any, parentSignal?: AbortSignal): boolean => {
   if (!parentSignal?.aborted) return false;
@@ -71,17 +69,17 @@ function trimMessages(messages: any[]): any[] {
 const sanitizeForPrompt = (raw: unknown, maxLen = 200): string => {
   if (raw === null || raw === undefined) return '';
   const s = String(raw)
-    .replace(/[\r\n\t]+/g, ' ')                    
+    .replace(/[\r\n\t]+/g, ' ')                   
     .replace(/`{3,}/g, '`')                        
     .replace(/\[(?:시스템|system|SYSTEM|지시|규칙|rules?)\b[^\]]{0,40}\]/gi, '[차단됨]') 
-    .replace(/^\s*#{1,6}\s+/gm, '')                  
+    .replace(/^\s*#{1,6}\s+/gm, '')                 
     .trim();
   return s.length > maxLen ? s.slice(0, maxLen) + '…' : s;
 };
 
 function decodeNaverEntities(s: string): string {
   return s
-    .replace(/<[^>]+>/g, '')              
+    .replace(/<[^>]+>/g, '')             
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'")
     .replace(/&#39;/g, "'")
@@ -245,7 +243,14 @@ export async function POST(req: Request) {
             const clientId = process.env.NAVER_CLIENT_ID;
             const clientSecret = process.env.NAVER_CLIENT_SECRET;
             if (!clientId || !clientSecret) return '네이버 API 키 미설정. global_web_search를 사용하세요.';
-            
+
+            // 🌟 [신규] 1단계: 캐시 hit 먼저 확인
+            const cached = await getCachedSearch('naver', query);
+            if (cached) {
+              console.log(`[💾 naver cache HIT] "${query.slice(0, 30)}"`);
+              return cached;
+            }
+
             const enhancedQuery = /site:|go\.kr|or\.kr/i.test(query)
               ? query
               : `${query} 공고 (site:go.kr OR site:or.kr)`;
@@ -295,7 +300,13 @@ export async function POST(req: Request) {
             if (out.length === 0) {
               return '네이버 검색 결과 없음. 키워드를 더 구체적으로(지역명+분야) 바꿔 재시도하거나 global_web_search로 우회하세요.';
             }
-            return out.join('\n\n');
+
+            const formatted = out.join('\n\n');
+
+            // 🌟 [신규] 3단계: 결과 캐시에 저장 (fire-and-forget, 6시간 TTL)
+            void setCachedSearch('naver', query, formatted, 6);
+
+            return formatted;
           } catch (e: any) {
             if (isUserCancellation(e, req.signal)) throw e;
             return `네이버 검색 일시 장애(${e?.message ?? 'unknown'}). global_web_search로 우회하세요. 이 검색은 더 시도하지 마세요.`;
@@ -322,11 +333,14 @@ export async function POST(req: Request) {
             }).format(new Date());
             const localizedQuery = `${seoulYear}년 대한민국 정부 정책 지원금 ${query}`;
 
-            const cached = TAVILY_CACHE.get(localizedQuery);
-            if (cached && cached.expiresAt > Date.now()) {
-              return cached.result + '\n\n(💾 30분 캐시 사용)';
+            // 🌟 [신규] 1단계: 캐시 hit 먼저 확인
+            const cached = await getCachedSearch('tavily', query);
+            if (cached) {
+              console.log(`[💾 tavily cache HIT] "${query.slice(0, 30)}"`);
+              return cached;
             }
 
+            // 🌟 [신규] 2단계: 캐시 miss → 기존 Tavily API 호출
             const res = (await withTimeout(
               async (signal) => fetch('https://api.tavily.com/search', {
                 method: 'POST',
@@ -334,7 +348,7 @@ export async function POST(req: Request) {
                 body: JSON.stringify({
                   api_key: tavilyKey,
                   query: localizedQuery,
-                  max_results: 5,           
+                  max_results: 5,            
                   search_depth: 'basic',    
                 }),
                 signal,
@@ -364,14 +378,8 @@ export async function POST(req: Request) {
               .map((r: any) => `- 제목: ${r.title}\n  내용: ${r.content}\n  링크: ${r.url}`)
               .join('\n\n');
 
-            if (TAVILY_CACHE.size >= TAVILY_CACHE_MAX) {
-              const firstKey = TAVILY_CACHE.keys().next().value;
-              if (firstKey) TAVILY_CACHE.delete(firstKey);
-            }
-            TAVILY_CACHE.set(localizedQuery, {
-              result: formatted,
-              expiresAt: Date.now() + TAVILY_CACHE_TTL_MS,
-            });
+            // 🌟 [신규] 3단계: 결과 캐시에 저장 (fire-and-forget, 24시간 TTL)
+            void setCachedSearch('tavily', query, formatted, 24);
 
             return formatted;
           } catch (e: any) {
@@ -418,7 +426,7 @@ export async function POST(req: Request) {
         ) {
           const raw = lastMsg.content
             .replace(/^📍.*?\|/g, '')         
-            .replace(/[🎂📝📍|]/g, ' ')       
+            .replace(/[🎂📝📍|]/g, ' ')        
             .replace(/\s+/g, ' ')             
             .trim();
             
@@ -437,8 +445,6 @@ export async function POST(req: Request) {
       }
     };
 
-    // 🌟 100% 제거: REASONING_OPTIONS 변수 완전히 삭제됨.
-
     let result;
     try {
       result = await streamText({
@@ -447,7 +453,6 @@ export async function POST(req: Request) {
         messages: trimmedMessages,
         maxSteps: 10,
         abortSignal: req.signal, 
-        // 🌟 providerOptions 완전 삭제
         onError: (err) => { console.error(`[streamText PRIMARY onError]`, err); },
         tools: commonTools,
         onFinish: (params) => handleFinish({ ...params, modelName: PRIMARY_MODEL })
@@ -462,7 +467,6 @@ export async function POST(req: Request) {
         messages: trimmedMessages,
         maxSteps: 10,
         abortSignal: req.signal,
-        // 🌟 providerOptions 완전 삭제
         onError: (err) => { console.error('[streamText FALLBACK onError]', err); },
         tools: commonTools,
         onFinish: (params) => handleFinish({ ...params, modelName: FALLBACK_MODEL })
