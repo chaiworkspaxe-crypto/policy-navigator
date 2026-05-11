@@ -174,6 +174,65 @@ export async function POST(req: Request) {
     const profileContext = await profileSelectPromise;
     const systemPromptWithTime = buildSystemPrompt() + profileContext;
 
+    // 🌟 [핵심 개선] 부분 응답 DB 저장 문제 해결을 위한 멱등(Idempotent) 가드
+    let assistantPersisted = false;
+    
+    const persistAssistant = async (text: string, finishReason?: string) => {
+      if (assistantPersisted) return;        // 이미 저장됐으면 무시
+      if (!userId || !threadId) return;
+      if (!text || !text.trim()) return;     // 빈 응답은 저장 안 함
+
+      assistantPersisted = true;             // 🛡️ 동시 호출(race condition) 완벽 차단
+
+      try {
+        const now = new Date().toISOString();
+        if (userInsertPromise) await userInsertPromise.catch(() => {});
+
+        await supabase.from('chat_messages').insert({
+          thread_id: threadId,
+          user_id: userId,
+          role: 'assistant',
+          content: text,
+          created_at: now,
+          updated_at: now,
+        });
+
+        // 제목 업데이트 로직
+        const { data: threadRow } = await supabase
+          .from('chat_threads')
+          .select('title')
+          .eq('thread_id', threadId)
+          .eq('user_id', userId)
+          .maybeSingle();
+
+        const titleUpdate: Record<string, unknown> = { updated_at: now };
+        const isFirstTurnTitle = !threadRow?.title || threadRow.title === '새 대화';
+        
+        if (
+          isFirstTurnTitle &&
+          lastMsg?.role === 'user' &&
+          typeof lastMsg.content === 'string'
+        ) {
+          const raw = lastMsg.content
+            .replace(/^📍.*?\|/g, '')
+            .replace(/[🎂📝📍|]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+          const title = raw.slice(0, 30) + (raw.length > 30 ? '…' : '');
+          if (title.length >= 2) titleUpdate.title = title;
+        }
+        
+        await supabase.from('chat_threads')
+          .update(titleUpdate)
+          .eq('thread_id', threadId)
+          .eq('user_id', userId);
+          
+      } catch (dbError) {
+        console.error("DB 저장 중 에러 발생:", dbError);
+        assistantPersisted = false;   // 🌟 실패하면 다시 시도 가능하게 플래그 해제
+      }
+    };
+
     const commonTools = {
       search_internal_db: tool({
         description: '내부 DB(pgvector)에서 정부 정책의 의미적 유사도 상위 결과를 가져옵니다. 가장 먼저 호출하세요.',
@@ -395,59 +454,10 @@ export async function POST(req: Request) {
       }),
     };
 
+    // 기존의 길었던 handleFinish는 안전한 persistAssistant 호출로 단순화
     const handleFinish = async ({ text, usage, finishReason, modelName }: any) => {
       console.log(`[💰 ${modelName}] in=${usage?.promptTokens}, out=${usage?.completionTokens}, finish=${finishReason}`);
-      if (!userId || !threadId) return;
-      
-      try {
-        const now = new Date().toISOString(); 
-        if (userInsertPromise) {
-          await userInsertPromise.catch(() => {});
-        }
-        
-        await supabase.from('chat_messages').insert({
-          thread_id: threadId,
-          user_id: userId,
-          role: 'assistant',
-          content: text,
-          created_at: now,
-          updated_at: now 
-        });
-
-        const { data: threadRow } = await supabase
-          .from('chat_threads')
-          .select('title')
-          .eq('thread_id', threadId)
-          .eq('user_id', userId)
-          .maybeSingle();
-
-        const titleUpdate: Record<string, unknown> = { updated_at: now };
-        const isFirstTurnTitle = !threadRow?.title || threadRow.title === '새 대화';
-        
-        if (
-          isFirstTurnTitle && 
-          lastMsg?.role === 'user' && 
-          typeof lastMsg.content === 'string'
-        ) {
-          const raw = lastMsg.content
-            .replace(/^📍.*?\|/g, '')         
-            .replace(/[🎂📝📍|]/g, ' ')        
-            .replace(/\s+/g, ' ')             
-            .trim();
-            
-          const title = raw.slice(0, 30) + (raw.length > 30 ? '…' : '');
-          if (title.length >= 2) titleUpdate.title = title;
-        }
-        
-        await supabase
-          .from('chat_threads')
-          .update(titleUpdate)
-          .eq('thread_id', threadId)
-          .eq('user_id', userId); 
-        
-      } catch (dbError) {
-        console.error("DB 저장 중 에러 발생:", dbError);
-      }
+      await persistAssistant(text, finishReason);
     };
 
     let result;
@@ -541,6 +551,11 @@ export async function POST(req: Request) {
           }
         } finally {
           console.log(`\n[🏁 스트림 종료] 길이=${fullAnswer.length}, error=${streamErrored}, aborted=${req.signal.aborted}`);
+          
+          // 🛡️ [핵심 안전망] onFinish가 호출되지 않은 케이스(Abort/에러)에도 받아둔 데까지 무조건 DB에 저장!
+          if (fullAnswer.trim().length > 0) {
+            void persistAssistant(fullAnswer, req.signal.aborted ? 'aborted' : 'errored');
+          }
           
           if (!req.signal.aborted) {
             try {
