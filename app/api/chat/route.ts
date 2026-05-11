@@ -13,6 +13,11 @@ import { getCachedSearch, setCachedSearch } from '@/lib/searchCache';   // 🌟 
 const rawOpenai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+// 🌟 [인프라 모니터링 노트]
+// supabase-js는 REST API 기반이므로 일반적인 Postgres Connection Pool 고갈(503 에러) 위험은 적습니다. (별도 Pooler/PgBouncer 불필요)
+// 단, 하단에서 호출하는 `match_policies` (pgvector 유사도 검색 RPC)는 내부적으로 DB 연결을 일시 점유합니다.
+// 🚀 런칭 후 트래픽 급증 시 반드시 Supabase 대시보드 > Database > 'Active connections'를 모니터링하세요! (Free 티어 한도 60개)
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 export const runtime = 'edge';
