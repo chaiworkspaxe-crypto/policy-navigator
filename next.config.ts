@@ -9,9 +9,12 @@ const cspHeader = `
   img-src 'self' data: blob: https:;
   font-src 'self' data:;
   connect-src 'self' https://www.google-analytics.com https://*.sentry.io https://*.supabase.co https://api.openai.com https://api.tavily.com https://openapi.naver.com;
+  frame-src 'none';
   frame-ancestors 'self';
   base-uri 'self';
   form-action 'self';
+  object-src 'none';
+  upgrade-insecure-requests;
 `.replace(/\s{2,}/g, ' ').trim(); // 줄바꿈과 여러 칸의 공백을 한 칸으로 압축
 
 const nextConfig: NextConfig = {
