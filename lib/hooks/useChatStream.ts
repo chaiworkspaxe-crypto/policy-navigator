@@ -68,12 +68,14 @@ export function useChatStream() {
       safeSetAiStatus('');
 
       let watchdogId: ReturnType<typeof setTimeout> | null = null;
+      let contentWatchdogId: ReturnType<typeof setTimeout> | null = null;  // 🌟 신규 콘텐츠 전용 워치독
       let isFirstChunk = true;
       let firstDeltaFired = false; 
       let watchdogTimedOut = false;  
 
       const CONNECT_TIMEOUT_MS = 60_000;
       const IDLE_TIMEOUT_MS = 45_000;
+      const NO_CONTENT_TIMEOUT_MS = 90_000;  // 🌟 90초간 실제 content 없으면 강제 중단
 
       const resetWatchdog = () => {
         if (watchdogId) clearTimeout(watchdogId);
@@ -83,6 +85,16 @@ export function useChatStream() {
           watchdogTimedOut = true;     
           abortControllerRef.current?.abort();
         }, ms);
+      };
+
+      // 🌟 신규: 실제 텍스트(content delta) 전용 워치독
+      const resetContentWatchdog = () => {
+        if (contentWatchdogId) clearTimeout(contentWatchdogId);
+        contentWatchdogId = setTimeout(() => {
+          console.warn(`[useChatStream] ${NO_CONTENT_TIMEOUT_MS / 1000}초간 텍스트 응답 없음 — 강제 중단 발동`);
+          watchdogTimedOut = true;
+          abortControllerRef.current?.abort();
+        }, NO_CONTENT_TIMEOUT_MS);
       };
 
       // 🌟 [핵심 개선] 중복 메시지 전송 방어 (Option A)
@@ -132,6 +144,7 @@ export function useChatStream() {
         }
 
         resetWatchdog(); 
+        resetContentWatchdog(); // 🌟 읽기 시작과 함께 콘텐츠 워치독도 가동
 
         while (true) {
           if (!isMountedRef.current) break;
@@ -169,9 +182,11 @@ export function useChatStream() {
               handlers.onDelta?.(data.delta, accumulated);
               
               safeSetAiStatus(''); 
+              resetContentWatchdog(); // 🌟 실제 텍스트가 도착했을 때만 리셋!
             } else if (data.type === 'status') {
               safeSetAiStatus(data.message);
               handlers.onStatus?.(data.message);
+              // status는 일반 워치독(resetWatchdog)만 갱신시키고, 콘텐츠 워치독은 갱신하지 않음
             } else if (data.type === 'error') {
               handlers.onError?.(data.message);
             } else if (data.type === 'done') {
@@ -217,6 +232,7 @@ export function useChatStream() {
         }
       } finally {
         if (watchdogId) clearTimeout(watchdogId); 
+        if (contentWatchdogId) clearTimeout(contentWatchdogId); // 🌟 타이머 정리 완벽히!
         safeSetIsStreaming(false);
         abortControllerRef.current = null;
       }
