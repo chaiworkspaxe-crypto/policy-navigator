@@ -34,29 +34,39 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const { user_id } = await req.json();
+    
     if (!user_id) {
       return NextResponse.json({ error: 'user_id 누락' }, { status: 400 });
     }
+    
+    // 🌟 user_id 포맷 검증 추가 (IDOR 방어)
+    if (!/^user_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user_id)) {
+      return NextResponse.json({ error: 'invalid user_id' }, { status: 400 });
+    }
+
     const thread_id = uuidv4();
     const now = new Date().toISOString();
 
-    // 🌟 1. 메인 대화방(Thread) 생성
-    const { error: tErr } = await supabase
-      .from('chat_threads')
-      .insert({ thread_id, user_id, title: '새 대화', created_at: now, updated_at: now });
+    // 🌟 두 INSERT를 병렬로 (Supabase REST는 stateless → 안전 & Latency 단축)
+    const [threadResult, inputsResult] = await Promise.all([
+      supabase.from('chat_threads').insert({
+        thread_id, user_id, title: '새 대화', created_at: now, updated_at: now,
+      }),
+      supabase.from('chat_thread_inputs').insert({
+        thread_id, user_id, updated_at: now,
+      }),
+    ]);
 
-    if (tErr) {
-      console.error('[POST /api/threads]', tErr);
-      return NextResponse.json({ error: tErr.message }, { status: 500 });
+    if (threadResult.error) {
+      // thread 인서트 실패는 치명적
+      console.error('[POST /api/threads]', threadResult.error);
+      return NextResponse.json({ error: threadResult.error.message }, { status: 500 });
     }
 
-    // 🌟 [개선] 2. 빈 Inputs 레코드 동시 생성 (Race Condition 및 고아 상태 방어)
-    // inputs는 실패하더라도 치명적인 에러가 아니므로, 기록만 남기고 방 생성 성공을 반환합니다.
-    await supabase.from('chat_thread_inputs')
-      .insert({ thread_id, user_id, updated_at: now })
-      .then(({ error }) => {
-        if (error) console.error('[POST /api/threads inputs init]', error);
-      });
+    if (inputsResult.error) {
+      // inputs 실패는 비치명적 — 첫 chat에서 upsert로 자연 복구됨
+      console.error('[POST /api/threads inputs init]', inputsResult.error);
+    }
 
     return NextResponse.json({ thread_id });
   } catch (e: any) {
