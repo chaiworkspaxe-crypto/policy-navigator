@@ -7,13 +7,15 @@ const apiClient = axios.create({
   timeout: 15_000, // 스트리밍은 useChatStream 내의 fetch로 처리되므로 영향 없음
 });
 
-// 🌟 [신규] 응답 인터셉터로 에러 메시지 일관 처리
+// 🌟 [최적화] 인터셉터 단순화. 불필요한 분기 제거 및 429 로깅 추가
 apiClient.interceptors.response.use(
   (res) => res,
   (err: AxiosError) => {
-    // 401/403 같은 권한 에러는 즉시 throw해서 호출처가 명확하게 분기 처리할 수 있게 함
-    if (err.response?.status === 403) return Promise.reject(err);
-    return Promise.reject(err);   // 그 외 에러도 호출처의 catch 블록으로 넘김
+    // 429 (Rate limit): 향후 토스트 표시용 이벤트 발행 등 확장 가능
+    if (err.response?.status === 429) {
+      console.warn('[API] rate limited');
+    }
+    return Promise.reject(err);
   },
 );
 
