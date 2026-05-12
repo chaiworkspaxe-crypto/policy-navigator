@@ -28,11 +28,12 @@ export async function GET(req: Request) {
     );
   }
 
-  // 🌟 [신규] 2차 보안 검증: 포맷 검증 (IDOR 무차별 대입 방어)
+  // 🌟 [신규] 2차 보안 검증: 포맷 검증 (IDOR 및 무차별 대입 방어)
   // threadId는 순수 UUID 형태, userId는 'user_ + UUID' 형태여야 함
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const USER_ID_RE = /^user_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   
-  if (!UUID_RE.test(threadId) || !/^user_[0-9a-f-]{36}$/i.test(userId)) {
+  if (!UUID_RE.test(threadId) || !USER_ID_RE.test(userId)) {
     return NextResponse.json(
       { error: '올바르지 않은 ID 형식입니다.' }, 
       { status: 400 }
