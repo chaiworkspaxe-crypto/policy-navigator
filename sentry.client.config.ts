@@ -1,11 +1,17 @@
-// sentry.client.config.ts
-import * as Sentry from '@sentry/nextjs';
-import { SHARED_SENTRY_INIT, COMMON_IGNORE } from './sentry.shared';
+// next.config.ts
+import { withSentryConfig } from '@sentry/nextjs';
 
-Sentry.init({
-  ...SHARED_SENTRY_INIT,
-  ignoreErrors: COMMON_IGNORE,
-  // 클라이언트 전용 Replay 설정
-  replaysSessionSampleRate: 0,
-  replaysOnErrorSampleRate: 1.0,
+const nextConfig = {
+  // 기존 Next.js 설정들...
+};
+
+export default withSentryConfig(nextConfig, {
+  silent: !process.env.CI,
+  org: process.env.SENTRY_ORG,
+  project: process.env.SENTRY_PROJECT ?? 'policy-navigator-web',
+  release: { name: process.env.VERCEL_GIT_COMMIT_SHA ?? 'dev' },
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+  disableLogger: true,
+  // 🌟 [신규] 자체 도메인 경유로 광고차단기 우회 (Tunneling)
+  tunnelRoute: '/monitoring', 
 });
