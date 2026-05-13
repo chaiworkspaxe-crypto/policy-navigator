@@ -17,12 +17,11 @@ const DEFAULT_CITY = "선택하세요";
 const DEFAULT_DONG = "선택 안 함";
 const EMPTY_INPUTS: ThreadInputs = { selected_city: DEFAULT_CITY, selected_district: DEFAULT_CITY, selected_dong: DEFAULT_DONG, birth_year: "", extra_info: "" };
 
-// 🌟 [핵심 개선] 정규화 강건성 보강: AI 응답 변동성(동의어)에 대비한 느슨한 표 헤더 매칭
+// 정규화 강건성 보강: AI 응답 변동성에 대비한 느슨한 매칭
 const extractSummaryTableText = (text: string) => {
   const lines = text.split('\n');
   let headerIdx = -1;
   
-  // 🌟 동의어 그룹: 각 그룹 중 하나라도 hit하면 1점
   const tokenGroups: string[][] = [
     ['분야', '카테고리'],
     ['정책', '정책명', '사업명', '이름'],
@@ -38,7 +37,6 @@ const extractSummaryTableText = (text: string) => {
     const normalized = line.replace(/\*+/g, '').replace(/\s/g, '').toLowerCase();
     if (!normalized.startsWith('|')) continue;
     
-    // 🌟 그룹별로 적어도 하나라도 매칭되는지 체크
     const hits = tokenGroups.filter(group => 
       group.some(t => normalized.includes(`|${t.toLowerCase()}`))
     ).length;
@@ -437,15 +435,18 @@ export default function Home() {
 
     setAutoScroll(true);
 
-    await api
-      .saveThreadInputs(userId, targetThreadId, {
+    try {
+      await api.saveThreadInputs(userId, targetThreadId, {
         selected_city: city,
         selected_district: district,
         selected_dong: dong,
         birth_year: birthYear,
         extra_info: extraInfo,
-      })
-      .catch((e) => console.error(e));
+      });
+    } catch (e) {
+      console.error('[saveThreadInputs]', e);
+      setErrorMessage('입력 정보를 저장하는 데 일시적 문제가 있었어요. 검색은 진행되지만, 최신 조건이 미반영될 수 있습니다.');
+    }
 
     let firstDeltaArrived = false;
 
@@ -751,10 +752,21 @@ export default function Home() {
                              <AlertCircle size={16} className="text-yellow-500" />
                              답변이 중간에 끊긴 것 같나요? 아래 버튼을 눌러 마저 들을 수 있어요!
                            </p>
+                           {/* 🌟 [핵심 개선] 이어쓰기 앵커링 프롬프트 주입 */}
                            <button
                              onClick={() => {
                                setQuery(""); 
-                               void handleSearch(true, "답변이 끊겼어. 방금 하던 말부터 이어서 계속해줘.");
+                               
+                               const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
+                               const tail = lastAssistant?.content
+                                 ? lastAssistant.content.slice(-120).replace(/\s+/g, ' ').trim()
+                                 : '';
+                               
+                               const continuePrompt = tail
+                                 ? `[이어쓰기 모드] 직전 답변이 다음 문장에서 끊겼어요: "...${tail}". 정확히 이 문장 직후부터 자연스럽게 이어서 작성해주세요. 인사말 다시 X, 검색 계획 안내 다시 X, 이미 안내한 정책 중복 나열 X, 도구 호출은 누락된 정보가 있을 때만 1~2회만. 끊긴 정책이 있다면 그 정책부터 마무리하세요.`
+                                 : `[이어쓰기 모드] 직전 답변을 자연스럽게 이어서 작성해주세요. 인사말 다시 안 함, 이미 안내한 정책 중복 안 함.`;
+                               
+                               void handleSearch(true, continuePrompt);
                              }}
                              className="w-full flex items-center justify-center gap-2 py-2.5 bg-white dark:bg-[#2d2d2d] border border-gray-300 dark:border-[#555] rounded-lg hover:bg-gray-100 dark:hover:bg-[#3d3d3d] transition-colors text-sm font-bold text-gray-700 dark:text-gray-200 shadow-sm"
                            >
