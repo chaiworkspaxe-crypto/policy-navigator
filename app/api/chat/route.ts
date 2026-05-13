@@ -142,7 +142,6 @@ export async function POST(req: Request) {
       ? messages[messages.length - 1]
       : null;
 
-    // 🌟 [핵심 개선] user 메시지 저장 비동기 격리 (고아 메시지 방지 기초)
     let userInsertedAt: string | null = null;
     
     if (userId && threadId && lastMsg?.role === 'user') {
@@ -152,7 +151,6 @@ export async function POST(req: Request) {
       const now = new Date().toISOString();
       userInsertedAt = now;
       
-      // 즉시 fire-and-forget 실행. 실패 시 로그만 남김.
       void supabase
         .from('chat_messages')
         .insert({
@@ -327,7 +325,7 @@ export async function POST(req: Request) {
       }),
 
       naver_web_search: tool({
-        description: '지자체/읍면동 정책 및 최신 공고를 찾을 때 가장 먼저 사용하는 1순위 웹 검색 도구. 신뢰할 수 있는 공식 정보가 필요하다면 검색어에 "site:go.kr"을 포함하세요. (예: "서울시 청년월세지원 site:go.kr"). 공식 사이트 정보가 없다면 블로그/뉴스를 참고하되 팩트체크에 유의하세요. 결과가 "..."으로 잘려 내용이 불확실하다면 절대 추측하지 마세요.',
+        description: '지자체/읍면동 정책 및 최신 공고를 찾을 때 사용하는 웹 검색 도구. 공식 사이트(go.kr) 정보뿐만 아니라 민간/NGO 재단, 기업 공고까지 폭넓게 탐색합니다. 결과가 "..."으로 잘려 내용이 불확실하다면 절대 추측하지 마세요.',
         parameters: z.object({ 
           query: z.string()
             .min(1, '검색어가 비어있습니다.')
@@ -345,19 +343,26 @@ export async function POST(req: Request) {
             return cached;
           }
 
-          const enhancedQuery = /site:|go\.kr|or\.kr/i.test(query)
-            ? query
-            : `${query} 공고 (site:go.kr OR site:or.kr)`;
+          const isAlreadyFiltered = /site:|go\.kr|or\.kr/i.test(query);
+          const officialQuery = isAlreadyFiltered ? query : `${query} 공고 (site:go.kr OR site:or.kr)`;
+          const generalQuery = isAlreadyFiltered ? query : `${query} 지원금 OR 혜택`;
 
           const headers = { 'X-Naver-Client-Id': clientId, 'X-Naver-Client-Secret': clientSecret };
 
-          const [webRes, newsRes] = await Promise.allSettled([
+          const [officialRes, generalRes, newsRes] = await Promise.allSettled([
             withTimeout(
               async (signal) => fetch(
-                `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(enhancedQuery)}&display=6&sort=sim`,
+                `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(officialQuery)}&display=5&sort=sim`,
                 { headers, signal }
               ),
-              TOOL_TIMEOUT_MS, 'naver-web', req.signal,
+              TOOL_TIMEOUT_MS, 'naver-official', req.signal,
+            ),
+            withTimeout(
+              async (signal) => fetch(
+                `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(generalQuery)}&display=4&sort=sim`,
+                { headers, signal }
+              ),
+              TOOL_TIMEOUT_MS, 'naver-general', req.signal,
             ),
             withTimeout(
               async (signal) => fetch(
@@ -369,38 +374,53 @@ export async function POST(req: Request) {
           ]);
 
           const out: string[] = [];
+          const seenLinks = new Set<string>(); 
 
-          const formatItem = (item: any, prefix: string) => {
+          const formatItem = (item: any, source: string) => {
             const t = decodeNaverEntities(item?.title ?? '');
-            const d = decodeNaverEntities(item?.description ?? '').slice(0, 180); 
+            const d = decodeNaverEntities(item?.description ?? '').slice(0, 180);
             const link = typeof item?.link === 'string' ? item.link : '';
             const isOfficial = /\.go\.kr|\.or\.kr/i.test(link);
-            return `- [${prefix}] ${isOfficial ? '🏛️ 공식' : '📄 일반'} 제목: ${t}\n  내용: ${d}\n  링크: ${link}`;
+            const tier = isOfficial ? '🏛️ 공식' : '📄 일반';
+            return `- [${source}] ${tier} 제목: ${t}\n  내용: ${d}\n  링크: ${link}`;
           };
 
-          if (webRes.status === 'fulfilled' && (webRes.value as Response).ok) {
-            const data = await (webRes.value as Response).json();
-            const items = (data.items ?? []) as any[];
+          const pushItems = async (
+            settled: PromiseSettledResult<unknown>,
+            sourceLabel: string,
+          ) => {
+            if (settled.status !== 'fulfilled') return;
+            const response = settled.value as Response;
+            if (!response.ok) return;
             
-            const sorted = items.sort((a, b) => {
-              const aOff = /\.go\.kr|\.or\.kr/i.test(a?.link ?? '') ? 0 : 1;
-              const bOff = /\.go\.kr|\.or\.kr/i.test(b?.link ?? '') ? 0 : 1;
-              return aOff - bOff;
-            });
-            
-            for (const item of sorted) {
-              out.push(formatItem(item, '웹'));
-            }
-          }
-
-          if (newsRes.status === 'fulfilled' && (newsRes.value as Response).ok) {
-            const data = await (newsRes.value as Response).json();
+            const data = await response.json().catch(() => ({}));
             const items = (data.items ?? []) as any[];
             
             for (const item of items) {
-              out.push(formatItem(item, '뉴스'));
+              const link = typeof item?.link === 'string' ? item.link : '';
+              if (!link) continue;
+              
+              try {
+                const host = new URL(link).hostname;
+                const dedupKey = `${host}::${(item.title ?? '').slice(0, 30)}`;
+                if (seenLinks.has(dedupKey)) continue;
+                seenLinks.add(dedupKey);
+              } catch { continue; } 
+              
+              out.push(formatItem(item, sourceLabel));
             }
-          }
+          };
+
+          await pushItems(officialRes, '공식');
+          await pushItems(generalRes, '일반');
+          await pushItems(newsRes, '뉴스');
+
+          out.sort((a, b) => {
+            const order: Record<string, number> = { '공식': 0, '일반': 1, '뉴스': 2 };
+            const aSource = a.match(/\[([^\]]+)\]/)?.[1] ?? '';
+            const bSource = b.match(/\[([^\]]+)\]/)?.[1] ?? '';
+            return (order[aSource] ?? 99) - (order[bSource] ?? 99);
+          });
 
           if (out.length === 0) {
             return '네이버 검색 결과 없음. 키워드를 더 구체적으로(지역명+분야) 바꿔 재시도하거나 global_web_search로 우회하세요.';
@@ -408,7 +428,6 @@ export async function POST(req: Request) {
 
           const formatted = out.join('\n\n');
           void setCachedSearch('naver', query, formatted, 6);
-
           return formatted;
         }),
       }),
@@ -504,10 +523,9 @@ export async function POST(req: Request) {
 
         let assistantPersisted = false;
 
-        // 🌟 [핵심 개선] 빈/실패 응답에 대한 placeholder를 남기는 폴백
         const persistFailurePlaceholder = async (reason: string) => {
           if (assistantPersisted || !userId || !threadId) return;
-          if (!userInsertedAt) return; // user 메시지가 없으면 placeholder 불필요
+          if (!userInsertedAt) return; 
           
           try {
             const placeholder = `(앗, AI 응답을 늦게 받아오거나 문제가 생겼어요. 잠시 후 다시 시도해주세요. — ${reason})`;
@@ -520,7 +538,6 @@ export async function POST(req: Request) {
               created_at: now, 
               updated_at: now,
             });
-            // 부모 thread updated_at만 갱신 (title 보존)
             await supabase.from('chat_threads')
               .update({ updated_at: now })
               .eq('thread_id', threadId).eq('user_id', userId);
@@ -534,7 +551,6 @@ export async function POST(req: Request) {
           if (assistantPersisted) return;        
           if (!userId || !threadId) return;
           if (!text || !text.trim()) {
-            // 빈 응답이면 placeholder 저장
             await persistFailurePlaceholder(finishReason ?? 'empty');
             return;
           }
@@ -544,8 +560,6 @@ export async function POST(req: Request) {
           try {
             const now = new Date().toISOString();
             
-            // ⚠️ user INSERT는 위에서 fire-and-forget 처리 완료
-
             await supabase.from('chat_messages').insert({
               thread_id: threadId,
               user_id: userId,
@@ -587,13 +601,16 @@ export async function POST(req: Request) {
           } catch (dbError) {
             console.error("DB 저장 중 에러 발생:", dbError);
             assistantPersisted = false;
-            // 🌟 진짜 fail 시에도 placeholder 시도
             await persistFailurePlaceholder('db_error');
           }
         };
 
+        // 🌟 [신규] finishReason 추적용 변수 추가
+        let finalFinishReason: string | undefined;
+
         const handleFinish = async ({ text, usage, finishReason, modelName }: any) => {
           console.log(`[💰 ${modelName}] in=${usage?.promptTokens}, out=${usage?.completionTokens}, finish=${finishReason}`);
+          finalFinishReason = finishReason; // 🌟 capture
           await persistAssistant(text, finishReason);
         };
 
@@ -604,6 +621,7 @@ export async function POST(req: Request) {
             system: systemPromptWithTime,
             messages: trimmedMessages, 
             maxSteps: 10,
+            maxTokens: 8192, // 🌟 정책 풀리스트도 한 번에 끝나도록 충분히
             abortSignal: req.signal, 
             onError: (err) => { console.error(`[streamText PRIMARY onError]`, err); },
             tools: commonTools,
@@ -618,6 +636,7 @@ export async function POST(req: Request) {
             system: systemPromptWithTime,
             messages: trimmedMessages, 
             maxSteps: 10,
+            maxTokens: 8192, // 🌟 fallback에도 동일 적용
             abortSignal: req.signal,
             onError: (err) => { console.error('[streamText FALLBACK onError]', err); },
             tools: commonTools,
@@ -682,7 +701,6 @@ export async function POST(req: Request) {
         } finally {
           console.log(`\n[🏁 스트림 종료] 길이=${fullAnswer.length}, error=${streamErrored}, aborted=${req.signal.aborted}`);
           
-          // 🌟 [핵심 개선] 빈 답변일 때도 placeholder 저장 보장
           if (fullAnswer.trim().length > 0) {
             void persistAssistant(fullAnswer, req.signal.aborted ? 'aborted' : 'errored');
           } else if (streamErrored || req.signal.aborted) {
@@ -691,7 +709,14 @@ export async function POST(req: Request) {
           
           if (!req.signal.aborted) {
             try {
-              send({ type: 'done', full_content: fullAnswer, errored: streamErrored });
+              // 🌟 [핵심 개선] 클라이언트에 잘림(truncated) 상태 명시적 전달
+              send({ 
+                type: 'done', 
+                full_content: fullAnswer, 
+                errored: streamErrored,
+                truncated: finalFinishReason === 'length',
+                finish_reason: finalFinishReason,
+              });
             } catch { /* 무시 */ }
           }
           try { controller.close(); } catch { /* 무시 */ }
