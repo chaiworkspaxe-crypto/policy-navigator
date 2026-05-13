@@ -68,14 +68,21 @@ export function useChatStream() {
       safeSetAiStatus('');
 
       let watchdogId: ReturnType<typeof setTimeout> | null = null;
-      let contentWatchdogId: ReturnType<typeof setTimeout> | null = null;  // 🌟 신규 콘텐츠 전용 워치독
+      let contentWatchdogId: ReturnType<typeof setTimeout> | null = null; 
       let isFirstChunk = true;
       let firstDeltaFired = false; 
       let watchdogTimedOut = false;  
 
       const CONNECT_TIMEOUT_MS = 60_000;
       const IDLE_TIMEOUT_MS = 45_000;
-      const NO_CONTENT_TIMEOUT_MS = 90_000;  // 🌟 90초간 실제 content 없으면 강제 중단
+      
+      // 🌟 [개선] 슬라이딩 윈도우 타이머 변수
+      const NO_CONTENT_TIMEOUT_INITIAL_MS = 90_000;      // 초기 컨텐츠 대기 시간
+      const NO_CONTENT_EXTENSION_PER_STATUS_MS = 25_000; // status 수신 시 연장할 시간
+      const NO_CONTENT_HARD_CAP_MS = 240_000;            // 절대 상한 240초 (Vercel 300초 보호)
+
+      const streamStartedAt = Date.now();
+      let contentWatchdogDeadline = streamStartedAt + NO_CONTENT_TIMEOUT_INITIAL_MS;
 
       const resetWatchdog = () => {
         if (watchdogId) clearTimeout(watchdogId);
@@ -87,17 +94,32 @@ export function useChatStream() {
         }, ms);
       };
 
-      // 🌟 신규: 실제 텍스트(content delta) 전용 워치독
-      const resetContentWatchdog = () => {
+      // 🌟 [신규] 콘텐츠 워치독 (남은 시간만큼 예약)
+      const scheduleContentWatchdog = () => {
         if (contentWatchdogId) clearTimeout(contentWatchdogId);
+        const remaining = Math.max(0, contentWatchdogDeadline - Date.now());
         contentWatchdogId = setTimeout(() => {
-          console.warn(`[useChatStream] ${NO_CONTENT_TIMEOUT_MS / 1000}초간 텍스트 응답 없음 — 강제 중단 발동`);
+          console.warn(`[useChatStream] content 워치독 발동 (소요시간: ${(Date.now() - streamStartedAt) / 1000}초)`);
           watchdogTimedOut = true;
           abortControllerRef.current?.abort();
-        }, NO_CONTENT_TIMEOUT_MS);
+        }, remaining);
       };
 
-      // 🌟 [핵심 개선] 중복 메시지 전송 방어 (Option A)
+      // 🌟 [신규] 상태 수신 시 콘텐츠 워치독 연장 (Hard Cap 제한)
+      const extendContentWatchdog = (extensionMs: number) => {
+        const hardCap = streamStartedAt + NO_CONTENT_HARD_CAP_MS;
+        const proposed = Date.now() + extensionMs;
+        contentWatchdogDeadline = Math.min(proposed, hardCap);
+        scheduleContentWatchdog();
+      };
+
+      // 🌟 [신규] 텍스트 도착 시 풀 리셋
+      const resetContentWatchdog = () => {
+        contentWatchdogDeadline = Date.now() + NO_CONTENT_TIMEOUT_INITIAL_MS;
+        scheduleContentWatchdog();
+      };
+
+      // 🌟 중복 메시지 전송 방어
       const lastMsg = opts.messages[opts.messages.length - 1];
       const alreadyHasNewMsg =
         lastMsg?.role === 'user' &&
@@ -105,10 +127,10 @@ export function useChatStream() {
         lastMsg.content === opts.newUserContent;
 
       const newMessages = alreadyHasNewMsg
-        ? opts.messages // 이미 컴포넌트 단에서 배열에 넣어서 보냈다면 그걸 그대로 씀
-        : [...opts.messages, { role: 'user' as const, content: opts.newUserContent }]; // 없으면 여기서 추가
+        ? opts.messages 
+        : [...opts.messages, { role: 'user' as const, content: opts.newUserContent }]; 
 
-      let accumulated = ''; // catch 블록에서 접근할 수 있도록 밖으로 빼기
+      let accumulated = ''; 
 
       try {
         const response = await fetch('/api/chat', {
@@ -144,7 +166,7 @@ export function useChatStream() {
         }
 
         resetWatchdog(); 
-        resetContentWatchdog(); // 🌟 읽기 시작과 함께 콘텐츠 워치독도 가동
+        resetContentWatchdog(); // 읽기 시작과 함께 가동
 
         while (true) {
           if (!isMountedRef.current) break;
@@ -182,11 +204,14 @@ export function useChatStream() {
               handlers.onDelta?.(data.delta, accumulated);
               
               safeSetAiStatus(''); 
-              resetContentWatchdog(); // 🌟 실제 텍스트가 도착했을 때만 리셋!
+              resetContentWatchdog(); // 🌟 실제 텍스트가 도착했을 때 풀 리셋
             } else if (data.type === 'status') {
               safeSetAiStatus(data.message);
               handlers.onStatus?.(data.message);
-              // status는 일반 워치독(resetWatchdog)만 갱신시키고, 콘텐츠 워치독은 갱신하지 않음
+              
+              // 🌟 status 도착 = 서버 살아있음 신호 → content 워치독을 25초 연장 (단, 240초 hard cap)
+              extendContentWatchdog(NO_CONTENT_EXTENSION_PER_STATUS_MS);
+              
             } else if (data.type === 'error') {
               handlers.onError?.(data.message);
             } else if (data.type === 'done') {
@@ -232,7 +257,7 @@ export function useChatStream() {
         }
       } finally {
         if (watchdogId) clearTimeout(watchdogId); 
-        if (contentWatchdogId) clearTimeout(contentWatchdogId); // 🌟 타이머 정리 완벽히!
+        if (contentWatchdogId) clearTimeout(contentWatchdogId); 
         safeSetIsStreaming(false);
         abortControllerRef.current = null;
       }
