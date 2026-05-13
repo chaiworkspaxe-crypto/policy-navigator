@@ -17,21 +17,33 @@ const DEFAULT_CITY = "선택하세요";
 const DEFAULT_DONG = "선택 안 함";
 const EMPTY_INPUTS: ThreadInputs = { selected_city: DEFAULT_CITY, selected_district: DEFAULT_CITY, selected_dong: DEFAULT_DONG, birth_year: "", extra_info: "" };
 
-// 정규화 강건성 보강: AI 응답 변동성에 대비한 느슨한 매칭
+// 🌟 [핵심 개선] 정규화 강건성 보강: AI 응답 변동성(동의어)에 대비한 느슨한 표 헤더 매칭
 const extractSummaryTableText = (text: string) => {
   const lines = text.split('\n');
   let headerIdx = -1;
   
+  // 🌟 동의어 그룹: 각 그룹 중 하나라도 hit하면 1점
+  const tokenGroups: string[][] = [
+    ['분야', '카테고리'],
+    ['정책', '정책명', '사업명', '이름'],
+    ['주관', '기관', '주관기관', '운영'],
+    ['혜택', '핵심혜택', '내용', '지원'],
+    ['마감', '마감일', '신청마감', '기간'],
+  ];
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (line === undefined) continue;
     
     const normalized = line.replace(/\*+/g, '').replace(/\s/g, '').toLowerCase();
+    if (!normalized.startsWith('|')) continue;
     
-    const tokens = ['분야', '정책', '주관', '혜택', '마감'];
-    const hits = tokens.filter(t => normalized.includes(`|${t}`)).length;
+    // 🌟 그룹별로 적어도 하나라도 매칭되는지 체크
+    const hits = tokenGroups.filter(group => 
+      group.some(t => normalized.includes(`|${t.toLowerCase()}`))
+    ).length;
     
-    if (line.startsWith('|') && hits >= 3) {
+    if (hits >= 3) {
       headerIdx = i;
       break;
     }
@@ -152,7 +164,6 @@ export default function Home() {
     document.documentElement.classList.add('dark');
   }, []);
 
-  // 🌟 [중요 버그 픽스] 스트리밍 중에는 절대 reload 안 함 → 부분 답변 보호
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (loading) return;
@@ -311,7 +322,6 @@ export default function Home() {
   };
 
   const selectThread = async (uid: string, tid: string) => {
-    // 🌟 [핵심 개선] 스레드 전환 시 진행 중 스트림 즉시 중단 (토큰 낭비 + 잘못된 저장 방지)
     if (loading) stop();
     
     try {
@@ -337,7 +347,6 @@ export default function Home() {
   };
 
   const handleNewThread = async (uid = userId) => {
-    // 🌟 [핵심 개선] 새 대화 시작 시에도 동일하게 스트림 중단
     if (loading) stop();
     
     setErrorMessage("");
