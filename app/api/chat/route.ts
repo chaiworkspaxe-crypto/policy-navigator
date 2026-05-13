@@ -1,15 +1,14 @@
 // app/api/chat/route.ts
 import { openai } from '@ai-sdk/openai';
-import { streamText, tool, type CoreMessage } from 'ai'; // 🌟 CoreMessage 타입 추가
+import { streamText, tool, type CoreMessage } from 'ai'; 
 import { z } from 'zod';
 import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs'; 
 import { after } from 'next/server';
 import { buildSystemPrompt } from '@/lib/prompts/policyNavigator';
-import { getCachedSearch, setCachedSearch } from '@/lib/searchCache';   // 🌟 검색 캐시 헬퍼
+import { getCachedSearch, setCachedSearch } from '@/lib/searchCache'; 
 
-// 🌟 [신규] 도구 호출 쿼리 정규화 (중복 판별용)
 function normalizeToolQuery(q: string): string {
   return q.trim().toLowerCase()
     .replace(/[\s\u00A0]+/g, '')
@@ -21,8 +20,6 @@ const rawOpenai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-// 🌟 [인프라 모니터링 노트]
-// 🚀 런칭 후 트래픽 급증 시 반드시 Supabase 대시보드 > Database > 'Active connections'를 모니터링하세요! (Free 티어 한도 60개)
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 export const runtime = 'edge';
@@ -67,49 +64,41 @@ function withTimeout<T>(
 
 const MAX_HISTORY_TURNS = 12; 
 
-// 🌟 [핵심 개선] CoreMessage 타입 적용 및 강력한 필터링/압축 로직 도입
 function trimMessages(messages: unknown): CoreMessage[] {
-  // 🌟 [방어막] non-array 입력 즉시 차단 (TypeError 방지)
   if (!Array.isArray(messages)) return [];
 
-  // 1) 빈 메시지 / 잘못된 role 필터링
   const cleaned = messages.filter((m: any): m is CoreMessage => {
     if (!m || typeof m !== 'object') return false;
-    // 🌟 'system' role 제거: 시스템 프롬프트는 streamText의 system 인자로만 주입됨 (인젝션 차단)
     if (m.role !== 'user' && m.role !== 'assistant') return false;
-    // content는 string 또는 array(멀티모달) 모두 허용
     if (typeof m.content === 'string') return m.content.trim().length > 0;
     return Array.isArray(m.content) && m.content.length > 0;
   });
 
-  // 2) 연속된 같은 role(특히 user-user) 압축: 더 최신 메시지만 남김
   const compacted: CoreMessage[] = [];
   for (const m of cleaned) {
     const prev = compacted[compacted.length - 1];
     if (prev && prev.role === m.role && m.role === 'user') {
-      compacted[compacted.length - 1] = m;       // 같은 role 연속이면 최신으로 대체
+      compacted[compacted.length - 1] = m;       
       continue;
     }
     compacted.push(m);
   }
 
-  // 3) 윈도우 잘라내기 + 첫 메시지는 반드시 user
   if (compacted.length <= MAX_HISTORY_TURNS) return compacted;
   const sliced = compacted.slice(-MAX_HISTORY_TURNS);
   const firstUserIdx = sliced.findIndex((m) => m.role === 'user');
   return firstUserIdx <= 0 ? sliced : sliced.slice(firstUserIdx);
 }
 
-// 🌟 [신규] 과거 assistant 응답 압축으로 토큰 폭증 차단
-const RECENT_KEEP = 4;           // 최근 N개는 압축 X
-const OLD_ASSISTANT_MAX = 800;   // 800자 ≈ 600토큰 (한국어 기준)
+const RECENT_KEEP = 4;           
+const OLD_ASSISTANT_MAX = 800;   
 
 function compressOldAssistantMessages(messages: CoreMessage[]): CoreMessage[] {
   if (messages.length <= RECENT_KEEP) return messages;
   
   const splitIdx = messages.length - RECENT_KEEP;
   return messages.map((m, i) => {
-    if (i >= splitIdx) return m; // 최근 N개는 그대로 유지
+    if (i >= splitIdx) return m; 
     if (m.role !== 'assistant') return m;
     if (typeof m.content !== 'string') return m;
     if (m.content.length <= OLD_ASSISTANT_MAX) return m;
@@ -153,26 +142,30 @@ export async function POST(req: Request) {
       ? messages[messages.length - 1]
       : null;
 
-    let userInsertPromise: Promise<void> | null = null;
+    // 🌟 [핵심 개선] user 메시지 저장 비동기 격리 (고아 메시지 방지 기초)
+    let userInsertedAt: string | null = null;
+    
     if (userId && threadId && lastMsg?.role === 'user') {
       const content = typeof lastMsg.content === 'string' 
         ? lastMsg.content 
         : JSON.stringify(lastMsg.content);
       const now = new Date().toISOString();
+      userInsertedAt = now;
       
-      userInsertPromise = (async () => {
-        const { error } = await supabase
-          .from('chat_messages')
-          .insert({
-            thread_id: threadId,
-            user_id: userId,
-            role: 'user',
-            content,
-            created_at: now,
-            updated_at: now,
-          });
-        if (error) console.error('[user msg insert]', error);
-      })();
+      // 즉시 fire-and-forget 실행. 실패 시 로그만 남김.
+      void supabase
+        .from('chat_messages')
+        .insert({
+          thread_id: threadId, 
+          user_id: userId, 
+          role: 'user',
+          content, 
+          created_at: now, 
+          updated_at: now,
+        })
+        .then(({ error }) => {
+          if (error) console.error('[user msg insert]', error);
+        });
     }
 
     const profileSelectPromise: Promise<string> = (async () => {
@@ -219,10 +212,8 @@ export async function POST(req: Request) {
       }
     })();
 
-    // 🌟 [핵심 개선] trimMessages로 자른 후 압축 파이프라인 적용
     const trimmedMessages = compressOldAssistantMessages(trimMessages(messages)); 
 
-    // 🌟 도구 중복 호출 차단 및 URL 중복 제거를 위한 Request 스코프 상태
     const toolCallCache = new Map<string, string>();
     const seenUrls = new Set<string>();
 
@@ -232,7 +223,6 @@ export async function POST(req: Request) {
     ) => async (args: T) => {
       const key = `${toolName}::${normalizeToolQuery(args.query)}`;
       
-      // 🛡️ 1) 동일 (도구, 정규화쿼리) 중복 호출 차단
       const prev = toolCallCache.get(key);
       if (prev !== undefined) {
         return `[중복 호출 차단] "${args.query}"는 ${toolName}로 이미 조회했습니다. 다른 키워드(지역/분야/연령대 등)를 조합해 재시도하거나, 보유한 정보로 답변을 마무리하세요. 직전 결과 요약:\n\n${prev.slice(0, 400)}…`;
@@ -248,7 +238,6 @@ export async function POST(req: Request) {
 
       toolCallCache.set(key, result);
 
-      // 🛡️ 2) URL 중복 제거 hint를 다음 도구 호출에 전달
       const urls = Array.from(result.matchAll(/https?:\/\/[^\s)]+/g)).map(m => m[0]);
       let dupNote = '';
       if (urls.length > 0) {
@@ -290,11 +279,14 @@ export async function POST(req: Request) {
             return '임베딩 일시 실패. naver_web_search로 즉시 우회하세요. 이 검색은 더 시도하지 마세요.';
           }
 
+          const STRICT_THRESHOLD = 0.55;  
+          const RECALL_THRESHOLD = 0.42;  
+
           const { data, error } = await withTimeout(
             async () => supabase.rpc('match_policies', {
               query_embedding: queryEmbedding,
-              match_threshold: 0.4, 
-              match_count: 8,
+              match_threshold: RECALL_THRESHOLD,  
+              match_count: 12,                    
             }),
             TOOL_TIMEOUT_MS,
             'pgvector',
@@ -302,19 +294,35 @@ export async function POST(req: Request) {
           ) as { data: RpcRow[] | null; error: { message: string } | null };
 
           if (error) {
-            throw new Error(error.message); // withToolGuard가 잡아서 처리함
+            throw new Error(error.message); 
           }
 
-          if (data && data.length > 0) {
-            return data
-              .map((p) => {
-                const tier = (p.similarity ?? 0) >= 0.55 ? '🟢' : '🟡';
-                return `- ${tier} 정책명: ${p?.title ?? '미상'} (${p?.provider ?? '미상'})\n  내용: ${p?.summary ?? ''}\n  링크: ${p?.url ?? ''}`;
-              })
-              .join('\n\n');
+          if (!data || data.length === 0) {
+            return '내부 DB에 매칭되는 정책 없음. naver_web_search 또는 global_web_search로 보완하세요.';
           }
 
-          return '내부 DB에 매칭되는 정책 없음. naver_web_search 또는 global_web_search로 보완하세요.';
+          const strict = data.filter(p => (p.similarity ?? 0) >= STRICT_THRESHOLD);
+          const recall = data.filter(p => (p.similarity ?? 0) < STRICT_THRESHOLD);
+
+          const fmt = (p: RpcRow) => {
+            const sim = ((p.similarity ?? 0) * 100).toFixed(0);
+            return `- 정책명: ${p?.title ?? '미상'} (${p?.provider ?? '미상'}) [유사도 ${sim}%]\n  내용: ${p?.summary ?? ''}\n  링크: ${p?.url ?? ''}`;
+          };
+
+          let result = '';
+          if (strict.length > 0) {
+            result += `[🟢 신뢰 가능 — 본문에 직접 인용해도 좋음]\n${strict.map(fmt).join('\n\n')}`;
+          }
+          if (recall.length > 0) {
+            result += (strict.length > 0 ? '\n\n' : '');
+            result += `[🟡 약한 매칭 — 사용자 요청과 다를 수 있음. 본문 직접 인용 금지. naver_web_search로 정책명을 한 번 더 검증한 후에만 언급 가능. 검증 실패 시 무시.]\n${recall.map(fmt).join('\n\n')}`;
+          }
+
+          if (strict.length === 0 && recall.length > 0) {
+            result += '\n\n[⚠️ 강한 매칭이 0건입니다. 🟡 결과는 검증 전까지 사용 금지. naver_web_search를 반드시 호출하세요.]';
+          }
+
+          return result;
         }),
       }),
 
@@ -446,7 +454,7 @@ export async function POST(req: Request) {
             req.signal,
           )) as Response;
           
-          if (!res.ok) throw new Error(`글로벌 검색 ${res.status}`); // withToolGuard가 잡음
+          if (!res.ok) throw new Error(`글로벌 검색 ${res.status}`); 
           
           const data = await res.json() as { results?: Array<{ title: string; content: string; url: string }> };
           if (!data.results?.length) return '글로벌 검색 결과 없음. 키워드를 바꿔 재시도하거나 보유 정보로 마무리하세요.';
@@ -495,17 +503,48 @@ export async function POST(req: Request) {
         const systemPromptWithTime = buildSystemPrompt() + profileContext;
 
         let assistantPersisted = false;
+
+        // 🌟 [핵심 개선] 빈/실패 응답에 대한 placeholder를 남기는 폴백
+        const persistFailurePlaceholder = async (reason: string) => {
+          if (assistantPersisted || !userId || !threadId) return;
+          if (!userInsertedAt) return; // user 메시지가 없으면 placeholder 불필요
+          
+          try {
+            const placeholder = `(앗, AI 응답을 늦게 받아오거나 문제가 생겼어요. 잠시 후 다시 시도해주세요. — ${reason})`;
+            const now = new Date().toISOString();
+            await supabase.from('chat_messages').insert({
+              thread_id: threadId, 
+              user_id: userId, 
+              role: 'assistant',
+              content: placeholder, 
+              created_at: now, 
+              updated_at: now,
+            });
+            // 부모 thread updated_at만 갱신 (title 보존)
+            await supabase.from('chat_threads')
+              .update({ updated_at: now })
+              .eq('thread_id', threadId).eq('user_id', userId);
+            assistantPersisted = true;
+          } catch (e) {
+            console.error('[placeholder persist fail]', e);
+          }
+        };
         
         const persistAssistant = async (text: string, finishReason?: string) => {
           if (assistantPersisted) return;        
           if (!userId || !threadId) return;
-          if (!text || !text.trim()) return;     
+          if (!text || !text.trim()) {
+            // 빈 응답이면 placeholder 저장
+            await persistFailurePlaceholder(finishReason ?? 'empty');
+            return;
+          }
 
           assistantPersisted = true;             
 
           try {
             const now = new Date().toISOString();
-            if (userInsertPromise) await userInsertPromise.catch(() => {});
+            
+            // ⚠️ user INSERT는 위에서 fire-and-forget 처리 완료
 
             await supabase.from('chat_messages').insert({
               thread_id: threadId,
@@ -547,7 +586,9 @@ export async function POST(req: Request) {
               
           } catch (dbError) {
             console.error("DB 저장 중 에러 발생:", dbError);
-            assistantPersisted = false;   
+            assistantPersisted = false;
+            // 🌟 진짜 fail 시에도 placeholder 시도
+            await persistFailurePlaceholder('db_error');
           }
         };
 
@@ -561,7 +602,7 @@ export async function POST(req: Request) {
           result = await streamText({
             model: openai(PRIMARY_MODEL), 
             system: systemPromptWithTime,
-            messages: trimmedMessages,
+            messages: trimmedMessages, 
             maxSteps: 10,
             abortSignal: req.signal, 
             onError: (err) => { console.error(`[streamText PRIMARY onError]`, err); },
@@ -575,7 +616,7 @@ export async function POST(req: Request) {
           result = await streamText({
             model: openai(FALLBACK_MODEL),
             system: systemPromptWithTime,
-            messages: trimmedMessages,
+            messages: trimmedMessages, 
             maxSteps: 10,
             abortSignal: req.signal,
             onError: (err) => { console.error('[streamText FALLBACK onError]', err); },
@@ -641,8 +682,11 @@ export async function POST(req: Request) {
         } finally {
           console.log(`\n[🏁 스트림 종료] 길이=${fullAnswer.length}, error=${streamErrored}, aborted=${req.signal.aborted}`);
           
+          // 🌟 [핵심 개선] 빈 답변일 때도 placeholder 저장 보장
           if (fullAnswer.trim().length > 0) {
             void persistAssistant(fullAnswer, req.signal.aborted ? 'aborted' : 'errored');
+          } else if (streamErrored || req.signal.aborted) {
+            void persistFailurePlaceholder(req.signal.aborted ? 'aborted' : 'errored');
           }
           
           if (!req.signal.aborted) {
@@ -665,9 +709,8 @@ export async function POST(req: Request) {
       const capturedUserId = userId;
       const capturedThreadId = threadId;
       const capturedMsg = lastMsg.content;
-      const origin = new URL(req.url).origin; // 🌟 req.url에서 origin 추출
+      const origin = new URL(req.url).origin; 
       
-      // 🌟 [개선] after() 내부에서 자체 HTTP fetch로 위임 → 별도 Edge invocation으로 분리
       after(async () => {
         try {
           const internalSecret = process.env.INTERNAL_API_SECRET;
@@ -686,7 +729,7 @@ export async function POST(req: Request) {
               lastUserMessage: capturedMsg,
             }),
             signal: controller.signal,
-            keepalive: true, // 🌟 Edge runtime fetch가 함수 종료 후에도 진행되도록 허용
+            keepalive: true, 
           })
             .catch((e) => console.warn('[bg extract fetch fail]', e?.message))
             .finally(() => clearTimeout(timeoutId));
