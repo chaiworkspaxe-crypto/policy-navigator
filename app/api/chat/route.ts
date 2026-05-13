@@ -8,6 +8,7 @@ import * as Sentry from '@sentry/nextjs';
 import { after } from 'next/server';
 import { buildSystemPrompt } from '@/lib/prompts/policyNavigator';
 import { getCachedSearch, setCachedSearch } from '@/lib/searchCache'; 
+import { checkRateLimit } from '@/lib/rateLimit'; // 🌟 [신규] Rate Limit 헬퍼 임포트
 
 function normalizeToolQuery(q: string): string {
   return q.trim().toLowerCase()
@@ -137,6 +138,20 @@ function decodeNaverEntities(s: string): string {
 export async function POST(req: Request) {
   try {
     const { messages, userId, threadId } = await req.json();
+
+    // 🌟 [신규] Rate limit 체크 (가장 먼저)
+    if (userId) {
+      const rate = await checkRateLimit(userId);
+      if (!rate.allowed) {
+        const friendly = rate.reason === 'minute'
+          ? `요청이 너무 빨라요! 잠시 후 다시 시도해 주세요. (분당 ${rate.limit}회 한도)`
+          : `오늘은 ${rate.limit}회까지 검색하셨어요. 내일 다시 만나요 🙏`;
+        return new Response(JSON.stringify({ detail: friendly }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json', 'Retry-After': rate.reason === 'minute' ? '60' : '3600' },
+        });
+      }
+    }
 
     const lastMsg = Array.isArray(messages) && messages.length > 0
       ? messages[messages.length - 1]
@@ -605,12 +620,11 @@ export async function POST(req: Request) {
           }
         };
 
-        // 🌟 [신규] finishReason 추적용 변수 추가
         let finalFinishReason: string | undefined;
 
         const handleFinish = async ({ text, usage, finishReason, modelName }: any) => {
           console.log(`[💰 ${modelName}] in=${usage?.promptTokens}, out=${usage?.completionTokens}, finish=${finishReason}`);
-          finalFinishReason = finishReason; // 🌟 capture
+          finalFinishReason = finishReason; 
           await persistAssistant(text, finishReason);
         };
 
@@ -621,7 +635,7 @@ export async function POST(req: Request) {
             system: systemPromptWithTime,
             messages: trimmedMessages, 
             maxSteps: 10,
-            maxTokens: 8192, // 🌟 정책 풀리스트도 한 번에 끝나도록 충분히
+            maxTokens: 8192, 
             abortSignal: req.signal, 
             onError: (err) => { console.error(`[streamText PRIMARY onError]`, err); },
             tools: commonTools,
@@ -636,7 +650,7 @@ export async function POST(req: Request) {
             system: systemPromptWithTime,
             messages: trimmedMessages, 
             maxSteps: 10,
-            maxTokens: 8192, // 🌟 fallback에도 동일 적용
+            maxTokens: 8192, 
             abortSignal: req.signal,
             onError: (err) => { console.error('[streamText FALLBACK onError]', err); },
             tools: commonTools,
@@ -709,7 +723,6 @@ export async function POST(req: Request) {
           
           if (!req.signal.aborted) {
             try {
-              // 🌟 [핵심 개선] 클라이언트에 잘림(truncated) 상태 명시적 전달
               send({ 
                 type: 'done', 
                 full_content: fullAnswer, 
