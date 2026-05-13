@@ -1,3 +1,4 @@
+/* app/globals.css */
 @import "tailwindcss";
 
 :root {
@@ -8,8 +9,9 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* 🌟 [핵심 개선] 한국어 폰트(Noto Sans KR)를 1순위로, 그 다음 Geist, 그 다음 시스템 폰트로 연결 */
+  --font-sans: var(--font-noto-kr), var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -32,7 +34,8 @@ body {
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  /* 🌟 낡은 Arial/Helvetica 하드코딩을 지우고, 위에서 정의한 Tailwind 테마 폰트 변수를 적용 */
+  font-family: var(--font-sans);
 }
 
 .markdown-body table tr:last-child td {
