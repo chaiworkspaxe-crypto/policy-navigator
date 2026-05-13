@@ -136,7 +136,6 @@ export default function Home() {
   const [extraInfo, setExtraInfo] = useState(EMPTY_INPUTS.extra_info);
   const [query, setQuery] = useState("");
 
-  // 🌟 [신규] 토큰 한도 초과 잘림 감지용 상태
   const [lastTruncated, setLastTruncated] = useState(false);
 
   const availableDistricts = useMemo(() => CITY_TO_DISTRICTS[city] || [], [city]);
@@ -271,7 +270,7 @@ export default function Home() {
         setNextBefore(null);
         applyInputs(EMPTY_INPUTS);
         setIsFormExpanded(true);
-        setLastTruncated(false); // 🌟 방 삭제 시 리셋
+        setLastTruncated(false);
       }
     } catch (err) {
       console.error('삭제 에러:', err);
@@ -327,7 +326,7 @@ export default function Home() {
     
     try {
       setErrorMessage(""); setCurrentThreadId(tid); setMessages([]); setNextBefore(null); setQuery(""); setIsSidebarOpen(false);
-      setLastTruncated(false); // 🌟 방 이동 시 리셋
+      setLastTruncated(false); 
       
       const [loadedData, loadedInputs] = await Promise.all([ api.loadMessages(uid, tid), api.loadThreadInputs(uid, tid) ]);
       
@@ -359,7 +358,7 @@ export default function Home() {
     applyInputs(EMPTY_INPUTS);
     setIsSidebarOpen(false); 
     setIsFormExpanded(true);
-    setLastTruncated(false); // 🌟 새 대화 시 리셋
+    setLastTruncated(false);
   };
 
   const loadOlderMessages = async () => {
@@ -465,7 +464,7 @@ export default function Home() {
       {
         onFirstDelta: () => { 
           firstDeltaArrived = true; 
-          setLastTruncated(false); // 🌟 새 답변 생성이 시작되면 잘림 상태 초기화
+          setLastTruncated(false); 
         },
         onDelta: (_, acc) =>
           setMessages((prev) => {
@@ -492,7 +491,6 @@ export default function Home() {
           
           setIsFormExpanded(true);
         },
-        // 🌟 [신규] onDone에서 meta 객체를 받아 잘림 여부 업데이트
         onDone: (_fullContent, meta) => {
           if (meta?.truncated) {
             setLastTruncated(true);
@@ -745,13 +743,20 @@ export default function Home() {
                                 url: window.location.href 
                               };
                               try { 
-                                const isMobile = /Mobi|Android/i.test(navigator.userAgent);
-                                if (isMobile && navigator.share) { 
-                                  await navigator.share(shareData); 
-                                } else { 
-                                  await navigator.clipboard.writeText(shareData.text + shareData.url); 
-                                  alert('전체 결과가 클립보드에 복사되었습니다!'); 
-                                } 
+                                // 🌟 [수술 2️⃣1️⃣] iPadOS 13+ 완벽 감지 및 Native Share 우선 적용
+                                const canNativeShare = 
+                                  typeof navigator.share === 'function' && 
+                                  (
+                                    /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+                                    (/Macintosh/i.test(navigator.userAgent) && 'ontouchend' in document)
+                                  );
+
+                                if (canNativeShare) {
+                                  await navigator.share(shareData);
+                                } else {
+                                  await navigator.clipboard.writeText(shareData.text + shareData.url);
+                                  alert('전체 결과가 클립보드에 복사되었습니다!');
+                                }
                               } catch (err) { console.error('공유/복사 실패:', err); }
                             }} className="text-xs font-bold bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-3 py-1.5 rounded-lg hover:bg-green-200 dark:hover:bg-green-800/50 transition-colors flex items-center gap-1 border border-green-200 dark:border-green-800/30">
                               🔗 공유하기
