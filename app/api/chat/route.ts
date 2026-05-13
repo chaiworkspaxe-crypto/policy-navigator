@@ -1,14 +1,14 @@
 // app/api/chat/route.ts
 import { openai } from '@ai-sdk/openai';
-import { streamText, tool, type CoreMessage } from 'ai'; 
+import { streamText, tool, embed, type CoreMessage } from 'ai'; // 🌟 embed 헬퍼 추가
 import { z } from 'zod';
-import OpenAI from 'openai';
+// 🌟 무거운 OpenAI 공식 SDK import 제거 (번들 사이즈 최적화)
 import { createClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs'; 
 import { after } from 'next/server';
 import { buildSystemPrompt } from '@/lib/prompts/policyNavigator';
 import { getCachedSearch, setCachedSearch } from '@/lib/searchCache'; 
-import { checkRateLimit } from '@/lib/rateLimit'; // 🌟 [신규] Rate Limit 헬퍼 임포트
+import { checkRateLimit } from '@/lib/rateLimit'; 
 
 function normalizeToolQuery(q: string): string {
   return q.trim().toLowerCase()
@@ -17,7 +17,7 @@ function normalizeToolQuery(q: string): string {
     .slice(0, 200);
 }
 
-const rawOpenai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// 🌟 rawOpenai 인스턴스 제거
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
@@ -139,7 +139,6 @@ export async function POST(req: Request) {
   try {
     const { messages, userId, threadId } = await req.json();
 
-    // 🌟 [신규] Rate limit 체크 (가장 먼저)
     if (userId) {
       const rate = await checkRateLimit(userId);
       if (!rate.allowed) {
@@ -274,21 +273,21 @@ export async function POST(req: Request) {
             .describe('한국어 자연어 검색어') 
         }),
         execute: withToolGuard('search_internal_db', async ({ query }) => {
-          type EmbeddingResp = { data?: Array<{ embedding?: number[] }> };
           type RpcRow = { title?: string; provider?: string; summary?: string; url?: string; similarity?: number };
 
-          const embeddingResponse = await withTimeout(
-            async (signal) => rawOpenai.embeddings.create(
-              { model: 'text-embedding-3-small', input: query },
-              { signal }
-            ),
-            TOOL_TIMEOUT_MS,
-            'embedding',
+          // 🌟 [핵심 P2 패치] AI SDK의 embed 함수로 교체하여 의존성 단일화
+          const { embedding } = await withTimeout(
+            async (signal) => embed({
+              model: openai.embedding('text-embedding-3-small'),
+              value: query,
+              abortSignal: signal,
+            }),
+            TOOL_TIMEOUT_MS, 
+            'embedding', 
             req.signal,
-          ) as EmbeddingResp;
+          );
 
-          const queryEmbedding = embeddingResponse?.data?.[0]?.embedding;
-          if (!Array.isArray(queryEmbedding) || queryEmbedding.length === 0) {
+          if (!Array.isArray(embedding) || embedding.length === 0) {
             return '임베딩 일시 실패. naver_web_search로 즉시 우회하세요. 이 검색은 더 시도하지 마세요.';
           }
 
@@ -297,7 +296,7 @@ export async function POST(req: Request) {
 
           const { data, error } = await withTimeout(
             async () => supabase.rpc('match_policies', {
-              query_embedding: queryEmbedding,
+              query_embedding: embedding, // 🌟 수정된 임베딩 값 전달
               match_threshold: RECALL_THRESHOLD,  
               match_count: 12,                    
             }),
