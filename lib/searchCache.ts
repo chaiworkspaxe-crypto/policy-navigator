@@ -23,26 +23,42 @@ const STOPWORDS = new Set([
 ]);
 
 // ────────────────────────────────────────────────────────────
-// 1) 쿼리 정규화 — 작은 표기 차이를 같은 캐시 키로 모음
+// 1) 쿼리 정규화 — 작은 표기 차이를 같은 캐시 키로 모음 (Bag-of-words 패턴)
 // ────────────────────────────────────────────────────────────
 function normalizeQuery(q: string): string {
-  // 1) 기본 정규화: 소문자화 + 모든 공백 제거 + 흔한 구두점 제거
-  let s = q.trim().toLowerCase()
-    .replace(/[\s\u00A0]+/g, '')           // "청년 월세" === "청년월세"
-    .replace(/[?!,.~`'"()\[\]{}<>·•\-_]+/g, ''); // 기호 날리기
+  // 1) site: 같은 검색 연산자 먼저 추출 (공백 제거 전에 안전하게 보관)
+  const siteMatches = Array.from(q.toLowerCase().matchAll(/site:[a-z0-9.-]+/g))
+    .map(m => m[0]).sort();
+  
+  // 2) 기본 정규화 (site: 및 기호 제거)
+  let s = q.toLowerCase()
+    .replace(/site:[a-z0-9.-]+/g, ' ')
+    .replace(/[?!,.~`'"()\[\]{}<>·•\-_]+/g, ' ')
+    .trim();
 
-  // 2) 조사/불용어 제거 (간이 morphology)
-  for (const sw of STOPWORDS) {
-    s = s.split(sw).join('');
-  }
+  // 3) 조사/불용어 제거 — 단어 경계 살리기 위해 split 사용
+  let tokens = s.split(/[\s\u00A0]+/).filter(Boolean);
+  tokens = tokens.map(t => {
+    for (const sw of STOPWORDS) {
+      // 단어 끝의 조사만 제거 (단어 중간/시작은 보존, 단어 자체가 조사인 경우도 보호)
+      if (t.endsWith(sw) && t.length > sw.length + 1) {
+        t = t.slice(0, -sw.length);
+      }
+    }
+    return t;
+  }).filter(t => t.length > 0);
 
-  // 3) site: 같은 검색 연산자는 순서가 달라도 같게 취급되도록 일관된 위치로 정렬
-  const siteMatches = Array.from(s.matchAll(/site:[a-z0-9.-]+/g)).map(m => m[0]).sort();
+  // 🌟 [핵심 개선] 토큰 정렬: "청년 월세 지원" === "월세 지원 청년" → 같은 캐시 키로 압축
+  tokens.sort();
+  
+  let normalized = tokens.join('');
+  
+  // 4) 보관해둔 site: 연산자는 꼬리에 일관되게 이어붙임
   if (siteMatches.length > 0) {
-    s = s.replace(/site:[a-z0-9.-]+/g, '') + '|' + siteMatches.join(',');
+    normalized = normalized + '|' + siteMatches.join(',');
   }
 
-  return s.slice(0, 200); // 안전 상한 (해시 생성 전 너무 긴 쿼리 방지)
+  return normalized.slice(0, 200); // 안전 상한
 }
 
 // ────────────────────────────────────────────────────────────
@@ -110,7 +126,17 @@ const SHOULD_NOT_CACHE_PATTERNS = [
   /타임아웃/,
   /결과 없음/,
   /API 키/,
-  /\b\d{3}\b.{0,10}에러/,                    // "400 에러", "500 에러" 등
+  /\b\d{3}\b.{0,10}에러/,                     // "400 에러", "500 에러" 등
+  // 🌟 [신규] 외부 API 영문 에러 패턴 차단 (캐시 오염 방지)
+  /rate.?limit/i,
+  /quota/i,
+  /unauthor/i,
+  /forbidden/i,
+  /\berror\b/i,
+  /\bfail/i,
+  // 🌟 [신규] 도구 가드 메시지 — 캐시되면 다음 호출이 가짜 hit 처리됨
+  /\[중복 호출 차단\]/,
+  /\[도구 예외\]/,
 ];
 
 export async function setCachedSearch(
