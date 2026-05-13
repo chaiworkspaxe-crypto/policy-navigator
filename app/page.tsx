@@ -6,7 +6,7 @@ import { v4 as uuidv4 } from "uuid";
 import { api, ChatMessage, extractApiErrorMessage, ThreadInputs, ThreadItem } from "@/lib/api";
 import { CITY_TO_DISTRICTS } from "@/lib/regionData"; 
 import { useChatStream } from '@/lib/hooks/useChatStream';
-import AssistantBubble from '@/components/AssistantBubble'; // 🌟 [신규] 분리된 컴포넌트 import
+import AssistantBubble from '@/components/AssistantBubble';
 import { 
   MessageSquare, Plus, Send, Loader2, MapPin, Search, AlertCircle, 
   Menu, X, Trash2, Sun, Moon, Coffee, ChevronUp, ChevronDown, 
@@ -101,7 +101,6 @@ export default function Home() {
   const [currentThreadId, setCurrentThreadId] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   
-  // 🌟 [추가] 페이지네이션 커서 및 더보기 로딩 상태
   const [nextBefore, setNextBefore] = useState<string | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
 
@@ -153,16 +152,20 @@ export default function Home() {
     document.documentElement.classList.add('dark');
   }, []);
 
+  // 🌟 [중요 버그 픽스] 스트리밍 중에는 절대 reload 안 함 → 부분 답변 보호
   useEffect(() => {
     const handleVisibilityChange = () => {
+      if (loading) return;
+      if (document.activeElement instanceof HTMLInputElement || 
+          document.activeElement instanceof HTMLTextAreaElement) return;
+      
       if (document.visibilityState === 'visible' && currentThreadId && userId) {
         api.loadMessages(userId, currentThreadId)
-          .then((res: any) => {
-            // 🌟 API 반환 타입 대응 (배열 -> 객체 구조)
-            const msgs = Array.isArray(res) ? res : res.messages || [];
-            if (msgs.length > 0) {
+          .then((res) => {
+            const msgs = res.messages || [];
+            if (msgs.length > 0 && msgs.length >= messages.length) {
               setMessages(msgs);
-              if (!Array.isArray(res) && res.nextBefore) setNextBefore(res.nextBefore);
+              setNextBefore(res.nextBefore ?? null);
             }
           })
           .catch(console.error);
@@ -170,7 +173,7 @@ export default function Home() {
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, [currentThreadId, userId]);
+  }, [currentThreadId, userId, loading, messages.length]);
 
   useEffect(() => {
     const el = scrollContainerRef.current;
@@ -308,12 +311,14 @@ export default function Home() {
   };
 
   const selectThread = async (uid: string, tid: string) => {
+    // 🌟 [핵심 개선] 스레드 전환 시 진행 중 스트림 즉시 중단 (토큰 낭비 + 잘못된 저장 방지)
+    if (loading) stop();
+    
     try {
       setErrorMessage(""); setCurrentThreadId(tid); setMessages([]); setNextBefore(null); setQuery(""); setIsSidebarOpen(false);
       
       const [loadedData, loadedInputs] = await Promise.all([ api.loadMessages(uid, tid), api.loadThreadInputs(uid, tid) ]);
       
-      // 🌟 API 객체 반환 구조 대응 및 커서 갱신
       const msgs = Array.isArray(loadedData) ? loadedData : (loadedData as any).messages || [];
       setMessages(msgs); 
       setNextBefore((loadedData as any).nextBefore ?? null);
@@ -332,6 +337,9 @@ export default function Home() {
   };
 
   const handleNewThread = async (uid = userId) => {
+    // 🌟 [핵심 개선] 새 대화 시작 시에도 동일하게 스트림 중단
+    if (loading) stop();
+    
     setErrorMessage("");
     setCurrentThreadId(""); 
     setMessages([]); 
@@ -342,12 +350,10 @@ export default function Home() {
     setIsFormExpanded(true);
   };
 
-  // 🌟 [신규] 이전 대화 더 보기 함수
   const loadOlderMessages = async () => {
     if (!nextBefore || loadingOlder || !currentThreadId) return;
     setLoadingOlder(true);
     
-    // 이전 스크롤 높이를 기억해서 스크롤 튀는 현상 방지
     const container = scrollContainerRef.current;
     const prevScrollHeight = container?.scrollHeight || 0;
 
@@ -361,7 +367,6 @@ export default function Home() {
       setMessages(prev => [...newMsgs, ...prev]);
       setNextBefore(Array.isArray(res) ? null : res.nextBefore);
 
-      // 렌더링 후 스크롤 위치 보정
       requestAnimationFrame(() => {
         if (container) {
           const currentScrollHeight = container.scrollHeight;
@@ -435,7 +440,6 @@ export default function Home() {
 
     let firstDeltaArrived = false;
 
-    // 🌟 [핵심 개선 - Option B] 히스토리(messages)만 보내고, 새 메시지는 newUserContent로 분리 전송!
     await stream(
       {
         userId,
@@ -457,10 +461,9 @@ export default function Home() {
         onError: (msg) => {
           setErrorMessage(msg);
           setMessages((prev) => {
-            // 🛡️ [핵심 개선] 부분 답변이 이미 들어와 있으면 그대로 보존, 빈 placeholder만 제거
             const last = prev[prev.length - 1];
             if (last?.role === 'assistant' && (last.content ?? '').trim().length > 0) {
-              return prev;   // 받은 만큼은 살린다
+              return prev;   
             }
             return prev.slice(0, -1);
           });
