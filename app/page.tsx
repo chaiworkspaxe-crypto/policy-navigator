@@ -17,7 +17,6 @@ const DEFAULT_CITY = "선택하세요";
 const DEFAULT_DONG = "선택 안 함";
 const EMPTY_INPUTS: ThreadInputs = { selected_city: DEFAULT_CITY, selected_district: DEFAULT_CITY, selected_dong: DEFAULT_DONG, birth_year: "", extra_info: "" };
 
-// 정규화 강건성 보강: AI 응답 변동성에 대비한 느슨한 매칭
 const extractSummaryTableText = (text: string) => {
   const lines = text.split('\n');
   let headerIdx = -1;
@@ -136,6 +135,9 @@ export default function Home() {
   const [birthYear, setBirthYear] = useState(EMPTY_INPUTS.birth_year);
   const [extraInfo, setExtraInfo] = useState(EMPTY_INPUTS.extra_info);
   const [query, setQuery] = useState("");
+
+  // 🌟 [신규] 토큰 한도 초과 잘림 감지용 상태
+  const [lastTruncated, setLastTruncated] = useState(false);
 
   const availableDistricts = useMemo(() => CITY_TO_DISTRICTS[city] || [], [city]);
   
@@ -269,6 +271,7 @@ export default function Home() {
         setNextBefore(null);
         applyInputs(EMPTY_INPUTS);
         setIsFormExpanded(true);
+        setLastTruncated(false); // 🌟 방 삭제 시 리셋
       }
     } catch (err) {
       console.error('삭제 에러:', err);
@@ -324,6 +327,7 @@ export default function Home() {
     
     try {
       setErrorMessage(""); setCurrentThreadId(tid); setMessages([]); setNextBefore(null); setQuery(""); setIsSidebarOpen(false);
+      setLastTruncated(false); // 🌟 방 이동 시 리셋
       
       const [loadedData, loadedInputs] = await Promise.all([ api.loadMessages(uid, tid), api.loadThreadInputs(uid, tid) ]);
       
@@ -355,6 +359,7 @@ export default function Home() {
     applyInputs(EMPTY_INPUTS);
     setIsSidebarOpen(false); 
     setIsFormExpanded(true);
+    setLastTruncated(false); // 🌟 새 대화 시 리셋
   };
 
   const loadOlderMessages = async () => {
@@ -458,7 +463,10 @@ export default function Home() {
         newUserContent: userText,
       },
       {
-        onFirstDelta: () => { firstDeltaArrived = true; },
+        onFirstDelta: () => { 
+          firstDeltaArrived = true; 
+          setLastTruncated(false); // 🌟 새 답변 생성이 시작되면 잘림 상태 초기화
+        },
         onDelta: (_, acc) =>
           setMessages((prev) => {
             const next = [...prev];
@@ -484,6 +492,12 @@ export default function Home() {
           
           setIsFormExpanded(true);
         },
+        // 🌟 [신규] onDone에서 meta 객체를 받아 잘림 여부 업데이트
+        onDone: (_fullContent, meta) => {
+          if (meta?.truncated) {
+            setLastTruncated(true);
+          }
+        }
       }
     );
 
@@ -655,7 +669,6 @@ export default function Home() {
             </div>
           ) : (
             <div className="space-y-6 pb-4">
-              {/* 🌟 [신규] 이전 대화 더 보기 버튼 */}
               {nextBefore && messages.length > 0 && (
                 <div className="flex justify-center mb-4 pt-2">
                   <button 
@@ -746,13 +759,16 @@ export default function Home() {
                         </div>
                       )}
 
-                      {!loading && isLastMessage && isAssistant && message.content.length > 50 && !hasSummary && (
+                      {/* 🌟 [핵심 개선] !hasSummary 외에도 lastTruncated가 true면 무조건 노출 */}
+                      {!loading && isLastMessage && isAssistant && message.content.length > 50 && (!hasSummary || lastTruncated) && (
                          <div className="mt-4 p-4 bg-gray-50 dark:bg-[#1a1a1a] rounded-xl border border-gray-200 dark:border-[#444] animate-in fade-in duration-300">
                            <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
                              <AlertCircle size={16} className="text-yellow-500" />
-                             답변이 중간에 끊긴 것 같나요? 아래 버튼을 눌러 마저 들을 수 있어요!
+                             {/* 🌟 잘림 여부에 따라 명시적인 에러 메시지 렌더링 */}
+                             {lastTruncated 
+                               ? '🚨 응답이 너무 길어서 혜택 리스트가 중간에 잘렸어요. 아래 버튼으로 마저 받아보세요!' 
+                               : '답변이 중간에 끊긴 것 같나요? 아래 버튼을 눌러 마저 들을 수 있어요!'}
                            </p>
-                           {/* 🌟 [핵심 개선] 이어쓰기 앵커링 프롬프트 주입 */}
                            <button
                              onClick={() => {
                                setQuery(""); 
