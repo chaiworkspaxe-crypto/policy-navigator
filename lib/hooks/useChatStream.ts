@@ -152,6 +152,16 @@ export function useChatStream() {
           }
           return;
         }
+
+        // 🌟 [신규] Rate Limit 429 에러 핸들링
+        if (response.status === 429) {
+          const errorData = await response.json().catch(() => ({}));
+          if (isMountedRef.current) {
+            handlers.onError?.(errorData.detail || '요청이 너무 많아요. 잠시 후 다시 시도해주세요.');
+          }
+          return;
+        }
+
         if (!response.ok) {
           if (isMountedRef.current) handlers.onError?.('서버 통신 오류');
           return;
@@ -216,7 +226,7 @@ export function useChatStream() {
             } else if (data.type === 'error') {
               handlers.onError?.(data.message);
             } else if (data.type === 'done') {
-              // 🌟 [핵심 P0 패치] 서버에서 내려준 잘림(truncated) 시그널을 메타데이터로 파싱해서 UI로 전달
+              // 🌟 서버에서 내려준 잘림(truncated) 시그널을 메타데이터로 파싱해서 UI로 전달
               handlers.onDone?.(data.full_content ?? accumulated, { 
                 truncated: data.truncated === true,
                 finishReason: data.finish_reason,
