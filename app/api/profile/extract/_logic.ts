@@ -1,13 +1,10 @@
 // app/api/profile/extract/_logic.ts
-import { createClient } from '@supabase/supabase-js';
+import { getSupabase } from '@/lib/supabase';
 import { generateObject } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { z } from 'zod';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-);
+const supabase = getSupabase();
 
 const PROFILE_MODEL = process.env.OPENAI_PROFILE_MODEL ?? 'gpt-5.4-nano';
 
