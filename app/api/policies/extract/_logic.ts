@@ -6,13 +6,9 @@
 import { openai } from '@ai-sdk/openai';
 import { generateObject, embed } from 'ai';
 import { z } from 'zod';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabase } from '@/lib/supabase';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-);
-
+const supabase = getSupabase();
 const EXTRACT_MODEL = process.env.OPENAI_EXTRACT_MODEL ?? 'gpt-5.4-nano';
 const EMBED_MODEL = 'text-embedding-3-small';
 
