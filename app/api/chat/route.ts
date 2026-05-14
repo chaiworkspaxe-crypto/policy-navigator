@@ -299,7 +299,6 @@ export async function POST(req: Request) {
         execute: withToolGuard('search_internal_db', async ({ query }) => {
           type RpcRow = { title?: string; provider?: string; summary?: string; url?: string; deadline?: string | null; similarity?: number };
 
-          // 🌟 [핵심 변경] 인메모리 임베딩 캐시 활용
           const embedding = await withTimeout(
             (signal) => getEmbedding(query, signal),
             TOOL_TIMEOUT_MS,
@@ -312,13 +311,15 @@ export async function POST(req: Request) {
           }
 
           const RECALL_THRESHOLD = mode === 'private' ? 0.40 : 0.42;
-          const STRICT_THRESHOLD = 0.55;
+          // 🚀 [핵심 변경] Public은 관공서 용어와 유저 일상어 간의 간극이 커서 0.51만 넘어도 🟢 신뢰로 인정
+          const STRICT_THRESHOLD = mode === 'public' ? 0.51 : 0.55;
 
           const { data, error } = await withTimeout(
             async () => supabase.rpc('match_policies_v2', {
               query_embedding: embedding,
               match_threshold: RECALL_THRESHOLD,
-              match_count: 12,
+              // 🚀 [핵심 변경] 허수 필터링을 감안해 DB에서 넉넉하게 20개까지 가져옴
+              match_count: mode === 'public' ? 20 : 12, 
               p_source_type: mode,
               p_only_active: true, 
             }),
@@ -404,7 +405,8 @@ export async function POST(req: Request) {
             officialQuery = isAlreadyFiltered ? query : `${query} -(site:go.kr OR site:or.kr) (지원금 OR 장학금 OR 공고)`;
             generalQuery = isAlreadyFiltered ? query : `${query} -(site:go.kr OR site:or.kr) (채용 OR 부트캠프 OR 혜택)`;
           } else {
-            officialQuery = isAlreadyFiltered ? query : `${query} 공고 (site:go.kr OR site:or.kr)`;
+            // 🚀 [핵심 변경] '공고'라는 좁은 단어 대신, 지원/안내/혜택 등을 포괄하도록 수정
+            officialQuery = isAlreadyFiltered ? query : `${query} (지원 OR 안내 OR 혜택) (site:go.kr OR site:or.kr)`;
             generalQuery = isAlreadyFiltered ? query : `${query} 지원금 OR 혜택`;
           }
 
@@ -447,10 +449,12 @@ export async function POST(req: Request) {
             }
           };
 
-          // 🌟 [핵심 변경] 1차: official API만 우선 발사
+          // 🚀 [핵심 변경] Public 모드는 정부 문서 풀이 넓어야 하므로 10개까지 넉넉히 가져옴
+          const officialDisplayCount = mode === 'public' ? 10 : 5; 
+          
           const officialRes = await withTimeout(
             async (signal) => fetch(
-              `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(officialQuery)}&display=5&sort=sim`,
+              `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(officialQuery)}&display=${officialDisplayCount}&sort=sim`,
               { headers, signal }
             ),
             TOOL_TIMEOUT_MS, 'naver-official', req.signal,
@@ -461,8 +465,8 @@ export async function POST(req: Request) {
             mode === 'private' ? '기업/재단' : '공식'
           );
 
-          // 🌟 [핵심 변경] 2차: official 결과가 부족할 때만 general/news 추가 발사 (Naver 쿼터 획기적 절약)
-          const NEED_MORE_THRESHOLD = 3;
+          // 🚀 [핵심 변경] Public은 최소 7개의 팩트가 모여야 2차 검색(뉴스/일반)을 멈추도록 임계점 상향
+          const NEED_MORE_THRESHOLD = mode === 'public' ? 7 : 3;
           if (out.length < NEED_MORE_THRESHOLD) {
             const [generalRes, newsRes] = await Promise.allSettled([
               withTimeout(
@@ -522,6 +526,9 @@ export async function POST(req: Request) {
             return cached;
           }
 
+          // 🚀 [핵심 변경] Tavily 검색도 Public일 때는 8개까지 조금 더 깊게 긁어옴
+          const tavilyMaxResults = mode === 'public' ? 8 : 5;
+
           const res = (await withTimeout(
             async (signal) => fetch('https://api.tavily.com/search', {
               method: 'POST',
@@ -529,7 +536,7 @@ export async function POST(req: Request) {
               body: JSON.stringify({
                 api_key: tavilyKey,
                 query: localizedQuery,
-                max_results: 5,
+                max_results: tavilyMaxResults,
                 search_depth: 'basic',
               }),
               signal,
