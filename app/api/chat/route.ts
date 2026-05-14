@@ -6,7 +6,7 @@ import { createClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs'; 
 import { after } from 'next/server';
 import { buildSystemPrompt } from '@/lib/prompts/policyNavigator';
-// 🌟 [신규] 민간 혜택 전용 프롬프트 임포트 (파일을 생성해야 합니다)
+// 🌟 [신규] 민간 혜택 전용 프롬프트 임포트
 import { buildPrivateSystemPrompt } from '@/lib/prompts/privateNavigator'; 
 import { getCachedSearch, setCachedSearch } from '@/lib/searchCache'; 
 import { checkRateLimit } from '@/lib/rateLimit'; 
@@ -137,7 +137,6 @@ function decodeNaverEntities(s: string): string {
 
 export async function POST(req: Request) {
   try {
-    // 🌟 [핵심 변경] searchMode 파라미터 추출. 기본값 'public'으로 하위 호환성 100% 보장
     const { messages, userId, threadId, searchMode = 'public' } = await req.json();
 
     if (userId) {
@@ -271,7 +270,6 @@ export async function POST(req: Request) {
       return result + dupNote;
     };
 
-    // 🌟 [핵심 로직 분기] 도구(Tools)의 행동 방식을 모드에 맞게 분리
     const commonTools = {
       search_internal_db: tool({
         description: '내부 DB(pgvector)에서 정부/민간 정책의 의미적 유사도 상위 결과를 가져옵니다. 가장 먼저 호출하세요.',
@@ -299,12 +297,10 @@ export async function POST(req: Request) {
             return '임베딩 일시 실패. 웹 검색으로 우회하세요.';
           }
 
-          // 🌟 모드에 따른 임계값 조절 (민간은 다소 유연하게 매칭)
           const RECALL_THRESHOLD = searchMode === 'private' ? 0.40 : 0.42;
           const STRICT_THRESHOLD = 0.55;  
 
           const { data, error } = await withTimeout(
-            // 🌟 아까 만든 match_policies_v2 함수 호출 및 p_source_type 파라미터 전달
             async () => supabase.rpc('match_policies_v2', {
               query_embedding: embedding,
               match_threshold: RECALL_THRESHOLD,  
@@ -362,7 +358,6 @@ export async function POST(req: Request) {
           const clientSecret = process.env.NAVER_CLIENT_SECRET;
           if (!clientId || !clientSecret) return '네이버 API 키 미설정. global_web_search를 사용하세요.';
 
-          // 캐시 오염 방지를 위해 키에 searchMode 포함
           const cacheKey = `${searchMode}_${query}`;
           const cached = await getCachedSearch('naver', cacheKey);
           if (cached) {
@@ -374,7 +369,6 @@ export async function POST(req: Request) {
           let officialQuery = '';
           let generalQuery = '';
 
-          // 🌟 [핵심 분기] 모드에 따라 네이버 검색 필터(검색어) 완전 분리
           if (searchMode === 'private') {
             officialQuery = isAlreadyFiltered ? query : `${query} -(site:go.kr OR site:or.kr) (지원금 OR 장학금 OR 공고)`;
             generalQuery = isAlreadyFiltered ? query : `${query} -(site:go.kr OR site:or.kr) (채용 OR 부트캠프 OR 혜택)`;
@@ -478,7 +472,6 @@ export async function POST(req: Request) {
             year: 'numeric',
           }).format(new Date());
           
-          // 🌟 [핵심 분기] Tavily에 던지는 프롬프트 성격 조작
           const localizedQuery = searchMode === 'private'
             ? `${seoulYear}년 대한민국 민간 대기업 재단 청년 혜택 부트캠프 ${query}`
             : `${seoulYear}년 대한민국 정부 정책 지원금 ${query}`;
@@ -523,6 +516,9 @@ export async function POST(req: Request) {
       }),
     };
 
+    // 🌟 [핵심 개선] 스트림 결과를 담을 변수를 상위 스코프로 끌어올려 안전하게 캡처 가능하게 함
+    let fullAnswer = "";
+
     const customStream = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder();
@@ -542,8 +538,6 @@ export async function POST(req: Request) {
           ),
         ]);
 
-        // 🌟 [핵심 분기] 뇌(System Prompt) 분리. 
-        // public이면 기존 buildSystemPrompt, private이면 신규 buildPrivateSystemPrompt 사용
         const baseSystemPrompt = searchMode === 'private' 
           ? buildPrivateSystemPrompt() 
           : buildSystemPrompt();
@@ -672,7 +666,6 @@ export async function POST(req: Request) {
           });
         }
 
-        let fullAnswer = "";
         let streamErrored = false;
         const pickFriendlyMessage = makeFriendlyMessagePicker();
 
@@ -761,13 +754,17 @@ export async function POST(req: Request) {
       const capturedUserId = userId;
       const capturedThreadId = threadId;
       const capturedMsg = lastMsg.content;
+      const capturedSearchMode = searchMode; 
+
       const origin = new URL(req.url).origin; 
       
       after(async () => {
         try {
           const internalSecret = process.env.INTERNAL_API_SECRET;
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 15_000);
+          
+          // --- 기존 프로필 추출 로직 (유지) ---
+          const profileController = new AbortController();
+          const profileTimeout = setTimeout(() => profileController.abort(), 15_000);
 
           fetch(`${origin}/api/profile/extract`, {
             method: 'POST',
@@ -780,13 +777,36 @@ export async function POST(req: Request) {
               threadId: capturedThreadId,
               lastUserMessage: capturedMsg,
             }),
-            signal: controller.signal,
+            signal: profileController.signal,
             keepalive: true, 
           })
-            .catch((e) => console.warn('[bg extract fetch fail]', e?.message))
-            .finally(() => clearTimeout(timeoutId));
+          .catch((e) => console.warn('[bg profile extract fail]', e?.message))
+          .finally(() => clearTimeout(profileTimeout));
+
+          // 🌟 [신규 추가] 민간 모드일 때만, 스트림이 완료되어 완성된 fullAnswer를 분석해 DB에 저장
+          const capturedFullAnswer = fullAnswer; 
+          if (capturedSearchMode === 'private' && capturedFullAnswer.length > 100) {
+            const policyController = new AbortController();
+            const policyTimeout = setTimeout(() => policyController.abort(), 20_000); // 임베딩/DB 시간 고려해 20초
+
+            fetch(`${origin}/api/policies/extract`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(internalSecret ? { 'x-internal-secret': internalSecret } : {}),
+              },
+              body: JSON.stringify({
+                text: capturedFullAnswer, 
+              }),
+              signal: policyController.signal,
+              keepalive: true,
+            })
+            .catch((e) => console.warn('[bg policy extract fail]', e?.message))
+            .finally(() => clearTimeout(policyTimeout));
+          }
+
         } catch (e) {
-          console.error('[bg extract after error]', e);
+          console.error('[bg after block error]', e);
         }
       });
     }
