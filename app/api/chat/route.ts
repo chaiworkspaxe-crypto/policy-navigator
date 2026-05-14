@@ -1,6 +1,6 @@
 // app/api/chat/route.ts
 import { openai } from '@ai-sdk/openai';
-import { streamText, tool, embed, type CoreMessage } from 'ai'; 
+import { streamText, tool, type CoreMessage } from 'ai'; 
 import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs'; 
@@ -10,17 +10,15 @@ import { buildPrivateSystemPrompt } from '@/lib/prompts/privateNavigator';
 import { getCachedSearch, setCachedSearch } from '@/lib/searchCache'; 
 import { checkRateLimit } from '@/lib/rateLimit'; 
 
-// 🌟 [핵심 변경] 분리해둔 핵심 로직 함수를 직접 import — HTTP 라운드트립 제거
 import { extractProfileCore } from '@/app/api/profile/extract/_logic';
 import { extractPoliciesCore } from '@/app/api/policies/extract/_logic';
 
-// ────────────────────────────────────────────────────────────
-// 🛡️ 격벽 진입점 — 모드 화이트리스트 정규화 (이중 엔진 격리의 출발점)
-// ────────────────────────────────────────────────────────────
+// 🌟 [신규] 인메모리 임베딩 캐시 임포트
+import { getEmbedding } from '@/lib/embeddingCache';
+
 type SearchMode = 'public' | 'private';
 
 function normalizeSearchMode(raw: unknown): SearchMode {
-  // 'private' 외의 모든 값(undefined, null, 빈 문자열, 객체, 잘못된 문자열 등)은 안전하게 'public'으로 fallback
   return raw === 'private' ? 'private' : 'public';
 }
 
@@ -150,16 +148,12 @@ function decodeNaverEntities(s: string): string {
 
 export async function POST(req: Request) {
   try {
-    // ────────────────────────────────────────────────
-    // 🛡️ 입력 파싱 + 격벽 진입점 통과
-    // ────────────────────────────────────────────────
     const body = await req.json().catch(() => ({} as Record<string, unknown>));
     const messages = (body as any).messages;
     const userId = (body as any).userId;
     const threadId = (body as any).threadId;
     const mode: SearchMode = normalizeSearchMode((body as any).searchMode);
-    // ⚠️ 이 시점 이후 raw `searchMode`는 절대 사용 금지. 모든 분기에서 `mode`만 참조.
-
+    
     if (userId) {
       const rate = await checkRateLimit(userId);
       if (!rate.allowed) {
@@ -247,7 +241,7 @@ export async function POST(req: Request) {
 - 거주지: ${safeCity || '미상'} ${safeDistrict || ''}
 - 출생연도: ${safeBirth || '미상'}
 - 추가 정보: ${safeExtra || '없음'}
-- 백그라운 추출: ${bgProfile || '없음'}${notesBlock}
+- 백그라운드 추출: ${bgProfile || '없음'}${notesBlock}
 [프로필 끝]
 
 이 프로필을 활용해 검색을 더 정밀하게 수행하세요. 이미 알고 있는 정보는 다시 묻지 마세요.`;
@@ -308,12 +302,9 @@ export async function POST(req: Request) {
         execute: withToolGuard('search_internal_db', async ({ query }) => {
           type RpcRow = { title?: string; provider?: string; summary?: string; url?: string; deadline?: string | null; similarity?: number };
 
-          const { embedding } = await withTimeout(
-            async (signal) => embed({
-              model: openai.embedding('text-embedding-3-small'),
-              value: query,
-              abortSignal: signal,
-            }),
+          // 🌟 [핵심 변경] 인메모리 임베딩 캐시 활용
+          const embedding = await withTimeout(
+            (signal) => getEmbedding(query, signal),
             TOOL_TIMEOUT_MS,
             'embedding',
             req.signal,
@@ -326,14 +317,13 @@ export async function POST(req: Request) {
           const RECALL_THRESHOLD = mode === 'private' ? 0.40 : 0.42;
           const STRICT_THRESHOLD = 0.55;
 
-          // 🌟 1차 서버사이드 방어: RPC에 p_only_active 전달
           const { data, error } = await withTimeout(
             async () => supabase.rpc('match_policies_v2', {
               query_embedding: embedding,
               match_threshold: RECALL_THRESHOLD,
               match_count: 12,
               p_source_type: mode,
-              p_only_active: true, // 만료 공고 서버사이드 제외
+              p_only_active: true, 
             }),
             TOOL_TIMEOUT_MS,
             'pgvector',
@@ -348,12 +338,11 @@ export async function POST(req: Request) {
             return '내부 DB에 매칭되는 데이터 없음. 웹 검색으로 보완하세요.';
           }
 
-          // 🌟 2차 클라이언트 방어 (Defense in Depth)
           const now = Date.now();
           const live = data.filter(p => {
-            if (!p.deadline) return true; // 상시모집 패스
+            if (!p.deadline) return true; 
             const t = Date.parse(p.deadline);
-            return Number.isNaN(t) || t > now; // 파싱 실패거나 마감 안 된 것만 통과
+            return Number.isNaN(t) || t > now; 
           });
 
           if (live.length === 0) {
@@ -363,7 +352,6 @@ export async function POST(req: Request) {
           const strict = live.filter(p => (p.similarity ?? 0) >= STRICT_THRESHOLD);
           const recall = live.filter(p => (p.similarity ?? 0) < STRICT_THRESHOLD);
 
-          // 🌟 D-Day 노출로 LLM의 시간 인지력 극대화
           const fmt = (p: RpcRow) => {
             const sim = ((p.similarity ?? 0) * 100).toFixed(0);
             const dday = p.deadline 
@@ -424,31 +412,6 @@ export async function POST(req: Request) {
           }
 
           const headers = { 'X-Naver-Client-Id': clientId, 'X-Naver-Client-Secret': clientSecret };
-
-          const [officialRes, generalRes, newsRes] = await Promise.allSettled([
-            withTimeout(
-              async (signal) => fetch(
-                `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(officialQuery)}&display=5&sort=sim`,
-                { headers, signal }
-              ),
-              TOOL_TIMEOUT_MS, 'naver-official', req.signal,
-            ),
-            withTimeout(
-              async (signal) => fetch(
-                `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(generalQuery)}&display=4&sort=sim`,
-                { headers, signal }
-              ),
-              TOOL_TIMEOUT_MS, 'naver-general', req.signal,
-            ),
-            withTimeout(
-              async (signal) => fetch(
-                `https://openapi.naver.com/v1/search/news?query=${encodeURIComponent(query)}&display=3&sort=date`,
-                { headers, signal }
-              ),
-              TOOL_TIMEOUT_MS, 'naver-news', req.signal,
-            ),
-          ]);
-
           const out: string[] = [];
           const seenLinks = new Set<string>();
 
@@ -487,9 +450,43 @@ export async function POST(req: Request) {
             }
           };
 
-          await pushItems(officialRes, mode === 'private' ? '기업/재단' : '공식');
-          await pushItems(generalRes, '일반블로그');
-          await pushItems(newsRes, '뉴스');
+          // 🌟 [핵심 변경] 1차: official API만 우선 발사
+          const officialRes = await withTimeout(
+            async (signal) => fetch(
+              `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(officialQuery)}&display=5&sort=sim`,
+              { headers, signal }
+            ),
+            TOOL_TIMEOUT_MS, 'naver-official', req.signal,
+          ).catch(() => null);
+          
+          await pushItems(
+            officialRes ? { status: 'fulfilled' as const, value: officialRes } : { status: 'rejected' as const, reason: 'fail' }, 
+            mode === 'private' ? '기업/재단' : '공식'
+          );
+
+          // 🌟 [핵심 변경] 2차: official 결과가 부족할 때만 general/news 추가 발사 (Naver 쿼터 획기적 절약)
+          const NEED_MORE_THRESHOLD = 3;
+          if (out.length < NEED_MORE_THRESHOLD) {
+            const [generalRes, newsRes] = await Promise.allSettled([
+              withTimeout(
+                async (signal) => fetch(
+                  `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(generalQuery)}&display=4&sort=sim`,
+                  { headers, signal }
+                ),
+                TOOL_TIMEOUT_MS, 'naver-general', req.signal,
+              ),
+              withTimeout(
+                async (signal) => fetch(
+                  `https://openapi.naver.com/v1/search/news?query=${encodeURIComponent(query)}&display=3&sort=date`,
+                  { headers, signal }
+                ),
+                TOOL_TIMEOUT_MS, 'naver-news', req.signal,
+              ),
+            ]);
+            
+            await pushItems(generalRes, '일반블로그');
+            await pushItems(newsRes, '뉴스');
+          }
 
           if (out.length === 0) {
             return '네이버 검색 결과 없음. 키워드를 더 구체적으로 바꿔 재시도하거나 global_web_search로 우회하세요.';
@@ -788,9 +785,6 @@ export async function POST(req: Request) {
       },
     });
 
-    // ────────────────────────────────────────────────────────────
-    // 🌟 [백그라운드 작업] after() — HTTP self-fetch 제거판
-    // ────────────────────────────────────────────────────────────
     if (
       userId &&
       threadId &&
