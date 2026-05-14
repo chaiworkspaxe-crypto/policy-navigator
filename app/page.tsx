@@ -129,6 +129,9 @@ export default function Home() {
   const scrollRafRef = useRef<number | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
+  // 🌟 [신규 상태] 검색 모드 추가 (정부 / 민간)
+  const [searchMode, setSearchMode] = useState<'public' | 'private'>('public');
+
   const [city, setCity] = useState(EMPTY_INPUTS.selected_city);
   const [district, setDistrict] = useState(EMPTY_INPUTS.selected_district);
   const [dong, setDong] = useState(EMPTY_INPUTS.selected_dong);
@@ -145,6 +148,11 @@ export default function Home() {
   const dongCacheRef = useRef<Map<string, string[]>>(new Map());
 
   const { stream, stop, isStreaming: loading, aiStatus, setAiStatus } = useChatStream();
+
+  // 🌟 모드별 추천 예시 텍스트 (하단 가이드 버튼용)
+  const queryExamples = searchMode === 'public' 
+    ? ["🧑‍🎓 대학생을 위한 월세 지원 정책 찾아줘", "💼 취업 준비생 국비 지원 교육 알려줘", "💰 20대 청년 적금 혜택 정리해 줘"]
+    : ["💻 IT 비전공자 코딩 부트캠프 찾아줘", "🚀 대학생 창업 지원 재단 알려줘", "🏢 대기업 주관 대외활동 추천해 줘"];
 
   useEffect(() => {
     return () => {
@@ -327,6 +335,8 @@ export default function Home() {
     try {
       setErrorMessage(""); setCurrentThreadId(tid); setMessages([]); setNextBefore(null); setQuery(""); setIsSidebarOpen(false);
       setLastTruncated(false); 
+      // 🌟 새 대화 불러올 땐 기본적으로 public으로 세팅 (추후 DB 연동 시 보완 가능)
+      setSearchMode('public');
       
       const [loadedData, loadedInputs] = await Promise.all([ api.loadMessages(uid, tid), api.loadThreadInputs(uid, tid) ]);
       
@@ -356,6 +366,7 @@ export default function Home() {
     setNextBefore(null);
     setQuery(""); 
     applyInputs(EMPTY_INPUTS);
+    setSearchMode('public'); // 🌟 리셋
     setIsSidebarOpen(false); 
     setIsFormExpanded(true);
     setLastTruncated(false);
@@ -460,6 +471,8 @@ export default function Home() {
         threadId: targetThreadId,
         messages, 
         newUserContent: userText,
+        // 🌟 [핵심 변경] 프론트엔드의 searchMode를 백엔드로 전달!
+        searchMode, 
       },
       {
         onFirstDelta: () => { 
@@ -615,6 +628,31 @@ export default function Home() {
         <div className="shrink-0 bg-white dark:bg-[#1a1a1a] relative border-b border-gray-200 dark:border-[#333] md:pt-16 z-20">
           <div className={`mx-auto max-w-4xl px-4 transition-all duration-300 ease-in-out origin-top ${isFormExpanded ? 'max-h-[500px] py-4 opacity-100' : 'max-h-0 py-0 opacity-0 overflow-hidden'}`}>
             <div className="space-y-3">
+              
+              {/* 🌟 [신규 UI] 검색 모드 토글 (정부 vs 민간) */}
+              <div className="flex bg-gray-100 dark:bg-[#2a2a2a] p-1 rounded-xl mb-1 border border-gray-200 dark:border-[#444]">
+                <button
+                  onClick={() => setSearchMode('public')}
+                  className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${
+                    searchMode === 'public' 
+                      ? 'bg-white dark:bg-[#444] text-green-600 dark:text-green-400 shadow-sm ring-1 ring-black/5' 
+                      : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                  }`}
+                >
+                  🏛️ 정부·지자체 정책
+                </button>
+                <button
+                  onClick={() => setSearchMode('private')}
+                  className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${
+                    searchMode === 'private' 
+                      ? 'bg-white dark:bg-[#444] text-blue-600 dark:text-blue-400 shadow-sm ring-1 ring-black/5' 
+                      : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                  }`}
+                >
+                  🏢 민간·기업 혜택
+                </button>
+              </div>
+
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                 <select className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500" value={city} onChange={(e) => { setCity(e.target.value); setDistrict(DEFAULT_CITY); setDong(DEFAULT_DONG); }}><option>{DEFAULT_CITY}</option>{Object.keys(CITY_TO_DISTRICTS).map((c) => <option key={c}>{c}</option>)}</select>
                 <select className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500" value={district} onChange={(e) => { setDistrict(e.target.value); setDong(DEFAULT_DONG); }} disabled={city === DEFAULT_CITY}><option>{DEFAULT_CITY}</option>{availableDistricts.map((d) => <option key={d}>{d}</option>)}</select>
@@ -637,11 +675,33 @@ export default function Home() {
               </div>
               <div className="flex flex-col gap-2 sm:flex-row">
                 <input type="tel" placeholder="출생연도 (예: 1999)" maxLength={4} className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500 sm:w-1/3" value={birthYear} onChange={(e) => setBirthYear(e.target.value.replace(/[^0-9]/g, ""))} />
-                <input type="text" placeholder="추가 정보 (예: 현재 직업, 주거 형태, 월 소득 등)" className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500 sm:w-2/3" value={extraInfo} onChange={(e) => setExtraInfo(e.target.value)} />
+                {/* 🌟 [핵심 변경] 모드에 따라 플레이스홀더 동적 변경 */}
+                <input 
+                  type="text" 
+                  placeholder={
+                    searchMode === 'public' 
+                      ? "추가 정보 (예: 현재 직업, 주거 형태, 월 소득 등)" 
+                      : "추가 정보 (예: 관심 직무(IT, 마케팅), 포트폴리오 유무 등)"
+                  } 
+                  className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500 sm:w-2/3" 
+                  value={extraInfo} 
+                  onChange={(e) => setExtraInfo(e.target.value)} 
+                />
               </div>
-              <button onClick={() => void handleSearch(false)} disabled={loading} className="flex w-full items-center justify-center gap-2 rounded-xl bg-green-600 py-3.5 sm:py-3 font-bold text-white transition hover:bg-green-500 disabled:opacity-50 active:scale-[0.98] shadow-md">
-                {loading ? <Loader2 className="animate-spin" /> : <Search size={20} />} 맞춤 혜택 찾기
+              
+              <button 
+                onClick={() => void handleSearch(false)} 
+                disabled={loading} 
+                className={`flex w-full items-center justify-center gap-2 rounded-xl py-3.5 sm:py-3 font-bold text-white transition disabled:opacity-50 active:scale-[0.98] shadow-md ${
+                  searchMode === 'public' 
+                    ? 'bg-green-600 hover:bg-green-500' 
+                    : 'bg-blue-600 hover:bg-blue-500'
+                }`}
+              >
+                {loading ? <Loader2 className="animate-spin" /> : <Search size={20} />} 
+                {searchMode === 'public' ? '정부·지자체 혜택 찾기' : '민간·기업 혜택 찾기'}
               </button>
+              
               {errorMessage && (
                 <div className="flex items-start gap-2 rounded-xl border border-red-500/30 bg-red-100 dark:bg-red-500/10 px-4 py-3 text-sm text-red-600 dark:text-red-200">
                   <AlertCircle size={18} className="mt-0.5 shrink-0" /><span>{errorMessage}</span>
@@ -697,7 +757,7 @@ export default function Home() {
                   <div key={`${message.role}-${index}`} className={`flex gap-3 sm:gap-4 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
                     
                     {isAssistant && (
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-600 mt-1 shadow-sm">
+                      <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full mt-1 shadow-sm ${searchMode === 'private' ? 'bg-blue-600' : 'bg-green-600'}`}>
                         <span className="text-[10px] sm:text-xs font-bold text-white">AI</span>
                       </div>
                     )}
@@ -713,7 +773,11 @@ export default function Home() {
                       </div>
                       
                       {isLastMessage && isAssistant && loading && (
-                        <div className="mt-4 flex items-center gap-2 text-sm font-bold text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 px-4 py-2.5 rounded-xl w-fit animate-pulse border border-green-200 dark:border-green-800/30 shadow-sm">
+                        <div className={`mt-4 flex items-center gap-2 text-sm font-bold px-4 py-2.5 rounded-xl w-fit animate-pulse border shadow-sm ${
+                          searchMode === 'private' 
+                            ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800/30'
+                            : 'text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800/30'
+                        }`}>
                           <Loader2 size={16} className="animate-spin shrink-0" />
                           <span>{aiStatus || "좌뇌론 글 쓰고 우뇌론 검색 중! 🧠💥 멀티태스킹에 AI CPU가 울고 있으니 타자가 살짝 버벅여도 봐주세요 🥺💦"}</span>
                         </div>
@@ -738,12 +802,11 @@ export default function Home() {
                           
                           <button onClick={async () => {
                               const shareData = { 
-                                title: '나에게 딱 맞는 맞춤형 정부 혜택 🎁', 
+                                title: searchMode === 'private' ? '나에게 딱 맞는 맞춤형 민간/기업 혜택 🎁' : '나에게 딱 맞는 맞춤형 정부 혜택 🎁', 
                                 text: '정책 내비게이터가 찾아준 맞춤형 혜택을 확인해보세요!\n\n' + message.content + '\n\n', 
                                 url: window.location.href 
                               };
                               try { 
-                                // 🌟 [수술 2️⃣1️⃣] iPadOS 13+ 완벽 감지 및 Native Share 우선 적용
                                 const canNativeShare = 
                                   typeof navigator.share === 'function' && 
                                   (
@@ -764,12 +827,10 @@ export default function Home() {
                         </div>
                       )}
 
-                      {/* 🌟 [핵심 개선] !hasSummary 외에도 lastTruncated가 true면 무조건 노출 */}
                       {!loading && isLastMessage && isAssistant && message.content.length > 50 && (!hasSummary || lastTruncated) && (
                          <div className="mt-4 p-4 bg-gray-50 dark:bg-[#1a1a1a] rounded-xl border border-gray-200 dark:border-[#444] animate-in fade-in duration-300">
                            <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
                              <AlertCircle size={16} className="text-yellow-500" />
-                             {/* 🌟 잘림 여부에 따라 명시적인 에러 메시지 렌더링 */}
                              {lastTruncated 
                                ? '🚨 응답이 너무 길어서 혜택 리스트가 중간에 잘렸어요. 아래 버튼으로 마저 받아보세요!' 
                                : '답변이 중간에 끊긴 것 같나요? 아래 버튼을 눌러 마저 들을 수 있어요!'}
@@ -808,7 +869,8 @@ export default function Home() {
         <div className="shrink-0 border-t border-gray-200 dark:border-[#333] bg-gray-50 dark:bg-[#121212] p-3 sm:p-4 pb-safe transition-colors duration-300 z-20">
           <div className="relative mx-auto max-w-4xl flex flex-col">
             <div className="flex gap-2 mb-3 overflow-x-auto pb-1 scrollbar-hide">
-              {["🧑‍🎓 대학생을 위한 월세 지원 정책 찾아줘", "💼 취업 준비생 국비 지원 교육 알려줘", "💰 20대 청년 적금 혜택 정리해 줘"].map((example, idx) => (
+              {/* 🌟 [핵심 변경] 모드에 따라 하단 추천 예시 질문 동적 렌더링 */}
+              {queryExamples.map((example, idx) => (
                 <button key={idx} onClick={() => setQuery(example)} className="whitespace-nowrap px-4 py-1.5 text-sm bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-600 transition-colors shadow-sm">{example}</button>
               ))}
             </div>
@@ -816,11 +878,11 @@ export default function Home() {
               <input type="text" placeholder="추가 질문을 입력하세요 (예: 청년 혜택만 다시)" className="w-full rounded-full border border-gray-300 dark:border-[#444] bg-white dark:bg-[#1e1e1e] py-3.5 pl-5 pr-12 text-sm text-gray-800 dark:text-white outline-none transition focus:border-green-500 shadow-sm" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void handleSearch(true); }} disabled={messages.length === 0 || loading} />
               
               {loading ? (
-                <button onClick={stop} className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full bg-gray-500 p-2 text-white transition hover:bg-gray-600 shadow-sm">
+                <button onClick={stop} className={`absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full p-2 text-white transition shadow-sm ${searchMode === 'private' ? 'bg-blue-500 hover:bg-blue-600' : 'bg-gray-500 hover:bg-gray-600'}`}>
                   <Square size={16} fill="currentColor" />
                 </button>
               ) : (
-                <button onClick={() => void handleSearch(true)} disabled={!query.trim() || loading} className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full bg-green-600 p-2 text-white transition hover:bg-green-500 disabled:opacity-50 shadow-sm">
+                <button onClick={() => void handleSearch(true)} disabled={!query.trim() || loading} className={`absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full p-2 text-white transition disabled:opacity-50 shadow-sm ${searchMode === 'private' ? 'bg-blue-600 hover:bg-blue-500' : 'bg-green-600 hover:bg-green-500'}`}>
                   <Send size={16} />
                 </button>
               )}
