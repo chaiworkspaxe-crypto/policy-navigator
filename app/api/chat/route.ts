@@ -1,20 +1,26 @@
-// app/api/chat/route.ts
+// 📁 app/api/chat/route.ts
 import { openai } from '@ai-sdk/openai';
-import { streamText, tool, embed, type CoreMessage } from 'ai'; 
+import { streamText, tool, embed, type CoreMessage } from 'ai';
 import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
-import * as Sentry from '@sentry/nextjs'; 
+import * as Sentry from '@sentry/nextjs';
 import { after } from 'next/server';
 import { buildSystemPrompt } from '@/lib/prompts/policyNavigator';
-import { buildPrivateSystemPrompt } from '@/lib/prompts/privateNavigator'; 
-import { getCachedSearch, setCachedSearch } from '@/lib/searchCache'; 
-import { checkRateLimit } from '@/lib/rateLimit'; 
+import { buildPrivateSystemPrompt } from '@/lib/prompts/privateNavigator';
+import { getCachedSearch, setCachedSearch } from '@/lib/searchCache';
+import { checkRateLimit } from '@/lib/rateLimit';
 
-// 🌟 [격벽 1] 타입 안전성 보장
+// 🌟 [핵심 변경] 분리해둔 핵심 로직 함수를 직접 import — HTTP 라운드트립 제거
+import { extractProfileCore } from '@/app/api/profile/extract/_logic';
+import { extractPoliciesCore } from '@/app/api/policies/extract/_logic';
+
+// ────────────────────────────────────────────────────────────
+// 🛡️ 격벽 진입점 — 모드 화이트리스트 정규화 (이중 엔진 격리의 출발점)
+// ────────────────────────────────────────────────────────────
 type SearchMode = 'public' | 'private';
 
 function normalizeSearchMode(raw: unknown): SearchMode {
-  // 🛡️ 격벽 진입점 — 유일한 신뢰 가능 변환 지점
+  // 'private' 외의 모든 값(undefined, null, 빈 문자열, 객체, 잘못된 문자열 등)은 안전하게 'public'으로 fallback
   return raw === 'private' ? 'private' : 'public';
 }
 
@@ -50,7 +56,7 @@ function withTimeout<T>(
 ): Promise<T> {
   const ctrl = new AbortController();
   const onParentAbort = () => ctrl.abort(parentSignal?.reason);
-  
+
   if (parentSignal) {
     if (parentSignal.aborted) ctrl.abort(parentSignal.reason);
     else parentSignal.addEventListener('abort', onParentAbort, { once: true });
@@ -70,7 +76,7 @@ function withTimeout<T>(
   });
 }
 
-const MAX_HISTORY_TURNS = 12; 
+const MAX_HISTORY_TURNS = 12;
 
 function trimMessages(messages: unknown): CoreMessage[] {
   if (!Array.isArray(messages)) return [];
@@ -86,7 +92,7 @@ function trimMessages(messages: unknown): CoreMessage[] {
   for (const m of cleaned) {
     const prev = compacted[compacted.length - 1];
     if (prev && prev.role === m.role && m.role === 'user') {
-      compacted[compacted.length - 1] = m;       
+      compacted[compacted.length - 1] = m;
       continue;
     }
     compacted.push(m);
@@ -98,19 +104,19 @@ function trimMessages(messages: unknown): CoreMessage[] {
   return firstUserIdx <= 0 ? sliced : sliced.slice(firstUserIdx);
 }
 
-const RECENT_KEEP = 4;           
-const OLD_ASSISTANT_MAX = 800;   
+const RECENT_KEEP = 4;
+const OLD_ASSISTANT_MAX = 800;
 
 function compressOldAssistantMessages(messages: CoreMessage[]): CoreMessage[] {
   if (messages.length <= RECENT_KEEP) return messages;
-  
+
   const splitIdx = messages.length - RECENT_KEEP;
   return messages.map((m, i) => {
-    if (i >= splitIdx) return m; 
+    if (i >= splitIdx) return m;
     if (m.role !== 'assistant') return m;
     if (typeof m.content !== 'string') return m;
     if (m.content.length <= OLD_ASSISTANT_MAX) return m;
-    
+
     return {
       ...m,
       content: m.content.slice(0, OLD_ASSISTANT_MAX) + '\n\n…[이전 답변 축약 — 사용자가 구체적인 정책명을 다시 묻는다면 해당 키워드로 도구를 다시 호출하세요]',
@@ -121,43 +127,54 @@ function compressOldAssistantMessages(messages: CoreMessage[]): CoreMessage[] {
 const sanitizeForPrompt = (raw: unknown, maxLen = 200): string => {
   if (raw === null || raw === undefined) return '';
   const s = String(raw)
-    .replace(/[\r\n\t]+/g, ' ')                   
-    .replace(/`{3,}/g, '`')                        
-    .replace(/\[(?:시스템|system|SYSTEM|지시|규칙|rules?)\b[^\]]{0,40}\]/gi, '[차단됨]') 
-    .replace(/^\s*#{1,6}\s+/gm, '')                 
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/`{3,}/g, '`')
+    .replace(/\[(?:시스템|system|SYSTEM|지시|규칙|rules?)\b[^\]]{0,40}\]/gi, '[차단됨]')
+    .replace(/^\s*#{1,6}\s+/gm, '')
     .trim();
   return s.length > maxLen ? s.slice(0, maxLen) + '…' : s;
 };
 
 function decodeNaverEntities(s: string): string {
   return s
-    .replace(/<[^>]+>/g, '')             
+    .replace(/<[^>]+>/g, '')
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'")
     .replace(/&#39;/g, "'")
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')                
+    .replace(/&amp;/g, '&')
     .trim();
 }
 
 export async function POST(req: Request) {
   try {
-    // 🌟 [격벽 2] JSON 파싱 에러 방어 및 mode 명시적 정규화
-    const body = await req.json().catch(() => ({}));
-    const { messages, userId, threadId } = body;
-    const mode: SearchMode = normalizeSearchMode(body.searchMode); 
+    // ────────────────────────────────────────────────
+    // 🛡️ 입력 파싱 + 격벽 진입점 통과
+    // ────────────────────────────────────────────────
+    const body = await req.json().catch(() => ({} as Record<string, unknown>));
+    const messages = (body as any).messages;
+    const userId = (body as any).userId;
+    const threadId = (body as any).threadId;
+    const mode: SearchMode = normalizeSearchMode((body as any).searchMode);
+    // ⚠️ 이 시점 이후 raw `searchMode`는 절대 사용 금지. 모든 분기에서 `mode`만 참조.
 
     if (userId) {
       const rate = await checkRateLimit(userId);
       if (!rate.allowed) {
+        // 🛡️ [개선] limit가 undefined로 들어올 비정상 케이스에서도 사용자 친화적 메시지 유지
+        const limitVal = rate.limit ?? '여러';
         const friendly = rate.reason === 'minute'
-          ? `요청이 너무 빨라요! 잠시 후 다시 시도해 주세요. (분당 ${rate.limit}회 한도)`
-          : `오늘은 ${rate.limit}회까지 검색하셨어요. 내일 다시 만나요 🙏`;
-        return new Response(JSON.stringify({ detail: friendly }), {
+          ? `요청이 너무 빨라요! 잠시 후 다시 시도해 주세요. (분당 ${limitVal}회 한도)`
+          : `오늘은 ${limitVal}회까지 검색하셨어요. 내일 다시 만나요 🙏`;
+        return new Response(JSON.stringify({ detail: friendly, mode }), {
           status: 429,
-          headers: { 'Content-Type': 'application/json', 'Retry-After': rate.reason === 'minute' ? '60' : '3600' },
+          headers: {
+            'Content-Type': 'application/json',
+            'Retry-After': rate.reason === 'minute' ? '60' : '3600',
+            'X-Rate-Limit-Mode': mode,
+          },
         });
       }
     }
@@ -167,22 +184,22 @@ export async function POST(req: Request) {
       : null;
 
     let userInsertedAt: string | null = null;
-    
+
     if (userId && threadId && lastMsg?.role === 'user') {
-      const content = typeof lastMsg.content === 'string' 
-        ? lastMsg.content 
+      const content = typeof lastMsg.content === 'string'
+        ? lastMsg.content
         : JSON.stringify(lastMsg.content);
       const now = new Date().toISOString();
       userInsertedAt = now;
-      
+
       void supabase
         .from('chat_messages')
         .insert({
-          thread_id: threadId, 
-          user_id: userId, 
+          thread_id: threadId,
+          user_id: userId,
           role: 'user',
-          content, 
-          created_at: now, 
+          content,
+          created_at: now,
           updated_at: now,
         })
         .then(({ error }) => {
@@ -221,8 +238,8 @@ export async function POST(req: Request) {
           : '';
 
         const rawNotes = (inputs.profile_json as any)?.notes;
-        const notes = Array.isArray(rawNotes) ? rawNotes.slice(-5) : []; 
-        
+        const notes = Array.isArray(rawNotes) ? rawNotes.slice(-5) : [];
+
         const notesBlock = notes.length > 0
           ? `\n- 추가 단서(과거 대화에서 추출): ${notes.map((n: string) => sanitizeForPrompt(n, 100)).join(' / ')}`
           : '';
@@ -237,11 +254,11 @@ export async function POST(req: Request) {
 이 프로필을 활용해 검색을 더 정밀하게 수행하세요. 이미 알고 있는 정보는 다시 묻지 마세요.`;
       } catch (e) {
         console.error('[profile select error]', e);
-        return ''; 
+        return '';
       }
     })();
 
-    const trimmedMessages = compressOldAssistantMessages(trimMessages(messages)); 
+    const trimmedMessages = compressOldAssistantMessages(trimMessages(messages));
 
     const toolCallCache = new Map<string, string>();
     const seenUrls = new Set<string>();
@@ -251,7 +268,7 @@ export async function POST(req: Request) {
       exec: (args: T) => Promise<string>,
     ) => async (args: T) => {
       const key = `${toolName}::${normalizeToolQuery(args.query)}`;
-      
+
       const prev = toolCallCache.get(key);
       if (prev !== undefined) {
         return `[중복 호출 차단] "${args.query}"는 ${toolName}로 이미 조회했습니다. 다른 키워드(지역/분야/연령대 등)를 조합해 재시도하거나, 보유한 정보로 답변을 마무리하세요. 직전 결과 요약:\n\n${prev.slice(0, 400)}…`;
@@ -283,11 +300,11 @@ export async function POST(req: Request) {
     const commonTools = {
       search_internal_db: tool({
         description: '내부 DB(pgvector)에서 정부/민간 정책의 의미적 유사도 상위 결과를 가져옵니다. 가장 먼저 호출하세요.',
-        parameters: z.object({ 
+        parameters: z.object({
           query: z.string()
             .min(1, '검색어가 비어있습니다.')
             .max(150, '검색어가 너무 깁니다.')
-            .describe('한국어 자연어 검색어') 
+            .describe('한국어 자연어 검색어')
         }),
         execute: withToolGuard('search_internal_db', async ({ query }) => {
           type RpcRow = { title?: string; provider?: string; summary?: string; url?: string; similarity?: number };
@@ -298,8 +315,8 @@ export async function POST(req: Request) {
               value: query,
               abortSignal: signal,
             }),
-            TOOL_TIMEOUT_MS, 
-            'embedding', 
+            TOOL_TIMEOUT_MS,
+            'embedding',
             req.signal,
           );
 
@@ -307,16 +324,15 @@ export async function POST(req: Request) {
             return '임베딩 일시 실패. 웹 검색으로 우회하세요.';
           }
 
-          // 🌟 안전한 정규화 변수(mode) 사용
           const RECALL_THRESHOLD = mode === 'private' ? 0.40 : 0.42;
-          const STRICT_THRESHOLD = 0.55;  
+          const STRICT_THRESHOLD = 0.55;
 
           const { data, error } = await withTimeout(
             async () => supabase.rpc('match_policies_v2', {
               query_embedding: embedding,
-              match_threshold: RECALL_THRESHOLD,  
+              match_threshold: RECALL_THRESHOLD,
               match_count: 12,
-              p_source_type: mode, // 🌟 mode 주입
+              p_source_type: mode,
             }),
             TOOL_TIMEOUT_MS,
             'pgvector',
@@ -324,7 +340,7 @@ export async function POST(req: Request) {
           ) as { data: RpcRow[] | null; error: { message: string } | null };
 
           if (error) {
-            throw new Error(error.message); 
+            throw new Error(error.message);
           }
 
           if (!data || data.length === 0) {
@@ -358,18 +374,18 @@ export async function POST(req: Request) {
 
       naver_web_search: tool({
         description: '최신 공고를 찾을 때 사용하는 웹 검색 도구. 결과가 "..."으로 잘려 내용이 불확실하다면 절대 추측하지 마세요.',
-        parameters: z.object({ 
+        parameters: z.object({
           query: z.string()
             .min(1, '검색어가 비어있습니다.')
             .max(150, '검색어가 너무 깁니다.')
-            .describe('한국어 자연어 검색어') 
+            .describe('한국어 자연어 검색어')
         }),
         execute: withToolGuard('naver_web_search', async ({ query }) => {
           const clientId = process.env.NAVER_CLIENT_ID;
           const clientSecret = process.env.NAVER_CLIENT_SECRET;
           if (!clientId || !clientSecret) return '네이버 API 키 미설정. global_web_search를 사용하세요.';
 
-          // 🌟 [격벽 3] 캐시 키에 확실한 구분자(::)와 정규화된 mode 사용
+          // 🛡️ 캐시 키에 mode prefix 명시 — 정규화 함수 영향과 무관하게 두 모드 영구 격리
           const cacheKey = `${mode}::${query}`;
           const cached = await getCachedSearch('naver', cacheKey);
           if (cached) {
@@ -381,7 +397,6 @@ export async function POST(req: Request) {
           let officialQuery = '';
           let generalQuery = '';
 
-          // 🌟 모드 분기
           if (mode === 'private') {
             officialQuery = isAlreadyFiltered ? query : `${query} -(site:go.kr OR site:or.kr) (지원금 OR 장학금 OR 공고)`;
             generalQuery = isAlreadyFiltered ? query : `${query} -(site:go.kr OR site:or.kr) (채용 OR 부트캠프 OR 혜택)`;
@@ -417,7 +432,7 @@ export async function POST(req: Request) {
           ]);
 
           const out: string[] = [];
-          const seenLinks = new Set<string>(); 
+          const seenLinks = new Set<string>();
 
           const formatItem = (item: any, source: string) => {
             const t = decodeNaverEntities(item?.title ?? '');
@@ -435,21 +450,21 @@ export async function POST(req: Request) {
             if (settled.status !== 'fulfilled') return;
             const response = settled.value as Response;
             if (!response.ok) return;
-            
+
             const data = await response.json().catch(() => ({}));
             const items = (data.items ?? []) as any[];
-            
+
             for (const item of items) {
               const link = typeof item?.link === 'string' ? item.link : '';
               if (!link) continue;
-              
+
               try {
                 const host = new URL(link).hostname;
                 const dedupKey = `${host}::${(item.title ?? '').slice(0, 30)}`;
                 if (seenLinks.has(dedupKey)) continue;
                 seenLinks.add(dedupKey);
-              } catch { continue; } 
-              
+              } catch { continue; }
+
               out.push(formatItem(item, sourceLabel));
             }
           };
@@ -470,26 +485,25 @@ export async function POST(req: Request) {
 
       global_web_search: tool({
         description: '정밀 타격용 2순위 웹 검색 도구. 마감일/지원금액/공식링크 등 핵심 팩트가 누락되었을 때만 "최후의 수단"으로 무제한 사용하세요. 본문을 깊게 읽어옵니다.',
-        parameters: z.object({ 
+        parameters: z.object({
           query: z.string()
             .min(1, '검색어가 비어있습니다.')
             .max(150, '검색어가 너무 깁니다.')
-            .describe('한국어 자연어 검색어') 
+            .describe('한국어 자연어 검색어')
         }),
         execute: withToolGuard('global_web_search', async ({ query }) => {
           const tavilyKey = process.env.TAVILY_API_KEY;
           if (!tavilyKey) return '글로벌 검색 미설정. DB와 네이버 결과만으로 답변하세요.';
-          
+
           const seoulYear = new Intl.DateTimeFormat('en-US', {
             timeZone: 'Asia/Seoul',
             year: 'numeric',
           }).format(new Date());
-          
+
           const localizedQuery = mode === 'private'
             ? `${seoulYear}년 대한민국 민간 대기업 재단 청년 혜택 부트캠프 ${query}`
             : `${seoulYear}년 대한민국 정부 정책 지원금 ${query}`;
 
-          // 🌟 [격벽 3] 캐시 키 안전하게 변경
           const cacheKey = `${mode}::${query}`;
           const cached = await getCachedSearch('tavily', cacheKey);
           if (cached) {
@@ -504,8 +518,8 @@ export async function POST(req: Request) {
               body: JSON.stringify({
                 api_key: tavilyKey,
                 query: localizedQuery,
-                max_results: 5,            
-                search_depth: 'basic',    
+                max_results: 5,
+                search_depth: 'basic',
               }),
               signal,
             }),
@@ -513,12 +527,12 @@ export async function POST(req: Request) {
             'tavily',
             req.signal,
           )) as Response;
-          
-          if (!res.ok) throw new Error(`글로벌 검색 ${res.status}`); 
-          
+
+          if (!res.ok) throw new Error(`글로벌 검색 ${res.status}`);
+
           const data = await res.json() as { results?: Array<{ title: string; content: string; url: string }> };
           if (!data.results?.length) return '글로벌 검색 결과 없음. 키워드를 바꿔 재시도하세요.';
-          
+
           const formatted = data.results
             .map((r: any) => `- 제목: ${r.title}\n  내용: ${r.content}\n  링크: ${r.url}`)
             .join('\n\n');
@@ -551,9 +565,8 @@ export async function POST(req: Request) {
           ),
         ]);
 
-        // 🌟 정규화된 mode 사용
-        const baseSystemPrompt = mode === 'private' 
-          ? buildPrivateSystemPrompt() 
+        const baseSystemPrompt = mode === 'private'
+          ? buildPrivateSystemPrompt()
           : buildSystemPrompt();
 
         const systemPromptWithTime = baseSystemPrompt + profileContext;
@@ -562,17 +575,17 @@ export async function POST(req: Request) {
 
         const persistFailurePlaceholder = async (reason: string) => {
           if (assistantPersisted || !userId || !threadId) return;
-          if (!userInsertedAt) return; 
-          
+          if (!userInsertedAt) return;
+
           try {
             const placeholder = `(앗, AI 응답을 늦게 받아오거나 문제가 생겼어요. 잠시 후 다시 시도해주세요. — ${reason})`;
             const now = new Date().toISOString();
             await supabase.from('chat_messages').insert({
-              thread_id: threadId, 
-              user_id: userId, 
+              thread_id: threadId,
+              user_id: userId,
               role: 'assistant',
-              content: placeholder, 
-              created_at: now, 
+              content: placeholder,
+              created_at: now,
               updated_at: now,
             });
             await supabase.from('chat_threads')
@@ -583,20 +596,20 @@ export async function POST(req: Request) {
             console.error('[placeholder persist fail]', e);
           }
         };
-        
+
         const persistAssistant = async (text: string, finishReason?: string) => {
-          if (assistantPersisted) return;        
+          if (assistantPersisted) return;
           if (!userId || !threadId) return;
           if (!text || !text.trim()) {
             await persistFailurePlaceholder(finishReason ?? 'empty');
             return;
           }
 
-          assistantPersisted = true;             
+          assistantPersisted = true;
 
           try {
             const now = new Date().toISOString();
-            
+
             await supabase.from('chat_messages').insert({
               thread_id: threadId,
               user_id: userId,
@@ -615,7 +628,7 @@ export async function POST(req: Request) {
 
             const titleUpdate: Record<string, unknown> = { updated_at: now };
             const isFirstTurnTitle = !threadRow?.title || threadRow.title === '새 대화';
-            
+
             if (
               isFirstTurnTitle &&
               lastMsg?.role === 'user' &&
@@ -629,12 +642,12 @@ export async function POST(req: Request) {
               const title = raw.slice(0, 30) + (raw.length > 30 ? '…' : '');
               if (title.length >= 2) titleUpdate.title = title;
             }
-            
+
             await supabase.from('chat_threads')
               .update(titleUpdate)
               .eq('thread_id', threadId)
               .eq('user_id', userId);
-              
+
           } catch (dbError) {
             console.error("DB 저장 중 에러 발생:", dbError);
             assistantPersisted = false;
@@ -646,19 +659,19 @@ export async function POST(req: Request) {
 
         const handleFinish = async ({ text, usage, finishReason, modelName }: any) => {
           console.log(`[💰 ${modelName}] in=${usage?.promptTokens}, out=${usage?.completionTokens}, finish=${finishReason}`);
-          finalFinishReason = finishReason; 
+          finalFinishReason = finishReason;
           await persistAssistant(text, finishReason);
         };
 
         let result;
         try {
           result = await streamText({
-            model: openai(PRIMARY_MODEL), 
+            model: openai(PRIMARY_MODEL),
             system: systemPromptWithTime,
-            messages: trimmedMessages, 
+            messages: trimmedMessages,
             maxSteps: 10,
-            maxTokens: 8192, 
-            abortSignal: req.signal, 
+            maxTokens: 8192,
+            abortSignal: req.signal,
             onError: (err) => { console.error(`[streamText PRIMARY onError]`, err); },
             tools: commonTools,
             onFinish: (params) => handleFinish({ ...params, modelName: PRIMARY_MODEL })
@@ -666,13 +679,13 @@ export async function POST(req: Request) {
         } catch (primaryErr: any) {
           console.error(`[💥 PRIMARY model ${PRIMARY_MODEL} init failed → fallback]`, primaryErr);
           Sentry.captureException(primaryErr, { tags: { phase: 'primary-model-init', model: PRIMARY_MODEL } });
-          
+
           result = await streamText({
             model: openai(FALLBACK_MODEL),
             system: systemPromptWithTime,
-            messages: trimmedMessages, 
+            messages: trimmedMessages,
             maxSteps: 10,
-            maxTokens: 8192, 
+            maxTokens: 8192,
             abortSignal: req.signal,
             onError: (err) => { console.error('[streamText FALLBACK onError]', err); },
             tools: commonTools,
@@ -685,7 +698,7 @@ export async function POST(req: Request) {
 
         try {
           for await (const part of result.fullStream) {
-            switch (part.type) { 
+            switch (part.type) {
               case 'tool-call': {
                 console.log(`[🤖 도구 호출] ${part.toolName}`, part.args);
                 const friendlyMsg = pickFriendlyMessage(part.toolName, part.args);
@@ -725,7 +738,7 @@ export async function POST(req: Request) {
             streamErrored = true;
             console.error('\n[💀 스트림 루프 치명 에러]', loopErr);
             Sentry.captureException(loopErr, { tags: { phase: 'stream-loop' } });
-            
+
             try {
               send({
                 type: 'error',
@@ -735,18 +748,18 @@ export async function POST(req: Request) {
           }
         } finally {
           console.log(`\n[🏁 스트림 종료] 길이=${fullAnswer.length}, error=${streamErrored}, aborted=${req.signal.aborted}`);
-          
+
           if (fullAnswer.trim().length > 0) {
             void persistAssistant(fullAnswer, req.signal.aborted ? 'aborted' : 'errored');
           } else if (streamErrored || req.signal.aborted) {
             void persistFailurePlaceholder(req.signal.aborted ? 'aborted' : 'errored');
           }
-          
+
           if (!req.signal.aborted) {
             try {
-              send({ 
-                type: 'done', 
-                full_content: fullAnswer, 
+              send({
+                type: 'done',
+                full_content: fullAnswer,
                 errored: streamErrored,
                 truncated: finalFinishReason === 'length',
                 finish_reason: finalFinishReason,
@@ -758,6 +771,10 @@ export async function POST(req: Request) {
       },
     });
 
+    // ────────────────────────────────────────────────────────────
+    // 🌟 [백그라운드 작업] after() — HTTP self-fetch 제거판
+    // 핵심 로직(_logic.ts)을 직접 호출하여 Vercel 함수 invocation 1/3로 절감
+    // ────────────────────────────────────────────────────────────
     if (
       userId &&
       threadId &&
@@ -765,70 +782,52 @@ export async function POST(req: Request) {
       typeof lastMsg.content === 'string' &&
       lastMsg.content.trim().length > 0
     ) {
+      // 🌟 명시적 클로저 캡처 — 가독성과 안전성 (POST 함수 종료 후에도 안전하게 참조)
       const capturedUserId = userId;
       const capturedThreadId = threadId;
       const capturedMsg = lastMsg.content;
-      // 🌟 [격벽 유지] 안전하게 정규화된 변수 캡처
-      const capturedSearchMode = mode; 
+      const capturedMode: SearchMode = mode;
 
-      const origin = new URL(req.url).origin; 
-      
       after(async () => {
         try {
-          const internalSecret = process.env.INTERNAL_API_SECRET;
-          
-          const profileController = new AbortController();
-          const profileTimeout = setTimeout(() => profileController.abort(), 15_000);
+          const WORKER_BUDGET_MS = 25_000;
 
-          fetch(`${origin}/api/profile/extract`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(internalSecret ? { 'x-internal-secret': internalSecret } : {}),
-            },
-            body: JSON.stringify({
-              userId: capturedUserId,
-              threadId: capturedThreadId,
-              lastUserMessage: capturedMsg,
-            }),
-            signal: profileController.signal,
-            keepalive: true, 
-          })
-          .catch((e) => console.warn('[bg profile extract fail]', e?.message))
-          .finally(() => clearTimeout(profileTimeout));
+          // 1) 모든 모드 공통: 프로필 백그라운드 추출
+          const profileTask = extractProfileCore({
+            userId: capturedUserId,
+            threadId: capturedThreadId,
+            lastUserMessage: capturedMsg,
+          }).catch((e) => console.warn('[bg profile extract]', e?.message));
 
-          const capturedFullAnswer = fullAnswer; 
-          if (capturedSearchMode === 'private' && capturedFullAnswer.length > 100) {
-            const policyController = new AbortController();
-            const policyTimeout = setTimeout(() => policyController.abort(), 20_000); 
+          // 2) Private 모드 전용: 답변에서 민간 혜택 추출 → DB 자가학습
+          // ⚠️ fullAnswer는 클로저로 캡처되며, after()는 스트림 종료 후 실행되므로 최종값이 들어옴
+          const capturedFullAnswer = fullAnswer;
+          const policiesTask = (capturedMode === 'private' && capturedFullAnswer.length > 100)
+            ? extractPoliciesCore({ text: capturedFullAnswer })
+                .catch((e) => console.warn('[bg policy extract]', e?.message))
+            : Promise.resolve();
 
-            fetch(`${origin}/api/policies/extract`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                ...(internalSecret ? { 'x-internal-secret': internalSecret } : {}),
-              },
-              body: JSON.stringify({
-                text: capturedFullAnswer, 
-              }),
-              signal: policyController.signal,
-              keepalive: true,
-            })
-            .catch((e) => console.warn('[bg policy extract fail]', e?.message))
-            .finally(() => clearTimeout(policyTimeout));
-          }
+          // 🛡️ 백그라운드 전체에 단일 타임아웃 가드 — Vercel after() 한도 안에서 안전 종료
+          await Promise.race([
+            Promise.allSettled([profileTask, policiesTask]),
+            new Promise((resolve) => setTimeout(resolve, WORKER_BUDGET_MS)),
+          ]);
+
+          console.log(`[🌙 bg done] mode=${capturedMode}, ansLen=${capturedFullAnswer.length}`);
 
         } catch (e) {
           console.error('[bg after block error]', e);
+          Sentry.captureException(e, { tags: { phase: 'bg-after' } });
         }
       });
     }
 
     return new Response(customStream, {
-      headers: { 
-        'Content-Type': 'application/x-ndjson', 
-        'Cache-Control': 'no-cache, no-transform', 
-        'X-Accel-Buffering': 'no'
+      headers: {
+        'Content-Type': 'application/x-ndjson',
+        'Cache-Control': 'no-cache, no-transform',
+        'X-Accel-Buffering': 'no',
+        'X-Search-Mode': mode, // 🛡️ 디버깅/관측용 — 클라이언트는 어느 엔진이 응답했는지 즉시 확인 가능
       }
     });
 
@@ -864,7 +863,7 @@ function makeFriendlyMessagePicker() {
       typeof args?.query === 'string' && args.query.length > 0
         ? ` ("${String(args.query).slice(0, 18)}${args.query.length > 18 ? '…' : ''}")`
         : '';
-    
+
     const pool = TOOL_MSG_POOL[toolName];
     if (!pool || pool.length === 0) {
       return `하나라도 더 찾아내려고 AI가 풀야근 중! 쪼~금만 더 기다려주세요 😭🌙${argHint}`;
