@@ -1,14 +1,14 @@
-// 📁 app/api/chat/route.ts
+// app/api/chat/route.ts
 import { openai } from '@ai-sdk/openai';
-import { streamText, tool, embed, type CoreMessage } from 'ai';
+import { streamText, tool, embed, type CoreMessage } from 'ai'; 
 import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
-import * as Sentry from '@sentry/nextjs';
+import * as Sentry from '@sentry/nextjs'; 
 import { after } from 'next/server';
 import { buildSystemPrompt } from '@/lib/prompts/policyNavigator';
-import { buildPrivateSystemPrompt } from '@/lib/prompts/privateNavigator';
-import { getCachedSearch, setCachedSearch } from '@/lib/searchCache';
-import { checkRateLimit } from '@/lib/rateLimit';
+import { buildPrivateSystemPrompt } from '@/lib/prompts/privateNavigator'; 
+import { getCachedSearch, setCachedSearch } from '@/lib/searchCache'; 
+import { checkRateLimit } from '@/lib/rateLimit'; 
 
 // 🌟 [핵심 변경] 분리해둔 핵심 로직 함수를 직접 import — HTTP 라운드트립 제거
 import { extractProfileCore } from '@/app/api/profile/extract/_logic';
@@ -163,7 +163,6 @@ export async function POST(req: Request) {
     if (userId) {
       const rate = await checkRateLimit(userId);
       if (!rate.allowed) {
-        // 🛡️ [개선] limit가 undefined로 들어올 비정상 케이스에서도 사용자 친화적 메시지 유지
         const limitVal = rate.limit ?? '여러';
         const friendly = rate.reason === 'minute'
           ? `요청이 너무 빨라요! 잠시 후 다시 시도해 주세요. (분당 ${limitVal}회 한도)`
@@ -307,7 +306,7 @@ export async function POST(req: Request) {
             .describe('한국어 자연어 검색어')
         }),
         execute: withToolGuard('search_internal_db', async ({ query }) => {
-          type RpcRow = { title?: string; provider?: string; summary?: string; url?: string; similarity?: number };
+          type RpcRow = { title?: string; provider?: string; summary?: string; url?: string; deadline?: string | null; similarity?: number };
 
           const { embedding } = await withTimeout(
             async (signal) => embed({
@@ -327,12 +326,14 @@ export async function POST(req: Request) {
           const RECALL_THRESHOLD = mode === 'private' ? 0.40 : 0.42;
           const STRICT_THRESHOLD = 0.55;
 
+          // 🌟 1차 서버사이드 방어: RPC에 p_only_active 전달
           const { data, error } = await withTimeout(
             async () => supabase.rpc('match_policies_v2', {
               query_embedding: embedding,
               match_threshold: RECALL_THRESHOLD,
               match_count: 12,
               p_source_type: mode,
+              p_only_active: true, // 만료 공고 서버사이드 제외
             }),
             TOOL_TIMEOUT_MS,
             'pgvector',
@@ -347,12 +348,31 @@ export async function POST(req: Request) {
             return '내부 DB에 매칭되는 데이터 없음. 웹 검색으로 보완하세요.';
           }
 
-          const strict = data.filter(p => (p.similarity ?? 0) >= STRICT_THRESHOLD);
-          const recall = data.filter(p => (p.similarity ?? 0) < STRICT_THRESHOLD);
+          // 🌟 2차 클라이언트 방어 (Defense in Depth)
+          const now = Date.now();
+          const live = data.filter(p => {
+            if (!p.deadline) return true; // 상시모집 패스
+            const t = Date.parse(p.deadline);
+            return Number.isNaN(t) || t > now; // 파싱 실패거나 마감 안 된 것만 통과
+          });
 
+          if (live.length === 0) {
+            return '내부 DB에 신청 가능한 공고가 없음. 웹 검색으로 보완하세요.';
+          }
+
+          const strict = live.filter(p => (p.similarity ?? 0) >= STRICT_THRESHOLD);
+          const recall = live.filter(p => (p.similarity ?? 0) < STRICT_THRESHOLD);
+
+          // 🌟 D-Day 노출로 LLM의 시간 인지력 극대화
           const fmt = (p: RpcRow) => {
             const sim = ((p.similarity ?? 0) * 100).toFixed(0);
-            return `- ${mode === 'private' ? '혜택명' : '정책명'}: ${p?.title ?? '미상'} (${p?.provider ?? '미상'}) [유사도 ${sim}%]\n  내용: ${p?.summary ?? ''}\n  링크: ${p?.url ?? ''}`;
+            const dday = p.deadline 
+              ? (() => {
+                  const days = Math.ceil((Date.parse(p.deadline) - now) / (24 * 3600_000));
+                  return days >= 0 ? ` [D-${days}]` : ' [만료됨 — 답변에서 제외]';
+                })()
+              : ' [상시모집]';
+            return `- ${mode === 'private' ? '혜택명' : '정책명'}: ${p?.title ?? '미상'} (${p?.provider ?? '미상'}) [유사도 ${sim}%]${dday}\n  내용: ${p?.summary ?? ''}\n  링크: ${p?.url ?? ''}`;
           };
 
           let result = '';
@@ -385,7 +405,6 @@ export async function POST(req: Request) {
           const clientSecret = process.env.NAVER_CLIENT_SECRET;
           if (!clientId || !clientSecret) return '네이버 API 키 미설정. global_web_search를 사용하세요.';
 
-          // 🛡️ 캐시 키에 mode prefix 명시 — 정규화 함수 영향과 무관하게 두 모드 영구 격리
           const cacheKey = `${mode}::${query}`;
           const cached = await getCachedSearch('naver', cacheKey);
           if (cached) {
@@ -773,7 +792,6 @@ export async function POST(req: Request) {
 
     // ────────────────────────────────────────────────────────────
     // 🌟 [백그라운드 작업] after() — HTTP self-fetch 제거판
-    // 핵심 로직(_logic.ts)을 직접 호출하여 Vercel 함수 invocation 1/3로 절감
     // ────────────────────────────────────────────────────────────
     if (
       userId &&
@@ -782,7 +800,6 @@ export async function POST(req: Request) {
       typeof lastMsg.content === 'string' &&
       lastMsg.content.trim().length > 0
     ) {
-      // 🌟 명시적 클로저 캡처 — 가독성과 안전성 (POST 함수 종료 후에도 안전하게 참조)
       const capturedUserId = userId;
       const capturedThreadId = threadId;
       const capturedMsg = lastMsg.content;
@@ -792,22 +809,18 @@ export async function POST(req: Request) {
         try {
           const WORKER_BUDGET_MS = 25_000;
 
-          // 1) 모든 모드 공통: 프로필 백그라운드 추출
           const profileTask = extractProfileCore({
             userId: capturedUserId,
             threadId: capturedThreadId,
             lastUserMessage: capturedMsg,
           }).catch((e) => console.warn('[bg profile extract]', e?.message));
 
-          // 2) Private 모드 전용: 답변에서 민간 혜택 추출 → DB 자가학습
-          // ⚠️ fullAnswer는 클로저로 캡처되며, after()는 스트림 종료 후 실행되므로 최종값이 들어옴
           const capturedFullAnswer = fullAnswer;
           const policiesTask = (capturedMode === 'private' && capturedFullAnswer.length > 100)
             ? extractPoliciesCore({ text: capturedFullAnswer })
                 .catch((e) => console.warn('[bg policy extract]', e?.message))
             : Promise.resolve();
 
-          // 🛡️ 백그라운드 전체에 단일 타임아웃 가드 — Vercel after() 한도 안에서 안전 종료
           await Promise.race([
             Promise.allSettled([profileTask, policiesTask]),
             new Promise((resolve) => setTimeout(resolve, WORKER_BUDGET_MS)),
@@ -827,7 +840,7 @@ export async function POST(req: Request) {
         'Content-Type': 'application/x-ndjson',
         'Cache-Control': 'no-cache, no-transform',
         'X-Accel-Buffering': 'no',
-        'X-Search-Mode': mode, // 🛡️ 디버깅/관측용 — 클라이언트는 어느 엔진이 응답했는지 즉시 확인 가능
+        'X-Search-Mode': mode,
       }
     });
 
