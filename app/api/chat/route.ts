@@ -6,10 +6,17 @@ import { createClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs'; 
 import { after } from 'next/server';
 import { buildSystemPrompt } from '@/lib/prompts/policyNavigator';
-// 🌟 [신규] 민간 혜택 전용 프롬프트 임포트
 import { buildPrivateSystemPrompt } from '@/lib/prompts/privateNavigator'; 
 import { getCachedSearch, setCachedSearch } from '@/lib/searchCache'; 
 import { checkRateLimit } from '@/lib/rateLimit'; 
+
+// 🌟 [격벽 1] 타입 안전성 보장
+type SearchMode = 'public' | 'private';
+
+function normalizeSearchMode(raw: unknown): SearchMode {
+  // 🛡️ 격벽 진입점 — 유일한 신뢰 가능 변환 지점
+  return raw === 'private' ? 'private' : 'public';
+}
 
 function normalizeToolQuery(q: string): string {
   return q.trim().toLowerCase()
@@ -137,7 +144,10 @@ function decodeNaverEntities(s: string): string {
 
 export async function POST(req: Request) {
   try {
-    const { messages, userId, threadId, searchMode = 'public' } = await req.json();
+    // 🌟 [격벽 2] JSON 파싱 에러 방어 및 mode 명시적 정규화
+    const body = await req.json().catch(() => ({}));
+    const { messages, userId, threadId } = body;
+    const mode: SearchMode = normalizeSearchMode(body.searchMode); 
 
     if (userId) {
       const rate = await checkRateLimit(userId);
@@ -297,7 +307,8 @@ export async function POST(req: Request) {
             return '임베딩 일시 실패. 웹 검색으로 우회하세요.';
           }
 
-          const RECALL_THRESHOLD = searchMode === 'private' ? 0.40 : 0.42;
+          // 🌟 안전한 정규화 변수(mode) 사용
+          const RECALL_THRESHOLD = mode === 'private' ? 0.40 : 0.42;
           const STRICT_THRESHOLD = 0.55;  
 
           const { data, error } = await withTimeout(
@@ -305,7 +316,7 @@ export async function POST(req: Request) {
               query_embedding: embedding,
               match_threshold: RECALL_THRESHOLD,  
               match_count: 12,
-              p_source_type: searchMode, 
+              p_source_type: mode, // 🌟 mode 주입
             }),
             TOOL_TIMEOUT_MS,
             'pgvector',
@@ -325,7 +336,7 @@ export async function POST(req: Request) {
 
           const fmt = (p: RpcRow) => {
             const sim = ((p.similarity ?? 0) * 100).toFixed(0);
-            return `- ${searchMode === 'private' ? '혜택명' : '정책명'}: ${p?.title ?? '미상'} (${p?.provider ?? '미상'}) [유사도 ${sim}%]\n  내용: ${p?.summary ?? ''}\n  링크: ${p?.url ?? ''}`;
+            return `- ${mode === 'private' ? '혜택명' : '정책명'}: ${p?.title ?? '미상'} (${p?.provider ?? '미상'}) [유사도 ${sim}%]\n  내용: ${p?.summary ?? ''}\n  링크: ${p?.url ?? ''}`;
           };
 
           let result = '';
@@ -358,7 +369,8 @@ export async function POST(req: Request) {
           const clientSecret = process.env.NAVER_CLIENT_SECRET;
           if (!clientId || !clientSecret) return '네이버 API 키 미설정. global_web_search를 사용하세요.';
 
-          const cacheKey = `${searchMode}_${query}`;
+          // 🌟 [격벽 3] 캐시 키에 확실한 구분자(::)와 정규화된 mode 사용
+          const cacheKey = `${mode}::${query}`;
           const cached = await getCachedSearch('naver', cacheKey);
           if (cached) {
             console.log(`[💾 naver cache HIT] "${cacheKey.slice(0, 30)}"`);
@@ -369,7 +381,8 @@ export async function POST(req: Request) {
           let officialQuery = '';
           let generalQuery = '';
 
-          if (searchMode === 'private') {
+          // 🌟 모드 분기
+          if (mode === 'private') {
             officialQuery = isAlreadyFiltered ? query : `${query} -(site:go.kr OR site:or.kr) (지원금 OR 장학금 OR 공고)`;
             generalQuery = isAlreadyFiltered ? query : `${query} -(site:go.kr OR site:or.kr) (채용 OR 부트캠프 OR 혜택)`;
           } else {
@@ -441,7 +454,7 @@ export async function POST(req: Request) {
             }
           };
 
-          await pushItems(officialRes, searchMode === 'private' ? '기업/재단' : '공식');
+          await pushItems(officialRes, mode === 'private' ? '기업/재단' : '공식');
           await pushItems(generalRes, '일반블로그');
           await pushItems(newsRes, '뉴스');
 
@@ -472,11 +485,12 @@ export async function POST(req: Request) {
             year: 'numeric',
           }).format(new Date());
           
-          const localizedQuery = searchMode === 'private'
+          const localizedQuery = mode === 'private'
             ? `${seoulYear}년 대한민국 민간 대기업 재단 청년 혜택 부트캠프 ${query}`
             : `${seoulYear}년 대한민국 정부 정책 지원금 ${query}`;
 
-          const cacheKey = `${searchMode}_${query}`;
+          // 🌟 [격벽 3] 캐시 키 안전하게 변경
+          const cacheKey = `${mode}::${query}`;
           const cached = await getCachedSearch('tavily', cacheKey);
           if (cached) {
             console.log(`[💾 tavily cache HIT] "${cacheKey.slice(0, 30)}"`);
@@ -516,7 +530,6 @@ export async function POST(req: Request) {
       }),
     };
 
-    // 🌟 [핵심 개선] 스트림 결과를 담을 변수를 상위 스코프로 끌어올려 안전하게 캡처 가능하게 함
     let fullAnswer = "";
 
     const customStream = new ReadableStream({
@@ -538,7 +551,8 @@ export async function POST(req: Request) {
           ),
         ]);
 
-        const baseSystemPrompt = searchMode === 'private' 
+        // 🌟 정규화된 mode 사용
+        const baseSystemPrompt = mode === 'private' 
           ? buildPrivateSystemPrompt() 
           : buildSystemPrompt();
 
@@ -754,7 +768,8 @@ export async function POST(req: Request) {
       const capturedUserId = userId;
       const capturedThreadId = threadId;
       const capturedMsg = lastMsg.content;
-      const capturedSearchMode = searchMode; 
+      // 🌟 [격벽 유지] 안전하게 정규화된 변수 캡처
+      const capturedSearchMode = mode; 
 
       const origin = new URL(req.url).origin; 
       
@@ -762,7 +777,6 @@ export async function POST(req: Request) {
         try {
           const internalSecret = process.env.INTERNAL_API_SECRET;
           
-          // --- 기존 프로필 추출 로직 (유지) ---
           const profileController = new AbortController();
           const profileTimeout = setTimeout(() => profileController.abort(), 15_000);
 
@@ -783,11 +797,10 @@ export async function POST(req: Request) {
           .catch((e) => console.warn('[bg profile extract fail]', e?.message))
           .finally(() => clearTimeout(profileTimeout));
 
-          // 🌟 [신규 추가] 민간 모드일 때만, 스트림이 완료되어 완성된 fullAnswer를 분석해 DB에 저장
           const capturedFullAnswer = fullAnswer; 
           if (capturedSearchMode === 'private' && capturedFullAnswer.length > 100) {
             const policyController = new AbortController();
-            const policyTimeout = setTimeout(() => policyController.abort(), 20_000); // 임베딩/DB 시간 고려해 20초
+            const policyTimeout = setTimeout(() => policyController.abort(), 20_000); 
 
             fetch(`${origin}/api/policies/extract`, {
               method: 'POST',
