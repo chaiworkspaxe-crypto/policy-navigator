@@ -9,13 +9,14 @@ interface StreamOpts {
   threadId: string;
   messages: ChatMessage[];
   newUserContent: string;
+  // 🌟 [신규] 프론트엔드에서 선택한 검색 모드를 백엔드로 전달하기 위한 속성 추가
+  searchMode?: 'public' | 'private';
 }
 
 interface StreamHandlers {
   onDelta?: (delta: string, accumulated: string) => void;
   onStatus?: (status: string) => void;
   onError?: (msg: string) => void;
-  // 🌟 [핵심 개선] 메타데이터를 받을 수 있도록 onDone 시그니처 확장
   onDone?: (full: string, meta?: { truncated?: boolean; finishReason?: string }) => void;
   onFirstDelta?: () => void;     
 }
@@ -26,10 +27,8 @@ export function useChatStream() {
   
   const abortControllerRef = useRef<AbortController | null>(null);
   
-  // 🌟 [최적화] 컴포넌트 생존 여부 추적 (메모리 누수 및 React 경고 방어)
   const isMountedRef = useRef(true);
 
-  // 컴포넌트가 사라질 때(Unmount) 통신을 강제로 끊고 생존 플래그를 내림
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
@@ -40,7 +39,6 @@ export function useChatStream() {
     };
   }, []);
 
-  // 🌟 안전한 State 업데이트 함수 (컴포넌트가 살아있을 때만 작동)
   const safeSetIsStreaming = useCallback((v: boolean) => {
     if (isMountedRef.current) setIsStreaming(v);
   }, []);
@@ -77,10 +75,9 @@ export function useChatStream() {
       const CONNECT_TIMEOUT_MS = 60_000;
       const IDLE_TIMEOUT_MS = 45_000;
       
-      // 🌟 [개선] 슬라이딩 윈도우 타이머 변수 (무거운 쿼리 False-positive 차단)
-      const NO_CONTENT_TIMEOUT_INITIAL_MS = 90_000;      // 초기 컨텐츠 대기 시간
-      const NO_CONTENT_EXTENSION_PER_STATUS_MS = 25_000; // status 수신 시 연장할 시간
-      const NO_CONTENT_HARD_CAP_MS = 240_000;            // 절대 상한 240초 (Vercel 300초 보호)
+      const NO_CONTENT_TIMEOUT_INITIAL_MS = 90_000;      
+      const NO_CONTENT_EXTENSION_PER_STATUS_MS = 25_000; 
+      const NO_CONTENT_HARD_CAP_MS = 240_000;            
 
       const streamStartedAt = Date.now();
       let contentWatchdogDeadline = streamStartedAt + NO_CONTENT_TIMEOUT_INITIAL_MS;
@@ -95,7 +92,6 @@ export function useChatStream() {
         }, ms);
       };
 
-      // 🌟 콘텐츠 워치독 (남은 시간만큼 예약)
       const scheduleContentWatchdog = () => {
         if (contentWatchdogId) clearTimeout(contentWatchdogId);
         const remaining = Math.max(0, contentWatchdogDeadline - Date.now());
@@ -106,7 +102,6 @@ export function useChatStream() {
         }, remaining);
       };
 
-      // 🌟 상태 수신 시 콘텐츠 워치독 연장 (Hard Cap 제한)
       const extendContentWatchdog = (extensionMs: number) => {
         const hardCap = streamStartedAt + NO_CONTENT_HARD_CAP_MS;
         const proposed = Date.now() + extensionMs;
@@ -114,13 +109,11 @@ export function useChatStream() {
         scheduleContentWatchdog();
       };
 
-      // 🌟 텍스트 도착 시 풀 리셋
       const resetContentWatchdog = () => {
         contentWatchdogDeadline = Date.now() + NO_CONTENT_TIMEOUT_INITIAL_MS;
         scheduleContentWatchdog();
       };
 
-      // 🌟 중복 메시지 전송 방어
       const lastMsg = opts.messages[opts.messages.length - 1];
       const alreadyHasNewMsg =
         lastMsg?.role === 'user' &&
@@ -141,6 +134,8 @@ export function useChatStream() {
             messages: newMessages,
             userId: opts.userId,
             threadId: opts.threadId,
+            // 🌟 [핵심 변경] 프론트엔드의 searchMode를 백엔드로 전송
+            searchMode: opts.searchMode,
           }),
           signal: abortControllerRef.current.signal, 
         });
@@ -153,7 +148,6 @@ export function useChatStream() {
           return;
         }
 
-        // 🌟 [신규] Rate Limit 429 에러 핸들링
         if (response.status === 429) {
           const errorData = await response.json().catch(() => ({}));
           if (isMountedRef.current) {
@@ -177,7 +171,7 @@ export function useChatStream() {
         }
 
         resetWatchdog(); 
-        resetContentWatchdog(); // 읽기 시작과 함께 가동
+        resetContentWatchdog(); 
 
         while (true) {
           if (!isMountedRef.current) break;
@@ -215,18 +209,16 @@ export function useChatStream() {
               handlers.onDelta?.(data.delta, accumulated);
               
               safeSetAiStatus(''); 
-              resetContentWatchdog(); // 🌟 실제 텍스트가 도착했을 때 풀 리셋
+              resetContentWatchdog(); 
             } else if (data.type === 'status') {
               safeSetAiStatus(data.message);
               handlers.onStatus?.(data.message);
               
-              // 🌟 status 도착 = 서버 살아있음 신호 → content 워치독을 연장 (단, 240초 hard cap)
               extendContentWatchdog(NO_CONTENT_EXTENSION_PER_STATUS_MS);
               
             } else if (data.type === 'error') {
               handlers.onError?.(data.message);
             } else if (data.type === 'done') {
-              // 🌟 서버에서 내려준 잘림(truncated) 시그널을 메타데이터로 파싱해서 UI로 전달
               handlers.onDone?.(data.full_content ?? accumulated, { 
                 truncated: data.truncated === true,
                 finishReason: data.finish_reason,
@@ -247,7 +239,6 @@ export function useChatStream() {
               accumulated += data.delta;
               handlers.onDelta?.(data.delta, accumulated);
             } else if (data.type === 'done') {
-              // 🌟 남은 버퍼 처리에서도 잘림 상태 전달
               handlers.onDone?.(data.full_content ?? accumulated, {
                 truncated: data.truncated === true,
                 finishReason: data.finish_reason,
