@@ -1,10 +1,7 @@
 // lib/rateLimit.ts
-import { createClient } from '@supabase/supabase-js';
+import { getSupabase } from '@/lib/supabase';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-);
+const supabase = getSupabase();
 
 const MINUTE_LIMIT = 6;
 const DAY_LIMIT = 100;
