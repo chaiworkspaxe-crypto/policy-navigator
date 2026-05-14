@@ -1,14 +1,14 @@
+// components/InAppGuide.tsx
 'use client';
 
 import { useEffect, useState } from 'react';
 
 export default function InAppGuide() {
   const [isInApp, setIsInApp] = useState(false);
-  const [dismissed, setDismissed] = useState(false); // ✅ 추가: 모달 닫기 상태
+  const [dismissed, setDismissed] = useState(false); 
   const [os, setOs] = useState<'ios' | 'android' | 'other'>('other');
   const [copied, setCopied] = useState(false);
 
-  // 🌟 [수술 1️⃣6️⃣] useEffect 통째로 교체: 카톡/네이버앱/Daum앱 등 정밀 감지
   useEffect(() => {
     if (typeof window === 'undefined') return;
     
@@ -20,23 +20,23 @@ export default function InAppGuide() {
     
     const ua = navigator.userAgent.toLowerCase();
     
-    // 🌟 한국 환경 핵심 인앱 + 글로벌 앱 감지 패턴 보강
+    // 🌟 [핵심 개선] 한국 환경 핵심 인앱 + 글로벌 앱 감지 패턴 정규식으로 정밀도 보강
     const inAppPatterns = [
-      'kakaotalk',
-      'naver(', // 네이버 앱
-      'naverin',
-      'daumapps',
-      'instagram',
-      'line/',
-      'fbav', 'fban', // Facebook
-      'fb_iab',
-      'micromessenger', // WeChat
-      'snapchat',
-      'discord',
-      ' wv)', // 일반 안드로이드 WebView
+      /kakaotalk/i,
+      /naver\(inapp;/i,      // 네이버 앱 정확한 패턴
+      /daumapps/i,
+      /instagram/i,
+      /line\/[\d.]+/i,
+      /fbav|fban|fb_iab/i,   // Facebook 관련
+      /micromessenger/i,     // WeChat
+      /snapchat/i,
+      /discord/i,
+      // 'wv)'는 false positive가 많아 제거하고, 안드로이드 WebView 구조를 더 명확히 감지
+      /android.*; wv\)/i,    
     ];
     
-    const isApp = inAppPatterns.some((p) => ua.includes(p));
+    // 정규식 test 메서드로 검사
+    const isApp = inAppPatterns.some((p) => p.test(ua));
     
     if (isApp) {
       setIsInApp(true);
