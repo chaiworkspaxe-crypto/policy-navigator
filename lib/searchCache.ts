@@ -26,12 +26,17 @@ const STOPWORDS = new Set([
 // 1) 쿼리 정규화 — 작은 표기 차이를 같은 캐시 키로 모음 (Bag-of-words 패턴)
 // ────────────────────────────────────────────────────────────
 function normalizeQuery(q: string): string {
+  // 🌟 [신규] mode prefix 보호 — '::' 이전 토큰은 정규화 면제
+  const modeMatch = q.match(/^(public|private)::/i);
+  const modePrefix = modeMatch ? modeMatch[0].toLowerCase() : '';
+  const body = modeMatch ? q.slice(modeMatch[0].length) : q;
+
   // 1) site: 같은 검색 연산자 먼저 추출 (공백 제거 전에 안전하게 보관)
-  const siteMatches = Array.from(q.toLowerCase().matchAll(/site:[a-z0-9.-]+/g))
+  const siteMatches = Array.from(body.toLowerCase().matchAll(/site:[a-z0-9.-]+/g))
     .map(m => m[0]).sort();
   
   // 2) 기본 정규화 (site: 및 기호 제거)
-  let s = q.toLowerCase()
+  let s = body.toLowerCase()
     .replace(/site:[a-z0-9.-]+/g, ' ')
     .replace(/[?!,.~`'"()\[\]{}<>·•\-_]+/g, ' ')
     .trim();
@@ -58,7 +63,8 @@ function normalizeQuery(q: string): string {
     normalized = normalized + '|' + siteMatches.join(',');
   }
 
-  return normalized.slice(0, 200); // 안전 상한
+  // 🌟 보호해둔 modePrefix를 다시 앞에 붙여서 반환
+  return modePrefix + normalized.slice(0, 200); 
 }
 
 // ────────────────────────────────────────────────────────────
@@ -116,9 +122,9 @@ export async function getCachedSearch(
 
 // ────────────────────────────────────────────────────────────
 // 4) 캐시 저장 (fire-and-forget — await 안 해도 됨)
-//    아래 조건이면 저장 안 함:
-//    - 결과가 30자 미만 (빈 결과/짧은 에러)
-//    - 결과에 시스템 장애 키워드 포함 (도구가 우회 안내 메시지 반환한 경우)
+//   아래 조건이면 저장 안 함:
+//   - 결과가 30자 미만 (빈 결과/짧은 에러)
+//   - 결과에 시스템 장애 키워드 포함 (도구가 우회 안내 메시지 반환한 경우)
 // ────────────────────────────────────────────────────────────
 const SHOULD_NOT_CACHE_PATTERNS = [
   /일시 (장애|실패)/,
