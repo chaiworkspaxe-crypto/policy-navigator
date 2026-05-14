@@ -247,7 +247,7 @@ export async function POST(req: Request) {
 - 거주지: ${safeCity || '미상'} ${safeDistrict || ''}
 - 출생연도: ${safeBirth || '미상'}
 - 추가 정보: ${safeExtra || '없음'}
-- 백그라운드 추출: ${bgProfile || '없음'}${notesBlock}
+- 백그라운 추출: ${bgProfile || '없음'}${notesBlock}
 [프로필 끝]
 
 이 프로필을 활용해 검색을 더 정밀하게 수행하세요. 이미 알고 있는 정보는 다시 묻지 마세요.`;
@@ -405,10 +405,9 @@ export async function POST(req: Request) {
           const clientSecret = process.env.NAVER_CLIENT_SECRET;
           if (!clientId || !clientSecret) return '네이버 API 키 미설정. global_web_search를 사용하세요.';
 
-          const cacheKey = `${mode}::${query}`;
-          const cached = await getCachedSearch('naver', cacheKey);
+          const cached = await getCachedSearch('naver', mode, query);
           if (cached) {
-            console.log(`[💾 naver cache HIT] "${cacheKey.slice(0, 30)}"`);
+            console.log(`[💾 naver cache HIT] mode=${mode} query="${query.slice(0, 30)}"`);
             return cached;
           }
 
@@ -497,7 +496,7 @@ export async function POST(req: Request) {
           }
 
           const formatted = out.join('\n\n');
-          void setCachedSearch('naver', cacheKey, formatted, 6);
+          void setCachedSearch('naver', mode, query, formatted, 6);
           return formatted;
         }),
       }),
@@ -523,10 +522,9 @@ export async function POST(req: Request) {
             ? `${seoulYear}년 대한민국 민간 대기업 재단 청년 혜택 부트캠프 ${query}`
             : `${seoulYear}년 대한민국 정부 정책 지원금 ${query}`;
 
-          const cacheKey = `${mode}::${query}`;
-          const cached = await getCachedSearch('tavily', cacheKey);
+          const cached = await getCachedSearch('tavily', mode, query);
           if (cached) {
-            console.log(`[💾 tavily cache HIT] "${cacheKey.slice(0, 30)}"`);
+            console.log(`[💾 tavily cache HIT] mode=${mode} query="${query.slice(0, 30)}"`);
             return cached;
           }
 
@@ -556,7 +554,7 @@ export async function POST(req: Request) {
             .map((r: any) => `- 제목: ${r.title}\n  내용: ${r.content}\n  링크: ${r.url}`)
             .join('\n\n');
 
-          void setCachedSearch('tavily', cacheKey, formatted, 24);
+          void setCachedSearch('tavily', mode, query, formatted, 24);
 
           return formatted;
         }),
