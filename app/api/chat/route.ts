@@ -2,7 +2,7 @@
 import { openai } from '@ai-sdk/openai';
 import { streamText, tool, type CoreMessage } from 'ai'; 
 import { z } from 'zod';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabase } from '@/lib/supabase';
 import * as Sentry from '@sentry/nextjs'; 
 import { after } from 'next/server';
 import { buildSystemPrompt } from '@/lib/prompts/policyNavigator';
@@ -29,10 +29,7 @@ function normalizeToolQuery(q: string): string {
     .slice(0, 200);
 }
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
-const supabase = createClient(supabaseUrl, supabaseKey);
+const supabase = getSupabase();
 
 export const runtime = 'edge';
 
