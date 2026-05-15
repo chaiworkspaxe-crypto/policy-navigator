@@ -6,6 +6,11 @@ import { embed } from 'ai';
 const MAX_CACHE = 256;
 const cache = new Map<string, number[]>();
 
+// 🛡️ [핵심 변경] 임베딩 무결성 검증을 위한 상수 정의
+const EXPECTED_DIM = 1536; // text-embedding-3-small 모델의 고정 차원 수
+const MIN_KEY_LEN = 2;
+const MAX_KEY_LEN = 400;
+
 function setLRU(key: string, value: number[]) {
   if (cache.has(key)) cache.delete(key);
   cache.set(key, value);
@@ -16,7 +21,8 @@ function setLRU(key: string, value: number[]) {
 }
 
 function normalize(q: string): string {
-  return q.trim().toLowerCase().replace(/\s+/g, '');
+  // 🛡️ [핵심 변경] 비정상적으로 긴 텍스트가 메모리 키로 들어가는 것 방지
+  return q.trim().toLowerCase().replace(/\s+/g, '').slice(0, MAX_KEY_LEN);
 }
 
 export async function getEmbedding(
@@ -24,13 +30,26 @@ export async function getEmbedding(
   signal?: AbortSignal,
 ): Promise<number[]> {
   const key = normalize(query);
+
+  // 🛡️ [핵심 변경] 가드: 비정상 입력은 캐시 안 거치고 즉시 빈 배열 반환
+  if (key.length < MIN_KEY_LEN) {
+    console.warn('[embeddingCache] invalid key length:', key.length);
+    return [];
+  }
+
   const hit = cache.get(key);
   
-  // 캐시 적중 시
-  if (hit) {
+  // 🛡️ [핵심 변경] 캐시 적중 시 차원 수까지 완벽히 일치하는지 검증
+  if (hit && hit.length === EXPECTED_DIM) {
     cache.delete(key); 
-    cache.set(key, hit); // 최근 사용된 녀석으로 순서 갱신(Touch)
+    cache.set(key, hit); // Touch (LRU 순서 갱신)
     return hit;
+  }
+  
+  // 만약 과거에 잘못된 차원의 캐시가 남아있다면 오염으로 간주하고 삭제
+  if (hit && hit.length !== EXPECTED_DIM) {
+    console.warn(`[embeddingCache] Removing corrupted cache for key: ${key}`);
+    cache.delete(key);
   }
 
   // 캐시 미스 시 실제 API 호출
@@ -40,8 +59,11 @@ export async function getEmbedding(
     abortSignal: signal,
   });
 
-  if (Array.isArray(embedding) && embedding.length > 0) {
+  // 🛡️ [핵심 변경] 결과 배열 길이 검증 — 비정상 응답은 캐시 오염 방지
+  if (Array.isArray(embedding) && embedding.length === EXPECTED_DIM) {
     setLRU(key, embedding);
+  } else {
+    console.warn('[embeddingCache] unexpected embedding length:', embedding?.length);
   }
   
   return embedding;
