@@ -129,7 +129,7 @@ export default function Home() {
   const scrollRafRef = useRef<number | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
-  // 🌟 [신규 상태] 검색 모드 추가 (정부 / 민간)
+  // 🌟 검색 모드 상태
   const [searchMode, setSearchMode] = useState<'public' | 'private'>('public');
 
   const [city, setCity] = useState(EMPTY_INPUTS.selected_city);
@@ -149,7 +149,6 @@ export default function Home() {
 
   const { stream, stop, isStreaming: loading, aiStatus, setAiStatus } = useChatStream();
 
-  // 🌟 모드별 추천 예시 텍스트 (하단 가이드 버튼용)
   const queryExamples = searchMode === 'public' 
     ? ["🧑‍🎓 대학생을 위한 월세 지원 정책 찾아줘", "💼 취업 준비생 국비 지원 교육 알려줘", "💰 20대 청년 적금 혜택 정리해 줘"]
     : ["💻 IT 비전공자 코딩 부트캠프 찾아줘", "🚀 대학생 창업 지원 재단 알려줘", "🏢 대기업 주관 대외활동 추천해 줘"];
@@ -329,14 +328,13 @@ export default function Home() {
     } catch { setErrorMessage("서버와 연결할 수 없습니다."); }
   };
 
+  // 🌟 [핵심 변경] 대화 로드 시 모드(search_mode) 복원
   const selectThread = async (uid: string, tid: string) => {
     if (loading) stop();
     
     try {
       setErrorMessage(""); setCurrentThreadId(tid); setMessages([]); setNextBefore(null); setQuery(""); setIsSidebarOpen(false);
       setLastTruncated(false); 
-      // 🌟 새 대화 불러올 땐 기본적으로 public으로 세팅 (추후 DB 연동 시 보완 가능)
-      setSearchMode('public');
       
       const [loadedData, loadedInputs] = await Promise.all([ api.loadMessages(uid, tid), api.loadThreadInputs(uid, tid) ]);
       
@@ -345,6 +343,10 @@ export default function Home() {
       setNextBefore((loadedData as any).nextBefore ?? null);
       
       applyInputs(loadedInputs);
+
+      // DB에서 저장된 search_mode가 있으면 복원, 없으면 public 
+      const modeFromDb = (loadedInputs as any)?.search_mode;
+      setSearchMode(modeFromDb === 'private' ? 'private' : 'public');
       
       if (msgs.length > 0) setIsFormExpanded(false); else setIsFormExpanded(true);
       
@@ -357,7 +359,8 @@ export default function Home() {
     } catch (error) { setErrorMessage(extractApiErrorMessage(error)); }
   };
 
-  const handleNewThread = async (uid = userId) => {
+  // 🌟 [핵심 변경] 새 스레드 생성 시 모드(forcedMode) 파라미터 수용
+  const handleNewThread = async (uid = userId, forcedMode?: 'public' | 'private') => {
     if (loading) stop();
     
     setErrorMessage("");
@@ -366,10 +369,31 @@ export default function Home() {
     setNextBefore(null);
     setQuery(""); 
     applyInputs(EMPTY_INPUTS);
-    setSearchMode('public'); // 🌟 리셋
+    setSearchMode(forcedMode ?? 'public'); // 전달받은 모드가 있으면 유지
     setIsSidebarOpen(false); 
     setIsFormExpanded(true);
     setLastTruncated(false);
+  };
+
+  // 🌟 [핵심 변경] 모드 전환을 완벽하게 통제하는 래퍼 함수
+  const handleSwitchMode = (next: 'public' | 'private') => {
+    if (next === searchMode) return;
+    
+    // 메시지가 비어있으면(첫 대화) 그냥 토글만
+    if (messages.length === 0) {
+      setSearchMode(next);
+      return;
+    }
+    
+    // 대화 중이면 컨텍스트 오염을 막기 위해 새 스레드 강제
+    const ok = window.confirm(
+      next === 'private'
+        ? '🏢 민간·기업 혜택 모드로 전환하면 대화가 섞이지 않도록 새 대화를 시작합니다. 계속할까요?'
+        : '🏛️ 정부 정책 모드로 전환하면 대화가 섞이지 않도록 새 대화를 시작합니다. 계속할까요?'
+    );
+    if (!ok) return;
+    
+    void handleNewThread(userId, next);
   };
 
   const loadOlderMessages = async () => {
@@ -451,13 +475,15 @@ export default function Home() {
     setAutoScroll(true);
 
     try {
+      // 🌟 [핵심 변경] API 저장 시 searchMode 함께 넘기기 (백엔드 스키마에도 추가 필수)
       await api.saveThreadInputs(userId, targetThreadId, {
         selected_city: city,
         selected_district: district,
         selected_dong: dong,
         birth_year: birthYear,
         extra_info: extraInfo,
-      });
+        search_mode: searchMode, 
+      } as any);
     } catch (e) {
       console.error('[saveThreadInputs]', e);
       setErrorMessage('입력 정보를 저장하는 데 일시적 문제가 있었어요. 검색은 진행되지만, 최신 조건이 미반영될 수 있습니다.');
@@ -471,7 +497,6 @@ export default function Home() {
         threadId: targetThreadId,
         messages, 
         newUserContent: userText,
-        // 🌟 [핵심 변경] 프론트엔드의 searchMode를 백엔드로 전달!
         searchMode, 
       },
       {
@@ -629,10 +654,10 @@ export default function Home() {
           <div className={`mx-auto max-w-4xl px-4 transition-all duration-300 ease-in-out origin-top ${isFormExpanded ? 'max-h-[500px] py-4 opacity-100' : 'max-h-0 py-0 opacity-0 overflow-hidden'}`}>
             <div className="space-y-3">
               
-              {/* 🌟 [신규 UI] 검색 모드 토글 (정부 vs 민간) */}
+              {/* 🌟 [핵심 변경] 검색 모드 토글 (handleSwitchMode 연결) */}
               <div className="flex bg-gray-100 dark:bg-[#2a2a2a] p-1 rounded-xl mb-1 border border-gray-200 dark:border-[#444]">
                 <button
-                  onClick={() => setSearchMode('public')}
+                  onClick={() => handleSwitchMode('public')}
                   className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${
                     searchMode === 'public' 
                       ? 'bg-white dark:bg-[#444] text-green-600 dark:text-green-400 shadow-sm ring-1 ring-black/5' 
@@ -642,7 +667,7 @@ export default function Home() {
                   🏛️ 정부·지자체 정책
                 </button>
                 <button
-                  onClick={() => setSearchMode('private')}
+                  onClick={() => handleSwitchMode('private')}
                   className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${
                     searchMode === 'private' 
                       ? 'bg-white dark:bg-[#444] text-blue-600 dark:text-blue-400 shadow-sm ring-1 ring-black/5' 
@@ -675,7 +700,6 @@ export default function Home() {
               </div>
               <div className="flex flex-col gap-2 sm:flex-row">
                 <input type="tel" placeholder="출생연도 (예: 1999)" maxLength={4} className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500 sm:w-1/3" value={birthYear} onChange={(e) => setBirthYear(e.target.value.replace(/[^0-9]/g, ""))} />
-                {/* 🌟 [핵심 변경] 모드에 따라 플레이스홀더 동적 변경 */}
                 <input 
                   type="text" 
                   placeholder={
@@ -869,7 +893,6 @@ export default function Home() {
         <div className="shrink-0 border-t border-gray-200 dark:border-[#333] bg-gray-50 dark:bg-[#121212] p-3 sm:p-4 pb-safe transition-colors duration-300 z-20">
           <div className="relative mx-auto max-w-4xl flex flex-col">
             <div className="flex gap-2 mb-3 overflow-x-auto pb-1 scrollbar-hide">
-              {/* 🌟 [핵심 변경] 모드에 따라 하단 추천 예시 질문 동적 렌더링 */}
               {queryExamples.map((example, idx) => (
                 <button key={idx} onClick={() => setQuery(example)} className="whitespace-nowrap px-4 py-1.5 text-sm bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-600 transition-colors shadow-sm">{example}</button>
               ))}
