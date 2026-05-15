@@ -12,10 +12,41 @@ import { checkRateLimit } from '@/lib/rateLimit';
 
 import { extractProfileCore } from '@/app/api/profile/extract/_logic';
 import { extractPoliciesCore } from '@/app/api/policies/extract/_logic';
-
-// 🌟 [신규] 인메모리 임베딩 캐시 임포트
 import { getEmbedding } from '@/lib/embeddingCache';
 
+// ────────────────────────────────────────────────────────────
+// 🌟 도구 결과 토큰 예산 — 단일 턴 모든 도구 결과 합계 상한
+// ────────────────────────────────────────────────────────────
+const TOTAL_TOOL_BUDGET_CHARS = 40_000; // 약 10K 토큰 (한글 기준)
+const PER_TOOL_HARD_CAP_CHARS = 18_000;  // 단일 도구 결과 상한
+
+function makeToolBudgetTracker() {
+  let used = 0;
+  return {
+    spend(text: string, toolName: string): string {
+      let out = text.length > PER_TOOL_HARD_CAP_CHARS
+        ? text.slice(0, PER_TOOL_HARD_CAP_CHARS) + 
+          `\n\n[ℹ️ ${toolName} 결과가 너무 길어 ${PER_TOOL_HARD_CAP_CHARS}자에서 잘렸습니다. 더 구체적인 키워드로 재검색하세요.]`
+        : text;
+      
+      const remaining = TOTAL_TOOL_BUDGET_CHARS - used;
+      if (remaining <= 0) {
+        return `[⚠️ 토큰 예산 소진] ${toolName}는 이번 턴에 더 호출하지 않거나, 보유한 정보로 답변을 마무리하세요.`;
+      }
+      if (out.length > remaining) {
+        out = out.slice(0, remaining) + 
+          `\n\n[ℹ️ 토큰 예산 절감을 위해 잘림. 보유한 정보로 답변 정리 권장.]`;
+      }
+      used += out.length;
+      return out;
+    },
+    get remaining() { return Math.max(0, TOTAL_TOOL_BUDGET_CHARS - used); },
+  };
+}
+
+// ────────────────────────────────────────────────────────────
+// 🛡️ 격벽 진입점 — 모드 화이트리스트 정규화
+// ────────────────────────────────────────────────────────────
 type SearchMode = 'public' | 'private';
 
 function normalizeSearchMode(raw: unknown): SearchMode {
@@ -252,6 +283,9 @@ export async function POST(req: Request) {
 
     const toolCallCache = new Map<string, string>();
     const seenUrls = new Set<string>();
+    
+    // 🌟 [핵심 변경] 토큰 예산 트래커 생성
+    const budget = makeToolBudgetTracker(); 
 
     const withToolGuard = <T extends { query: string }>(
       toolName: string,
@@ -271,6 +305,9 @@ export async function POST(req: Request) {
         if (isUserCancellation(e, req.signal)) throw e;
         result = `[도구 예외] ${toolName} 실패(${e?.message ?? 'unknown'}). 다른 경로로 우회하세요.`;
       }
+
+      // 🌟 [핵심 변경] 토큰 예산 적용 (길이 초과 시 자름)
+      result = budget.spend(result, toolName);
 
       toolCallCache.set(key, result);
 
@@ -311,14 +348,12 @@ export async function POST(req: Request) {
           }
 
           const RECALL_THRESHOLD = mode === 'private' ? 0.40 : 0.42;
-          // 🚀 [핵심 변경] Public은 관공서 용어와 유저 일상어 간의 간극이 커서 0.51만 넘어도 🟢 신뢰로 인정
           const STRICT_THRESHOLD = mode === 'public' ? 0.51 : 0.55;
 
           const { data, error } = await withTimeout(
             async () => supabase.rpc('match_policies_v2', {
               query_embedding: embedding,
               match_threshold: RECALL_THRESHOLD,
-              // 🚀 [핵심 변경] 허수 필터링을 감안해 DB에서 넉넉하게 20개까지 가져옴
               match_count: mode === 'public' ? 20 : 12, 
               p_source_type: mode,
               p_only_active: true, 
@@ -405,7 +440,6 @@ export async function POST(req: Request) {
             officialQuery = isAlreadyFiltered ? query : `${query} -(site:go.kr OR site:or.kr) (지원금 OR 장학금 OR 공고)`;
             generalQuery = isAlreadyFiltered ? query : `${query} -(site:go.kr OR site:or.kr) (채용 OR 부트캠프 OR 혜택)`;
           } else {
-            // 🚀 [핵심 변경] '공고'라는 좁은 단어 대신, 지원/안내/혜택 등을 포괄하도록 수정
             officialQuery = isAlreadyFiltered ? query : `${query} (지원 OR 안내 OR 혜택) (site:go.kr OR site:or.kr)`;
             generalQuery = isAlreadyFiltered ? query : `${query} 지원금 OR 혜택`;
           }
@@ -449,7 +483,6 @@ export async function POST(req: Request) {
             }
           };
 
-          // 🚀 [핵심 변경] Public 모드는 정부 문서 풀이 넓어야 하므로 10개까지 넉넉히 가져옴
           const officialDisplayCount = mode === 'public' ? 10 : 5; 
           
           const officialRes = await withTimeout(
@@ -465,7 +498,6 @@ export async function POST(req: Request) {
             mode === 'private' ? '기업/재단' : '공식'
           );
 
-          // 🚀 [핵심 변경] Public은 최소 7개의 팩트가 모여야 2차 검색(뉴스/일반)을 멈추도록 임계점 상향
           const NEED_MORE_THRESHOLD = mode === 'public' ? 7 : 3;
           if (out.length < NEED_MORE_THRESHOLD) {
             const [generalRes, newsRes] = await Promise.allSettled([
@@ -526,7 +558,6 @@ export async function POST(req: Request) {
             return cached;
           }
 
-          // 🚀 [핵심 변경] Tavily 검색도 Public일 때는 8개까지 조금 더 깊게 긁어옴
           const tavilyMaxResults = mode === 'public' ? 8 : 5;
 
           const res = (await withTimeout(
@@ -589,6 +620,8 @@ export async function POST(req: Request) {
 
         const systemPromptWithTime = baseSystemPrompt + profileContext;
 
+        // 🌟 [핵심 변경] 영속성 레이스 차단을 위한 Promise 기반 단일 진실 원천
+        let persistInflight: Promise<void> | null = null;
         let assistantPersisted = false;
 
         const persistFailurePlaceholder = async (reason: string) => {
@@ -616,6 +649,7 @@ export async function POST(req: Request) {
         };
 
         const persistAssistant = async (text: string, finishReason?: string) => {
+          if (persistInflight) { await persistInflight; return; } // 🌟 Race 차단 (Mutex Lock)
           if (assistantPersisted) return;
           if (!userId || !threadId) return;
           if (!text || !text.trim()) {
@@ -623,54 +657,57 @@ export async function POST(req: Request) {
             return;
           }
 
-          assistantPersisted = true;
+          persistInflight = (async () => {
+            assistantPersisted = true; // 진입 즉시 락 설정
+            try {
+              const now = new Date().toISOString();
 
-          try {
-            const now = new Date().toISOString();
+              await supabase.from('chat_messages').insert({
+                thread_id: threadId,
+                user_id: userId,
+                role: 'assistant',
+                content: text,
+                created_at: now,
+                updated_at: now,
+              });
 
-            await supabase.from('chat_messages').insert({
-              thread_id: threadId,
-              user_id: userId,
-              role: 'assistant',
-              content: text,
-              created_at: now,
-              updated_at: now,
-            });
+              const { data: threadRow } = await supabase
+                .from('chat_threads')
+                .select('title')
+                .eq('thread_id', threadId)
+                .eq('user_id', userId)
+                .maybeSingle();
 
-            const { data: threadRow } = await supabase
-              .from('chat_threads')
-              .select('title')
-              .eq('thread_id', threadId)
-              .eq('user_id', userId)
-              .maybeSingle();
+              const titleUpdate: Record<string, unknown> = { updated_at: now };
+              const isFirstTurnTitle = !threadRow?.title || threadRow.title === '새 대화';
 
-            const titleUpdate: Record<string, unknown> = { updated_at: now };
-            const isFirstTurnTitle = !threadRow?.title || threadRow.title === '새 대화';
+              if (
+                isFirstTurnTitle &&
+                lastMsg?.role === 'user' &&
+                typeof lastMsg.content === 'string'
+              ) {
+                const raw = lastMsg.content
+                  .replace(/^📍.*?\|/g, '')
+                  .replace(/[🎂📝📍|]/g, ' ')
+                  .replace(/\s+/g, ' ')
+                  .trim();
+                const title = raw.slice(0, 30) + (raw.length > 30 ? '…' : '');
+                if (title.length >= 2) titleUpdate.title = title;
+              }
 
-            if (
-              isFirstTurnTitle &&
-              lastMsg?.role === 'user' &&
-              typeof lastMsg.content === 'string'
-            ) {
-              const raw = lastMsg.content
-                .replace(/^📍.*?\|/g, '')
-                .replace(/[🎂📝📍|]/g, ' ')
-                .replace(/\s+/g, ' ')
-                .trim();
-              const title = raw.slice(0, 30) + (raw.length > 30 ? '…' : '');
-              if (title.length >= 2) titleUpdate.title = title;
+              await supabase.from('chat_threads')
+                .update(titleUpdate)
+                .eq('thread_id', threadId)
+                .eq('user_id', userId);
+
+            } catch (dbError) {
+              console.error("DB 저장 중 에러 발생:", dbError);
+              assistantPersisted = false; // 실패 시 락 해제
+              await persistFailurePlaceholder('db_error');
             }
-
-            await supabase.from('chat_threads')
-              .update(titleUpdate)
-              .eq('thread_id', threadId)
-              .eq('user_id', userId);
-
-          } catch (dbError) {
-            console.error("DB 저장 중 에러 발생:", dbError);
-            assistantPersisted = false;
-            await persistFailurePlaceholder('db_error');
-          }
+          })();
+          
+          await persistInflight;
         };
 
         let finalFinishReason: string | undefined;
@@ -802,32 +839,42 @@ export async function POST(req: Request) {
       const capturedMode: SearchMode = mode;
 
       after(async () => {
+        // 🌟 [핵심 변경] Edge 환경 실측 보수적 예산 및 우선순위 직렬화
+        const PROFILE_BUDGET_MS = 4_000;
+        const POLICY_BUDGET_MS  = 8_000;
+        
+        // 1. 프로필 추출 먼저 (사용자 다음 턴에 즉시 영향)
         try {
-          const WORKER_BUDGET_MS = 25_000;
-
-          const profileTask = extractProfileCore({
-            userId: capturedUserId,
-            threadId: capturedThreadId,
-            lastUserMessage: capturedMsg,
-          }).catch((e) => console.warn('[bg profile extract]', e?.message));
-
-          const capturedFullAnswer = fullAnswer;
-          const policiesTask = (capturedMode === 'private' && capturedFullAnswer.length > 100)
-            ? extractPoliciesCore({ text: capturedFullAnswer })
-                .catch((e) => console.warn('[bg policy extract]', e?.message))
-            : Promise.resolve();
-
           await Promise.race([
-            Promise.allSettled([profileTask, policiesTask]),
-            new Promise((resolve) => setTimeout(resolve, WORKER_BUDGET_MS)),
+            extractProfileCore({
+              userId: capturedUserId,
+              threadId: capturedThreadId,
+              lastUserMessage: capturedMsg,
+            }),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('profile-extract-timeout')), PROFILE_BUDGET_MS)
+            ),
           ]);
-
-          console.log(`[🌙 bg done] mode=${capturedMode}, ansLen=${capturedFullAnswer.length}`);
-
-        } catch (e) {
-          console.error('[bg after block error]', e);
-          Sentry.captureException(e, { tags: { phase: 'bg-after' } });
+        } catch (e: any) {
+          console.warn('[bg profile extract]', e?.message);
         }
+        
+        // 2. 정책 추출 (Private 답변만 + 충분한 길이일 때만)
+        const capturedFullAnswer = fullAnswer;
+        if (capturedMode === 'private' && capturedFullAnswer.length > 200) {
+          try {
+            await Promise.race([
+              extractPoliciesCore({ text: capturedFullAnswer }),
+              new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('policy-extract-timeout')), POLICY_BUDGET_MS)
+              ),
+            ]);
+          } catch (e: any) {
+            console.warn('[bg policy extract]', e?.message);
+          }
+        }
+        
+        console.log(`[🌙 bg done] mode=${capturedMode}, ansLen=${capturedFullAnswer.length}`);
       });
     }
 
