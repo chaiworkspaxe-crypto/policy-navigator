@@ -1,21 +1,20 @@
 // app/api/inputs/route.ts
 
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-import { z } from 'zod'; // 🌟 Zod 임포트
+import { z } from 'zod';
+import { getSupabase } from '@/lib/supabase'; // 🌟 [일관성 유지] 싱글톤 클라이언트 임포트
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-);
+// 🌟 createClient 직접 호출 제거 및 싱글톤 사용
+const supabase = getSupabase();
 
 // 🌟 [개선] 입력값 검증을 위한 Zod 스키마 정의
 const InputsSchema = z.object({
   selected_city: z.string().max(50).optional(),
   selected_district: z.string().max(50).optional(),
   selected_dong: z.string().max(50).optional(),
-  birth_year: z.string().regex(/^\d{4}$/, "출생연도는 4자리 숫자여야 합니다.").optional(), // 4자리 숫자 정규식
+  birth_year: z.string().regex(/^\d{4}$/, "출생연도는 4자리 숫자여야 합니다.").optional(),
   extra_info: z.string().max(500, "추가 정보는 500자 이내여야 합니다.").optional(),
+  search_mode: z.enum(['public', 'private']).optional(), // 🌟 신규: 모드 영속성 추가
 });
 
 export async function GET(req: Request) {
