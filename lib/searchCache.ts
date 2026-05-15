@@ -49,9 +49,9 @@ async function sha256Hex(s: string): Promise<string> {
     .join('');
 }
 
-// 🌟 mode는 해시에서 완전히 배제
-async function makeCacheKey(tool: CacheableTool, query: string): Promise<string> {
-  return sha256Hex(`${tool}::${normalizeQuery(query)}`);
+// 🛡️ [핵심 변경] 격벽 다중화 — mode를 해시 입력에 명시적으로 포함
+async function makeCacheKey(tool: CacheableTool, mode: SearchMode, query: string): Promise<string> {
+  return sha256Hex(`${mode}::${tool}::${normalizeQuery(query)}`);
 }
 
 export async function getCachedSearch(
@@ -60,12 +60,13 @@ export async function getCachedSearch(
   query: string,
 ): Promise<string | null> {
   try {
-    const queryHash = await makeCacheKey(tool, query);
+    // 🌟 [핵심 변경] 해시 생성 시 mode 전달
+    const queryHash = await makeCacheKey(tool, mode, query);
 
     const { data, error } = await supabase
       .from('search_cache')
       .select('result')
-      .eq('search_mode', mode) // 🛡️ DB 레벨 격벽
+      .eq('search_mode', mode) // 🛡️ DB 레벨 2차 격벽
       .eq('query_hash', queryHash)
       .gt('expires_at', new Date().toISOString())
       .maybeSingle();
@@ -76,7 +77,7 @@ export async function getCachedSearch(
     }
     if (!data?.result) return null;
 
-    // 🌟 RPC 파라미터 2개 전달로 수정 완!
+    // 🌟 RPC 파라미터 2개 전달
     void supabase
       .rpc('inc_search_cache_hit', { p_search_mode: mode, p_query_hash: queryHash })
       .then(({ error: rpcErr }) => {
@@ -107,7 +108,8 @@ export async function setCachedSearch(
     if (!result || result.length < 30) return;
     if (SHOULD_NOT_CACHE_PATTERNS.some((re) => re.test(result))) return;
 
-    const queryHash = await makeCacheKey(tool, query);
+    // 🌟 [핵심 변경] 해시 생성 시 mode 전달
+    const queryHash = await makeCacheKey(tool, mode, query);
     const expiresAt = new Date(Date.now() + ttlHours * 3600_000).toISOString();
     const normalized = normalizeQuery(query);
 
