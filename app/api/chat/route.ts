@@ -193,7 +193,7 @@ export async function POST(req: Request) {
           headers: {
             'Content-Type': 'application/json',
             'Retry-After': rate.reason === 'minute' ? '60' : '3600',
-            'X-Rate-Limit-Mode': mode,
+            // 🌟 [Private 폐기 후] X-Rate-Limit-Mode 헤더 제거
           },
         });
       }
@@ -858,7 +858,7 @@ export async function POST(req: Request) {
         'Content-Type': 'application/x-ndjson',
         'Cache-Control': 'no-cache, no-transform',
         'X-Accel-Buffering': 'no',
-        'X-Search-Mode': 'public',
+        // 🌟 [Private 폐기 후] X-Search-Mode 헤더 제거 (단일 엔진)
       }
     });
 
