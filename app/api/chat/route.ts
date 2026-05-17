@@ -6,12 +6,10 @@ import { getSupabase } from '@/lib/supabase';
 import * as Sentry from '@sentry/nextjs'; 
 import { after } from 'next/server';
 import { buildSystemPrompt } from '@/lib/prompts/policyNavigator';
-import { buildPrivateSystemPrompt } from '@/lib/prompts/privateNavigator'; 
 import { getCachedSearch, setCachedSearch } from '@/lib/searchCache'; 
 import { checkRateLimit } from '@/lib/rateLimit'; 
 
 import { extractProfileCore } from '@/app/api/profile/extract/_logic';
-import { extractPoliciesCore } from '@/app/api/policies/extract/_logic';
 import { getEmbedding } from '@/lib/embeddingCache';
 
 // ────────────────────────────────────────────────────────────
@@ -348,15 +346,16 @@ export async function POST(req: Request) {
             return '임베딩 일시 실패. 웹 검색으로 우회하세요.';
           }
 
-          const RECALL_THRESHOLD = mode === 'private' ? 0.40 : 0.42;
-          const STRICT_THRESHOLD = mode === 'public' ? 0.51 : 0.55;
+          // 🌟 [Private 폐기 후] 정부 모드 고정 — 임계값/카운트 상수화
+          const RECALL_THRESHOLD = 0.42;
+          const STRICT_THRESHOLD = 0.51;
 
           const { data, error } = await withTimeout(
             async () => supabase.rpc('match_policies_v2', {
               query_embedding: embedding,
               match_threshold: RECALL_THRESHOLD,
-              match_count: mode === 'public' ? 20 : 12, 
-              p_source_type: mode,
+              match_count: 20,
+              p_source_type: 'public',
               p_only_active: true, 
             }),
             TOOL_TIMEOUT_MS,
@@ -394,7 +393,7 @@ export async function POST(req: Request) {
                   return days >= 0 ? ` [D-${days}]` : ' [만료됨 — 답변에서 제외]';
                 })()
               : ' [상시모집]';
-            return `- ${mode === 'private' ? '혜택명' : '정책명'}: ${p?.title ?? '미상'} (${p?.provider ?? '미상'}) [유사도 ${sim}%]${dday}\n  내용: ${p?.summary ?? ''}\n  링크: ${p?.url ?? ''}`;
+            return `- 정책명: ${p?.title ?? '미상'} (${p?.provider ?? '미상'}) [유사도 ${sim}%]${dday}\n  내용: ${p?.summary ?? ''}\n  링크: ${p?.url ?? ''}`;
           };
 
           let result = '';
@@ -433,17 +432,14 @@ export async function POST(req: Request) {
             return cached;
           }
 
+          // 🌟 [Private 폐기 후] 정부 모드 단일 쿼리
           const isAlreadyFiltered = /site:|go\.kr|or\.kr|\-/i.test(query);
-          let officialQuery = '';
-          let generalQuery = '';
-
-          if (mode === 'private') {
-            officialQuery = isAlreadyFiltered ? query : `${query} -(site:go.kr OR site:or.kr) (지원금 OR 장학금 OR 공고)`;
-            generalQuery = isAlreadyFiltered ? query : `${query} -(site:go.kr OR site:or.kr) (채용 OR 부트캠프 OR 혜택)`;
-          } else {
-            officialQuery = isAlreadyFiltered ? query : `${query} (지원 OR 안내 OR 혜택) (site:go.kr OR site:or.kr)`;
-            generalQuery = isAlreadyFiltered ? query : `${query} 지원금 OR 혜택`;
-          }
+          const officialQuery = isAlreadyFiltered 
+            ? query 
+            : `${query} (지원 OR 안내 OR 혜택) (site:go.kr OR site:or.kr)`;
+          const generalQuery = isAlreadyFiltered 
+            ? query 
+            : `${query} 지원금 OR 혜택`;
 
           const headers = { 'X-Naver-Client-Id': clientId, 'X-Naver-Client-Secret': clientSecret };
           const out: string[] = [];
@@ -484,7 +480,7 @@ export async function POST(req: Request) {
             }
           };
 
-          const officialDisplayCount = mode === 'public' ? 10 : 5; 
+          const officialDisplayCount = 10; 
           
           const officialRes = await withTimeout(
             async (signal) => fetch(
@@ -496,10 +492,10 @@ export async function POST(req: Request) {
           
           await pushItems(
             officialRes ? { status: 'fulfilled' as const, value: officialRes } : { status: 'rejected' as const, reason: 'fail' }, 
-            mode === 'private' ? '기업/재단' : '공식'
+            '공식'
           );
 
-          const NEED_MORE_THRESHOLD = mode === 'public' ? 7 : 3;
+          const NEED_MORE_THRESHOLD = 7;
           if (out.length < NEED_MORE_THRESHOLD) {
             const [generalRes, newsRes] = await Promise.allSettled([
               withTimeout(
@@ -549,9 +545,7 @@ export async function POST(req: Request) {
             year: 'numeric',
           }).format(new Date());
 
-          const localizedQuery = mode === 'private'
-            ? `${seoulYear}년 대한민국 민간 대기업 재단 청년 혜택 부트캠프 ${query}`
-            : `${seoulYear}년 대한민국 정부 정책 지원금 ${query}`;
+          const localizedQuery = `${seoulYear}년 대한민국 정부 정책 지원금 ${query}`;
 
           const cached = await getCachedSearch('tavily', mode, query);
           if (cached) {
@@ -615,13 +609,11 @@ export async function POST(req: Request) {
           ),
         ]);
 
-        const baseSystemPrompt = mode === 'private'
-          ? buildPrivateSystemPrompt()
-          : buildSystemPrompt();
+        // 🌟 [Private 폐기 후] 정부 모드 단일 시스템 프롬프트
+        const baseSystemPrompt = buildSystemPrompt();
 
         const systemPromptWithTime = baseSystemPrompt + profileContext;
 
-        // 🌟 [핵심 변경] 영속성 레이스 차단을 위한 Promise 기반 단일 진실 원천
         let persistInflight: Promise<void> | null = null;
         let assistantPersisted = false;
 
@@ -650,7 +642,7 @@ export async function POST(req: Request) {
         };
 
         const persistAssistant = async (text: string, finishReason?: string) => {
-          if (persistInflight) { await persistInflight; return; } // 🌟 Race 차단 (Mutex Lock)
+          if (persistInflight) { await persistInflight; return; } 
           if (assistantPersisted) return;
           if (!userId || !threadId) return;
           if (!text || !text.trim()) {
@@ -659,7 +651,7 @@ export async function POST(req: Request) {
           }
 
           persistInflight = (async () => {
-            assistantPersisted = true; // 진입 즉시 락 설정
+            assistantPersisted = true; 
             try {
               const now = new Date().toISOString();
 
@@ -703,7 +695,7 @@ export async function POST(req: Request) {
 
             } catch (dbError) {
               console.error("DB 저장 중 에러 발생:", dbError);
-              assistantPersisted = false; // 실패 시 락 해제
+              assistantPersisted = false; 
               await persistFailurePlaceholder('db_error');
             }
           })();
@@ -837,14 +829,11 @@ export async function POST(req: Request) {
       const capturedUserId = userId;
       const capturedThreadId = threadId;
       const capturedMsg = lastMsg.content;
-      const capturedMode: SearchMode = mode;
 
       after(async () => {
-        // 🌟 [핵심 변경] Edge 환경 실측 보수적 예산 및 우선순위 직렬화
         const PROFILE_BUDGET_MS = 4_000;
-        const POLICY_BUDGET_MS  = 8_000;
         
-        // 1. 프로필 추출 먼저 (사용자 다음 턴에 즉시 영향)
+        // 🌟 [Private 폐기 후] 정책 자가 학습 추출 제거. 프로필 추출만 유지.
         try {
           await Promise.race([
             extractProfileCore({
@@ -860,22 +849,7 @@ export async function POST(req: Request) {
           console.warn('[bg profile extract]', e?.message);
         }
         
-        // 2. 정책 추출 (Private 답변만 + 충분한 길이일 때만)
-        const capturedFullAnswer = fullAnswer;
-        if (capturedMode === 'private' && capturedFullAnswer.length > 200) {
-          try {
-            await Promise.race([
-              extractPoliciesCore({ text: capturedFullAnswer }),
-              new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('policy-extract-timeout')), POLICY_BUDGET_MS)
-              ),
-            ]);
-          } catch (e: any) {
-            console.warn('[bg policy extract]', e?.message);
-          }
-        }
-        
-        console.log(`[🌙 bg done] mode=${capturedMode}, ansLen=${capturedFullAnswer.length}`);
+        console.log(`[🌙 bg done] ansLen=${fullAnswer.length}`);
       });
     }
 
@@ -884,7 +858,7 @@ export async function POST(req: Request) {
         'Content-Type': 'application/x-ndjson',
         'Cache-Control': 'no-cache, no-transform',
         'X-Accel-Buffering': 'no',
-        'X-Search-Mode': mode,
+        'X-Search-Mode': 'public',
       }
     });
 
