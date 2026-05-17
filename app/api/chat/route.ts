@@ -45,12 +45,13 @@ function makeToolBudgetTracker() {
 }
 
 // ────────────────────────────────────────────────────────────
-// 🛡️ 격벽 진입점 — 모드 화이트리스트 정규화
+// 🛡️ 격벽 진입점 — Private 모드 폐기됨. 항상 'public' 강제.
+// (외부에서 searchMode:'private'를 보내도 무시되어 정부 모드로 처리됨)
 // ────────────────────────────────────────────────────────────
-type SearchMode = 'public' | 'private';
+type SearchMode = 'public';
 
-function normalizeSearchMode(raw: unknown): SearchMode {
-  return raw === 'private' ? 'private' : 'public';
+function normalizeSearchMode(_raw: unknown): SearchMode {
+  return 'public';
 }
 
 function normalizeToolQuery(q: string): string {
