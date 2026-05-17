@@ -129,8 +129,10 @@ export default function Home() {
   const scrollRafRef = useRef<number | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
-  // 🌟 검색 모드 상태
-  const [searchMode, setSearchMode] = useState<'public' | 'private'>('public');
+  // 🌟 [Private 폐기 후] 정부 모드 고정 상수. 기존 state 의존부와 100% 호환.
+  // setSearchMode 호출 부위가 있어도 동작이 변하지 않도록 no-op로 유지.
+  const searchMode = 'public' as const;
+  const setSearchMode = (_: any) => {}; // 호환성용 no-op
 
   const [city, setCity] = useState(EMPTY_INPUTS.selected_city);
   const [district, setDistrict] = useState(EMPTY_INPUTS.selected_district);
@@ -149,9 +151,12 @@ export default function Home() {
 
   const { stream, stop, isStreaming: loading, aiStatus, setAiStatus } = useChatStream();
 
-  const queryExamples = searchMode === 'public' 
-    ? ["🧑‍🎓 대학생을 위한 월세 지원 정책 찾아줘", "💼 취업 준비생 국비 지원 교육 알려줘", "💰 20대 청년 적금 혜택 정리해 줘"]
-    : ["💻 IT 비전공자 코딩 부트캠프 찾아줘", "🚀 대학생 창업 지원 재단 알려줘", "🏢 대기업 주관 대외활동 추천해 줘"];
+  // 🌟 추천 예시 텍스트 (정부 정책 단일 모드)
+  const queryExamples = [
+    "🧑‍🎓 대학생을 위한 월세 지원 정책 찾아줘",
+    "💼 취업 준비생 국비 지원 교육 알려줘",
+    "💰 20대 청년 적금 혜택 정리해 줘",
+  ];
 
   useEffect(() => {
     return () => {
@@ -328,7 +333,6 @@ export default function Home() {
     } catch { setErrorMessage("서버와 연결할 수 없습니다."); }
   };
 
-  // 🌟 [핵심 변경] 대화 로드 시 모드(search_mode) 복원
   const selectThread = async (uid: string, tid: string) => {
     if (loading) stop();
     
@@ -344,9 +348,7 @@ export default function Home() {
       
       applyInputs(loadedInputs);
 
-      // DB에서 저장된 search_mode가 있으면 복원, 없으면 public 
-      const modeFromDb = (loadedInputs as any)?.search_mode;
-      setSearchMode(modeFromDb === 'private' ? 'private' : 'public');
+      // 🌟 [Private 폐기 후] 모드 복원 로직 불필요 (항상 public)
       
       if (msgs.length > 0) setIsFormExpanded(false); else setIsFormExpanded(true);
       
@@ -359,8 +361,8 @@ export default function Home() {
     } catch (error) { setErrorMessage(extractApiErrorMessage(error)); }
   };
 
-  // 🌟 [핵심 변경] 새 스레드 생성 시 모드(forcedMode) 파라미터 수용
-  const handleNewThread = async (uid = userId, forcedMode?: 'public' | 'private') => {
+  // 🌟 [Private 폐기 후] forcedMode 파라미터 제거. 호출부 호환성 위해 두번째 인자 무시.
+  const handleNewThread = async (uid = userId, _legacyForcedMode?: unknown) => {
     if (loading) stop();
     
     setErrorMessage("");
@@ -369,31 +371,9 @@ export default function Home() {
     setNextBefore(null);
     setQuery(""); 
     applyInputs(EMPTY_INPUTS);
-    setSearchMode(forcedMode ?? 'public'); // 전달받은 모드가 있으면 유지
     setIsSidebarOpen(false); 
     setIsFormExpanded(true);
     setLastTruncated(false);
-  };
-
-  // 🌟 [핵심 변경] 모드 전환을 완벽하게 통제하는 래퍼 함수
-  const handleSwitchMode = (next: 'public' | 'private') => {
-    if (next === searchMode) return;
-    
-    // 메시지가 비어있으면(첫 대화) 그냥 토글만
-    if (messages.length === 0) {
-      setSearchMode(next);
-      return;
-    }
-    
-    // 대화 중이면 컨텍스트 오염을 막기 위해 새 스레드 강제
-    const ok = window.confirm(
-      next === 'private'
-        ? '🏢 민간·기업 혜택 모드로 전환하면 대화가 섞이지 않도록 새 대화를 시작합니다. 계속할까요?'
-        : '🏛️ 정부 정책 모드로 전환하면 대화가 섞이지 않도록 새 대화를 시작합니다. 계속할까요?'
-    );
-    if (!ok) return;
-    
-    void handleNewThread(userId, next);
   };
 
   const loadOlderMessages = async () => {
@@ -475,15 +455,14 @@ export default function Home() {
     setAutoScroll(true);
 
     try {
-      // 🌟 [핵심 변경] API 저장 시 searchMode 함께 넘기기 (백엔드 스키마에도 추가 필수)
+      // 🌟 [Private 폐기 후] search_mode 필드 제거 (백엔드 Zod 스키마는 optional이라 호환 OK)
       await api.saveThreadInputs(userId, targetThreadId, {
         selected_city: city,
         selected_district: district,
         selected_dong: dong,
         birth_year: birthYear,
         extra_info: extraInfo,
-        search_mode: searchMode, 
-      } as any);
+      });
     } catch (e) {
       console.error('[saveThreadInputs]', e);
       setErrorMessage('입력 정보를 저장하는 데 일시적 문제가 있었어요. 검색은 진행되지만, 최신 조건이 미반영될 수 있습니다.');
@@ -497,7 +476,6 @@ export default function Home() {
         threadId: targetThreadId,
         messages, 
         newUserContent: userText,
-        searchMode, 
       },
       {
         onFirstDelta: () => { 
@@ -654,29 +632,7 @@ export default function Home() {
           <div className={`mx-auto max-w-4xl px-4 transition-all duration-300 ease-in-out origin-top ${isFormExpanded ? 'max-h-[500px] py-4 opacity-100' : 'max-h-0 py-0 opacity-0 overflow-hidden'}`}>
             <div className="space-y-3">
               
-              {/* 🌟 [핵심 변경] 검색 모드 토글 (handleSwitchMode 연결) */}
-              <div className="flex bg-gray-100 dark:bg-[#2a2a2a] p-1 rounded-xl mb-1 border border-gray-200 dark:border-[#444]">
-                <button
-                  onClick={() => handleSwitchMode('public')}
-                  className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${
-                    searchMode === 'public' 
-                      ? 'bg-white dark:bg-[#444] text-green-600 dark:text-green-400 shadow-sm ring-1 ring-black/5' 
-                      : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-                  }`}
-                >
-                  🏛️ 정부·지자체 정책
-                </button>
-                <button
-                  onClick={() => handleSwitchMode('private')}
-                  className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${
-                    searchMode === 'private' 
-                      ? 'bg-white dark:bg-[#444] text-blue-600 dark:text-blue-400 shadow-sm ring-1 ring-black/5' 
-                      : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-                  }`}
-                >
-                  🏢 민간·기업 혜택
-                </button>
-              </div>
+              {/* 🌟 [Private 폐기 후] 모드 토글 UI 완전 제거 */}
 
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                 <select className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500" value={city} onChange={(e) => { setCity(e.target.value); setDistrict(DEFAULT_CITY); setDong(DEFAULT_DONG); }}><option>{DEFAULT_CITY}</option>{Object.keys(CITY_TO_DISTRICTS).map((c) => <option key={c}>{c}</option>)}</select>
@@ -702,11 +658,7 @@ export default function Home() {
                 <input type="tel" placeholder="출생연도 (예: 1999)" maxLength={4} className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500 sm:w-1/3" value={birthYear} onChange={(e) => setBirthYear(e.target.value.replace(/[^0-9]/g, ""))} />
                 <input 
                   type="text" 
-                  placeholder={
-                    searchMode === 'public' 
-                      ? "추가 정보 (예: 현재 직업, 주거 형태, 월 소득 등)" 
-                      : "추가 정보 (예: 관심 직무(IT, 마케팅), 포트폴리오 유무 등)"
-                  } 
+                  placeholder="추가 정보 (예: 현재 직업, 주거 형태, 월 소득 등)"
                   className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500 sm:w-2/3" 
                   value={extraInfo} 
                   onChange={(e) => setExtraInfo(e.target.value)} 
@@ -716,14 +668,10 @@ export default function Home() {
               <button 
                 onClick={() => void handleSearch(false)} 
                 disabled={loading} 
-                className={`flex w-full items-center justify-center gap-2 rounded-xl py-3.5 sm:py-3 font-bold text-white transition disabled:opacity-50 active:scale-[0.98] shadow-md ${
-                  searchMode === 'public' 
-                    ? 'bg-green-600 hover:bg-green-500' 
-                    : 'bg-blue-600 hover:bg-blue-500'
-                }`}
+                className="flex w-full items-center justify-center gap-2 rounded-xl py-3.5 sm:py-3 font-bold text-white transition disabled:opacity-50 active:scale-[0.98] shadow-md bg-green-600 hover:bg-green-500"
               >
                 {loading ? <Loader2 className="animate-spin" /> : <Search size={20} />} 
-                {searchMode === 'public' ? '정부·지자체 혜택 찾기' : '민간·기업 혜택 찾기'}
+                정부·지자체 혜택 찾기
               </button>
               
               {errorMessage && (
@@ -781,7 +729,7 @@ export default function Home() {
                   <div key={`${message.role}-${index}`} className={`flex gap-3 sm:gap-4 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
                     
                     {isAssistant && (
-                      <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full mt-1 shadow-sm ${searchMode === 'private' ? 'bg-blue-600' : 'bg-green-600'}`}>
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full mt-1 shadow-sm bg-green-600">
                         <span className="text-[10px] sm:text-xs font-bold text-white">AI</span>
                       </div>
                     )}
@@ -797,11 +745,7 @@ export default function Home() {
                       </div>
                       
                       {isLastMessage && isAssistant && loading && (
-                        <div className={`mt-4 flex items-center gap-2 text-sm font-bold px-4 py-2.5 rounded-xl w-fit animate-pulse border shadow-sm ${
-                          searchMode === 'private' 
-                            ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800/30'
-                            : 'text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800/30'
-                        }`}>
+                        <div className="mt-4 flex items-center gap-2 text-sm font-bold px-4 py-2.5 rounded-xl w-fit animate-pulse border shadow-sm text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800/30">
                           <Loader2 size={16} className="animate-spin shrink-0" />
                           <span>{aiStatus || "좌뇌론 글 쓰고 우뇌론 검색 중! 🧠💥 멀티태스킹에 AI CPU가 울고 있으니 타자가 살짝 버벅여도 봐주세요 🥺💦"}</span>
                         </div>
@@ -826,7 +770,7 @@ export default function Home() {
                           
                           <button onClick={async () => {
                               const shareData = { 
-                                title: searchMode === 'private' ? '나에게 딱 맞는 맞춤형 민간/기업 혜택 🎁' : '나에게 딱 맞는 맞춤형 정부 혜택 🎁', 
+                                title: '나에게 딱 맞는 맞춤형 정부 혜택 🎁',
                                 text: '정책 내비게이터가 찾아준 맞춤형 혜택을 확인해보세요!\n\n' + message.content + '\n\n', 
                                 url: window.location.href 
                               };
@@ -901,11 +845,11 @@ export default function Home() {
               <input type="text" placeholder="추가 질문을 입력하세요 (예: 청년 혜택만 다시)" className="w-full rounded-full border border-gray-300 dark:border-[#444] bg-white dark:bg-[#1e1e1e] py-3.5 pl-5 pr-12 text-sm text-gray-800 dark:text-white outline-none transition focus:border-green-500 shadow-sm" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void handleSearch(true); }} disabled={messages.length === 0 || loading} />
               
               {loading ? (
-                <button onClick={stop} className={`absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full p-2 text-white transition shadow-sm ${searchMode === 'private' ? 'bg-blue-500 hover:bg-blue-600' : 'bg-gray-500 hover:bg-gray-600'}`}>
+                <button onClick={stop} className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full p-2 text-white transition shadow-sm bg-gray-500 hover:bg-gray-600">
                   <Square size={16} fill="currentColor" />
                 </button>
               ) : (
-                <button onClick={() => void handleSearch(true)} disabled={!query.trim() || loading} className={`absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full p-2 text-white transition disabled:opacity-50 shadow-sm ${searchMode === 'private' ? 'bg-blue-600 hover:bg-blue-500' : 'bg-green-600 hover:bg-green-500'}`}>
+                <button onClick={() => void handleSearch(true)} disabled={!query.trim() || loading} className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full p-2 text-white transition disabled:opacity-50 shadow-sm bg-green-600 hover:bg-green-500">
                   <Send size={16} />
                 </button>
               )}
