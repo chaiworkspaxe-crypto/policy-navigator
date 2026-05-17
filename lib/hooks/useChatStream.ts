@@ -9,8 +9,6 @@ interface StreamOpts {
   threadId: string;
   messages: ChatMessage[];
   newUserContent: string;
-  // 🌟 [신규] 프론트엔드에서 선택한 검색 모드를 백엔드로 전달하기 위한 속성 추가
-  searchMode?: 'public' | 'private';
 }
 
 interface StreamHandlers {
@@ -134,8 +132,6 @@ export function useChatStream() {
             messages: newMessages,
             userId: opts.userId,
             threadId: opts.threadId,
-            // 🌟 [핵심 변경] 프론트엔드의 searchMode를 백엔드로 전송
-            searchMode: opts.searchMode,
           }),
           signal: abortControllerRef.current.signal, 
         });
