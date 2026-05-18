@@ -129,11 +129,11 @@ function trimMessages(messages: unknown): CoreMessage[] {
   return firstUserIdx <= 0 ? sliced : sliced.slice(firstUserIdx);
 }
 
-// 🌟 [핵심 변경] URL 및 마크다운 표 정규식 추가
+// 🌟 [핵심 변경] URL 및 마크다운 표 정규식 추가 (ES버전 호환성을 위해 s 플래그 제거)
 const RECENT_KEEP = 4;
 const OLD_ASSISTANT_MAX = 800;
 const URL_RE = /https?:\/\/[^\s)\]]+/g;
-const TABLE_BLOCK_RE = /(^|\n)\s*\|.*?\|.*?\n\|[-: |]+\|\n(?:\|.*?\|\n?)+/gs;
+const TABLE_BLOCK_RE = /(^|\n)\s*\|[^\n]*\|[^\n]*\n\|[-: |]+\|\n(?:\|[^\n]*\|\n?)+/g;
 
 function compressOldAssistantMessages(messages: CoreMessage[]): CoreMessage[] {
   if (messages.length <= RECENT_KEEP) return messages;
@@ -297,7 +297,7 @@ export async function POST(req: Request) {
 - 거주지: ${safeCity || '미상'} ${safeDistrict || ''}
 - 출생연도: ${safeBirth || '미상'}
 - 추가 정보: ${safeExtra || '없음'}
-- 백그라운 추출: ${bgProfile || '없음'}${notesBlock}
+- 백그라운드 추출: ${bgProfile || '없음'}${notesBlock}
 [프로필 끝]
 
 이 프로필을 활용해 검색을 더 정밀하게 수행하세요. 이미 알고 있는 정보는 다시 묻지 마세요.`;
@@ -318,10 +318,6 @@ export async function POST(req: Request) {
       toolName: string,
       exec: (args: T) => Promise<string>,
     ) => async (args: T) => {
-      if (budget.exhausted) {
-        return `[🛑 검색 예산 소진] ${toolName}를 더 호출하지 마세요. 지금까지 받은 정보로 답변을 마무리하세요.`;
-      }
-
       const key = `${toolName}::${normalizeToolQuery(args.query)}`;
 
       const prev = toolCallCache.get(key);
@@ -377,15 +373,15 @@ export async function POST(req: Request) {
             return '임베딩 일시 실패. 웹 검색으로 우회하세요.';
           }
 
-          const RECALL_THRESHOLD = 0.42;
-          const STRICT_THRESHOLD = 0.51;
+          const RECALL_THRESHOLD = mode === 'private' ? 0.40 : 0.42;
+          const STRICT_THRESHOLD = mode === 'public' ? 0.51 : 0.55;
 
           const { data, error } = await withTimeout(
             async () => supabase.rpc('match_policies_v2', {
               query_embedding: embedding,
               match_threshold: RECALL_THRESHOLD,
-              match_count: 20, 
-              p_source_type: 'public',
+              match_count: mode === 'public' ? 20 : 12, 
+              p_source_type: mode,
               p_only_active: true, 
             }),
             TOOL_TIMEOUT_MS,
@@ -423,7 +419,7 @@ export async function POST(req: Request) {
                   return days >= 0 ? ` [D-${days}]` : ' [만료됨 — 답변에서 제외]';
                 })()
               : ' [상시모집]';
-            return `- 정책명: ${p?.title ?? '미상'} (${p?.provider ?? '미상'}) [유사도 ${sim}%]${dday}\n  내용: ${p?.summary ?? ''}\n  링크: ${p?.url ?? ''}`;
+            return `- ${mode === 'private' ? '혜택명' : '정책명'}: ${p?.title ?? '미상'} (${p?.provider ?? '미상'}) [유사도 ${sim}%]${dday}\n  내용: ${p?.summary ?? ''}\n  링크: ${p?.url ?? ''}`;
           };
 
           let result = '';
@@ -463,12 +459,16 @@ export async function POST(req: Request) {
           }
 
           const isAlreadyFiltered = /site:|go\.kr|or\.kr|\-/i.test(query);
-          const officialQuery = isAlreadyFiltered 
-            ? query 
-            : `${query} (지원 OR 안내 OR 혜택) (site:go.kr OR site:or.kr)`;
-          const generalQuery = isAlreadyFiltered 
-            ? query 
-            : `${query} 지원금 OR 혜택`;
+          let officialQuery = '';
+          let generalQuery = '';
+
+          if (mode === 'private') {
+            officialQuery = isAlreadyFiltered ? query : `${query} -(site:go.kr OR site:or.kr) (지원금 OR 장학금 OR 공고)`;
+            generalQuery = isAlreadyFiltered ? query : `${query} -(site:go.kr OR site:or.kr) (채용 OR 부트캠프 OR 혜택)`;
+          } else {
+            officialQuery = isAlreadyFiltered ? query : `${query} (지원 OR 안내 OR 혜택) (site:go.kr OR site:or.kr)`;
+            generalQuery = isAlreadyFiltered ? query : `${query} 지원금 OR 혜택`;
+          }
 
           const headers = { 'X-Naver-Client-Id': clientId, 'X-Naver-Client-Secret': clientSecret };
           const out: string[] = [];
@@ -509,7 +509,7 @@ export async function POST(req: Request) {
             }
           };
 
-          const officialDisplayCount = 10; 
+          const officialDisplayCount = mode === 'public' ? 10 : 5; 
           
           const officialRes = await withTimeout(
             async (signal) => fetch(
@@ -521,10 +521,10 @@ export async function POST(req: Request) {
           
           await pushItems(
             officialRes ? { status: 'fulfilled' as const, value: officialRes } : { status: 'rejected' as const, reason: 'fail' }, 
-            '공식'
+            mode === 'private' ? '기업/재단' : '공식'
           );
 
-          const NEED_MORE_THRESHOLD = 7;
+          const NEED_MORE_THRESHOLD = mode === 'public' ? 7 : 3;
           if (out.length < NEED_MORE_THRESHOLD) {
             const [generalRes, newsRes] = await Promise.allSettled([
               withTimeout(
@@ -574,7 +574,9 @@ export async function POST(req: Request) {
             year: 'numeric',
           }).format(new Date());
 
-          const localizedQuery = `${seoulYear}년 대한민국 정부 정책 지원금 ${query}`;
+          const localizedQuery = mode === 'private'
+            ? `${seoulYear}년 대한민국 민간 대기업 재단 청년 혜택 부트캠프 ${query}`
+            : `${seoulYear}년 대한민국 정부 정책 지원금 ${query}`;
 
           const cached = await getCachedSearch('tavily', mode, query);
           if (cached) {
