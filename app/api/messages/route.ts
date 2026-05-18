@@ -1,12 +1,11 @@
 // app/api/messages/route.ts
 
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabase } from '@/lib/supabase';   // 🌟 [핵심 변경] 싱글톤으로 통일
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-);
+export const runtime = 'edge';                  // 🌟 [핵심 변경] Edge 적용
+
+const supabase = getSupabase();
 
 // 🛡️ 운영 안전 한계치 설정
 const DEFAULT_LIMIT = 50;
