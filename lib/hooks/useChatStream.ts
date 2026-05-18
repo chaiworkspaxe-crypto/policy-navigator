@@ -56,8 +56,13 @@ export function useChatStream() {
 
   const stream = useCallback(
     async (opts: StreamOpts, handlers: StreamHandlers = {}) => {
+      // 🛡️ [핵심 변경] 진행 중인 스트림이 있으면 새 요청을 거부 (의도적 정책)
+      //               사용자가 '중단' 버튼을 명시적으로 누를 때만 stop()으로 끊도록 유도.
+      //               이미 in-flight인 OpenAI 호출의 토큰 누수를 방지합니다.
       if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
+        console.warn('[useChatStream] 이미 진행 중인 스트림이 있어 새 요청을 거부합니다.');
+        handlers.onError?.('아직 이전 답변을 받고 있어요. 잠시만 기다려주세요. (중단하려면 ⏹ 버튼)');
+        return;
       }
       
       abortControllerRef.current = new AbortController();
@@ -70,12 +75,13 @@ export function useChatStream() {
       let firstDeltaFired = false; 
       let watchdogTimedOut = false;  
 
-      const CONNECT_TIMEOUT_MS = 60_000;
-      const IDLE_TIMEOUT_MS = 45_000;
+      // 🌟 [핵심 변경] 무료 Edge 현실에 맞춘 보수적 타임아웃
+      const CONNECT_TIMEOUT_MS = 45_000;          // 60 → 45
+      const IDLE_TIMEOUT_MS = 35_000;             // 45 → 35
       
-      const NO_CONTENT_TIMEOUT_INITIAL_MS = 90_000;      
-      const NO_CONTENT_EXTENSION_PER_STATUS_MS = 25_000; 
-      const NO_CONTENT_HARD_CAP_MS = 240_000;            
+      const NO_CONTENT_TIMEOUT_INITIAL_MS = 60_000;       // 90 → 60
+      const NO_CONTENT_EXTENSION_PER_STATUS_MS = 20_000;  // 25 → 20
+      const NO_CONTENT_HARD_CAP_MS = 120_000;             // 240 → 120 (4분 → 2분)
 
       const streamStartedAt = Date.now();
       let contentWatchdogDeadline = streamStartedAt + NO_CONTENT_TIMEOUT_INITIAL_MS;
