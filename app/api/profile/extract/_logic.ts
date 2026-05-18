@@ -31,8 +31,12 @@ function hardenUserInput(raw: string, maxLen = 1000): string {
   // 1) 위험 유니코드(zero-width, RTL/LTR override, BOM 등) 제거
   s = s.replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/g, '');
 
-  // 2) 코드펜스 — 안의 system/role/instruction 가장한 텍스트 무력화
-  s = s.replace(/```[\s\S]*?```/g, '[차단됨: 코드블록]');
+  // 2) 🌟 [핵심 변경] 코드펜스 — 통째로 차단하지 않고 내부 system/role 마커만 살균 (사용자 JSON 입력 허용)
+  s = s.replace(/```[\s\S]*?```/g, (block) => {
+    return block
+      .replace(/^\s*(?:system|assistant|user|developer|tool)\s*[:>]/gim, '[차단됨]')
+      .replace(/<\|?im_(?:start|end)\|?>/gi, '[차단됨]');
+  });
   s = s.replace(/`{1,2}[^`]{0,200}`{1,2}/g, '[차단됨: 인라인코드]');
 
   // 3) 역할 마커 (LLM이 시스템 지시로 오인할 가능성이 있는 모든 패턴)
@@ -61,11 +65,20 @@ function hardenUserInput(raw: string, maxLen = 1000): string {
 // ────────────────────────────────────────────────────────────
 // 🛡️ 추출 결과 사후 검증 — 모델이 만들어낸 단서가 실제 메시지에 근거가 있는가
 // ────────────────────────────────────────────────────────────
+// 🌟 [핵심 변경] 실제 한국어 발화 패턴 폭넓게 커버 (False Negative 감소)
 const PROFILE_EVIDENCE_HINTS: Record<string, RegExp[]> = {
-  housing_type: [/무주택|자가|월세|전세|반전세|보증금|임대|살고|거주/i],
-  household_type: [/혼자|1인|신혼|결혼|아내|남편|배우자|아이|자녀|딸|아들|한부모|독박|쌍둥이|삼남매/i],
-  employment: [/취준|취업준비|재직|회사|직장|일하|프리|학생|대학|구직|백수|이직/i],
-  monthly_income_band: [/월급|월수입|월\s?\d+만|연봉|소득|벌어/i],
+  housing_type: [
+    /무주택|자가|월세|전세|반전세|보증금|임대|살고|거주|자취|본가|기숙사|원룸|오피스텔|아파트|주택|집\s?(있|없|구|샀|팔)/i,
+  ],
+  household_type: [
+    /혼자|1인|신혼|결혼|아내|남편|배우자|아이|자녀|딸|아들|한부모|독박|쌍둥이|삼남매|미혼|가족|부모|동거|동거인|동생|형|누나|언니|오빠/i,
+  ],
+  employment: [
+    /취준|취업준비|재직|회사|직장|일하|프리|학생|대학|구직|백수|이직|노느|쉬는|퇴사|사장|알바|공무원|준비\s?중|졸업|입대|군인|복학|휴학|인턴|계약직|정규직|비정규직|자영업|개업/i,
+  ],
+  monthly_income_band: [
+    /월급|월수입|월\s?\d+만|연봉|소득|벌어|들어와|받아|시급|최저|용돈|수당|급여|페이|벌고|버는/i,
+  ],
 };
 
 function pruneUnsupportedFields(
@@ -115,7 +128,6 @@ export async function extractProfileCore(args: {
     .maybeSingle();
 
   // 🌟 [최적화 2] 같은 메시지로 직전에 추출했다면 스킵 (De-dup)
-  // 아주 가볍고 빠른 FNV-1a 해시 알고리즘 사용
   const fnv1a = (s: string) => {
     let h = 0x811c9dc5;
     for (let i = 0; i < s.length; i++) {
@@ -125,10 +137,8 @@ export async function extractProfileCore(args: {
     return (h >>> 0).toString(16);
   };
 
-  // 보안 및 효율성을 위해 앞 1000자만 해싱
   const msgHash = fnv1a(trimmed.slice(0, 1000));
 
-  // 만약 DB에 저장된 최근 해시와 방금 들어온 해시가 같다면 조용히 종료
   if (existing?.last_extract_msg_hash === msgHash) {
     return { ok: false, reason: 'already_extracted' };
   }
@@ -143,10 +153,8 @@ export async function extractProfileCore(args: {
         .join('\n')
     : '기존 정보 없음';
 
-  // 🛡️ [보안 강화] 다층 prompt injection 정제 (유니코드 / 코드펜스 / 역할마커 / XML / 마크다운 / JSON / 대괄호 / 공백 / 길이)
   const safeMessage = hardenUserInput(trimmed, 1000);
 
-  // 0-length가 되면(전부 차단됨으로 변환) 의미 없는 추출이므로 스킵
   if (safeMessage.length < 6) {
     return { ok: false, reason: 'sanitized_empty' };
   }
@@ -182,29 +190,38 @@ ${safeMessage}
     object = result.object;
   } catch (e: any) {
     console.error('[extract profile LLM]', e);
-    return { ok: false, reason: e?.message ?? 'llm_failed' };
+
+    // 🌟 [핵심 변경] LLM 호출 실패 시에도 해시 갱신 (일시적 네트워크 에러 제외) → 무한 재시도 방어
+    const msg = e?.message ?? 'llm_failed';
+    const isTransient = /429|rate|timeout|5\d{2}|fetch/i.test(msg);
+    if (!isTransient) {
+      await supabase
+        .from('chat_thread_inputs')
+        .update({ last_extract_msg_hash: msgHash })
+        .eq('thread_id', threadId)
+        .eq('user_id', userId);
+    }
+    return { ok: false, reason: msg };
   }
 
   const { _reasoning, new_notes, ...extractedFields } = object;
 
-  // 3) '미상' 제외한 patch 객체 구성
   const rawPatch = Object.fromEntries(
     Object.entries(extractedFields).filter(([_, v]) => v && v !== '미상')
   ) as Record<string, string>;
 
-  // 🛡️ [신규] 사후 검증 — 사용자 메시지에 단서가 없는 필드는 폐기 (환각 차단)
+  // 🛡️ 사후 검증 — 사용자 메시지에 단서가 없는 필드는 폐기
   const { patch, dropped } = pruneUnsupportedFields(rawPatch, safeMessage);
   if (dropped.length > 0) {
     console.log('[extract profile] 단서 없는 필드 폐기:', dropped);
   }
 
-  // 🛡️ new_notes도 길이 검증 + 최대 3개로 강제 (스키마와 이중 방어)
   const safeNotes = (new_notes ?? []).filter((n) => {
     const lower = n.toLowerCase();
     return lower.length > 0 && lower.length <= 120;
   }).slice(0, 3);
 
-  // 4) 🛡️ RPC로 원자적 patch
+  // 4) RPC로 원자적 patch
   const { data: merged, error: rpcErr } = await supabase.rpc('patch_profile_json', {
     p_user_id: userId,
     p_thread_id: threadId,
@@ -217,7 +234,7 @@ ${safeMessage}
     return { ok: false, reason: rpcErr.message };
   }
 
-  // 🌟 [최종 단계] 프로필 추출(RPC)이 성공했으므로, 이번 메시지의 해시값을 DB에 갱신
+  // 🌟 프로필 추출 성공 시 해시값 갱신
   await supabase
     .from('chat_thread_inputs')
     .update({ last_extract_msg_hash: msgHash })
