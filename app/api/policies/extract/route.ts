@@ -1,9 +1,14 @@
 // app/api/policies/extract/route.ts
-// ────────────────────────────────────────────────────────────
-// 얇은 HTTP 래퍼 — 모든 핵심 로직은 _logic.ts에 위임
-// 이 파일은 외부(or 내부) HTTP 엔드포인트로만 존재하며,
-// chat/route.ts의 after()에서는 _logic.ts를 직접 호출합니다.
-// ────────────────────────────────────────────────────────────
+import { NextResponse } from 'next/server';
+
+export const runtime = 'edge';
+
+export async function POST() {
+  return NextResponse.json(
+    { ok: false, reason: 'endpoint_disabled', note: '이 엔드포인트는 비활성화 상태입니다.' },
+    { status: 410 }   // 410 Gone — 영구히 사라진 리소스
+  );
+}
 import { NextResponse } from 'next/server';
 import { extractPoliciesCore } from './_logic';
 import * as Sentry from '@sentry/nextjs';
