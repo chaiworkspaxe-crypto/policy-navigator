@@ -91,11 +91,31 @@ export async function getCachedSearch(
   }
 }
 
+// 🛡️ [핵심 변경] error/fail 패턴 정밀화 — 본문에 "error/fail" 영문이 단순 포함된 정상 결과를 캐싱 차단하지 않도록
 const SHOULD_NOT_CACHE_PATTERNS = [
   /일시 (장애|실패)/, /미설정/, /타임아웃/, /결과 없음/, /API 키/,
-  /\b\d{3}\b.{0,10}에러/, /rate.?limit/i, /quota/i, /unauthor/i,
-  /forbidden/i, /\berror\b/i, /\bfail/i, /\[중복 호출 차단\]/, /\[도구 예외\]/,
+  /\b\d{3}\b.{0,10}에러/, /rate.?limit/i, /\bquota exceed/i, /unauthor/i,
+  /forbidden/i,
+  /(검색|호출|API|서버)\s*(에러|오류|실패)/i,        // 🌟 한정형 매치
+  /\[중복 호출 차단\]/, /\[도구 예외\]/,
 ];
+
+// 🌟 [신규] 결과 텍스트에서 가장 임박한 마감일(YYYY-MM-DD 또는 YYYY.MM.DD)을 찾아 TTL 상한 계산
+const DEADLINE_RE = /(20\d{2})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/g;
+
+function maxTtlByImminentDeadline(result: string, requestedTtlHours: number): number {
+  let earliestMs = Infinity;
+  for (const m of result.matchAll(DEADLINE_RE)) {
+    const t = Date.parse(`${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}T23:59:59+09:00`);
+    if (!Number.isNaN(t) && t > Date.now() && t < earliestMs) earliestMs = t;
+  }
+  if (earliestMs === Infinity) return requestedTtlHours;
+
+  const hoursUntilDeadline = (earliestMs - Date.now()) / 3600_000;
+  // 마감까지 12시간 이내면 캐시 안 함, 그 외에는 (마감-1시간) 또는 요청 TTL 중 작은 값
+  if (hoursUntilDeadline < 12) return 0;
+  return Math.min(requestedTtlHours, Math.max(1, hoursUntilDeadline - 1));
+}
 
 export async function setCachedSearch(
   tool: CacheableTool,
@@ -108,9 +128,16 @@ export async function setCachedSearch(
     if (!result || result.length < 30) return;
     if (SHOULD_NOT_CACHE_PATTERNS.some((re) => re.test(result))) return;
 
+    // 🌟 [핵심 변경] 임박 마감 정책 보호용 적응형 TTL
+    const adjustedTtl = maxTtlByImminentDeadline(result, ttlHours);
+    if (adjustedTtl <= 0) {
+      console.log('[searchCache] 임박 마감 정책 포함 → 캐싱 스킵');
+      return;
+    }
+
     // 🌟 [핵심 변경] 해시 생성 시 mode 전달
     const queryHash = await makeCacheKey(tool, mode, query);
-    const expiresAt = new Date(Date.now() + ttlHours * 3600_000).toISOString();
+    const expiresAt = new Date(Date.now() + adjustedTtl * 3600_000).toISOString();
     const normalized = normalizeQuery(query);
 
     const { error } = await supabase.from('search_cache').upsert(
