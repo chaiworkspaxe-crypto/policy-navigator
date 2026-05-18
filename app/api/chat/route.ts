@@ -548,7 +548,7 @@ export async function POST(req: Request) {
           }
 
           const formatted = out.join('\n\n');
-          void setCachedSearch('naver', mode, query, formatted, 6);
+          void setCachedSearch('naver', mode, query, formatted, 2);
           return formatted;
         }),
       }),
@@ -606,7 +606,7 @@ export async function POST(req: Request) {
             .map((r: any) => `- 제목: ${r.title}\n  내용: ${r.content}\n  링크: ${r.url}`)
             .join('\n\n');
 
-          void setCachedSearch('tavily', mode, query, formatted, 24);
+          void setCachedSearch('tavily', mode, query, formatted, 6);
 
           return formatted;
         }),
