@@ -1,4 +1,9 @@
 // app/api/policies/extract/_logic.ts
+/**
+ * @deprecated Private 모드 폐기와 함께 호출부가 제거되었습니다.
+ * 재활성화 시 chat/route.ts의 after() 블록에 import 후 호출 복원.
+ * 현재는 사용되지 않으며 변경하지 마세요.
+ */
 // ────────────────────────────────────────────────────────────
 // 🌟 자가 학습형 RAG — Private 모드 답변에서 민간 혜택을 추출해 DB에 자동 저장
 // 🛡️ 고도화: Quality-aware Upsert, Embedding Retry, 텍스트 양방향 샘플링
