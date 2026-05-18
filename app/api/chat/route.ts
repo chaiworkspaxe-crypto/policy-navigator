@@ -193,7 +193,6 @@ export async function POST(req: Request) {
           headers: {
             'Content-Type': 'application/json',
             'Retry-After': rate.reason === 'minute' ? '60' : '3600',
-            // 🌟 [Private 폐기 후] X-Rate-Limit-Mode 헤더 제거
           },
         });
       }
@@ -205,6 +204,7 @@ export async function POST(req: Request) {
 
     let userInsertedAt: string | null = null;
 
+    // 🌟 [핵심 변경] 사용자 메시지 insert를 after()로 안전 보장
     if (userId && threadId && lastMsg?.role === 'user') {
       const content = typeof lastMsg.content === 'string'
         ? lastMsg.content
@@ -212,19 +212,24 @@ export async function POST(req: Request) {
       const now = new Date().toISOString();
       userInsertedAt = now;
 
-      void supabase
-        .from('chat_messages')
-        .insert({
-          thread_id: threadId,
-          user_id: userId,
-          role: 'user',
-          content,
-          created_at: now,
-          updated_at: now,
-        })
-        .then(({ error }) => {
-          if (error) console.error('[user msg insert]', error);
-        });
+      after(async () => {
+        try {
+          const { error } = await supabase
+            .from('chat_messages')
+            .insert({
+              thread_id: threadId, user_id: userId, role: 'user', content,
+              created_at: now, updated_at: now,
+            });
+          if (error) {
+            console.error('[user msg insert]', error);
+            Sentry.captureException(new Error(`user-msg-insert: ${error.message}`), {
+              tags: { phase: 'persist-user', threadId },
+            });
+          }
+        } catch (e) {
+          console.error('[user msg insert exception]', e);
+        }
+      });
     }
 
     const profileSelectPromise: Promise<string> = (async () => {
@@ -268,7 +273,7 @@ export async function POST(req: Request) {
 - 거주지: ${safeCity || '미상'} ${safeDistrict || ''}
 - 출생연도: ${safeBirth || '미상'}
 - 추가 정보: ${safeExtra || '없음'}
-- 백그라운드 추출: ${bgProfile || '없음'}${notesBlock}
+- 백그라운 추출: ${bgProfile || '없음'}${notesBlock}
 [프로필 끝]
 
 이 프로필을 활용해 검색을 더 정밀하게 수행하세요. 이미 알고 있는 정보는 다시 묻지 마세요.`;
@@ -283,7 +288,6 @@ export async function POST(req: Request) {
     const toolCallCache = new Map<string, string>();
     const seenUrls = new Set<string>();
     
-    // 🌟 [핵심 변경] 토큰 예산 트래커 생성
     const budget = makeToolBudgetTracker(); 
 
     const withToolGuard = <T extends { query: string }>(
@@ -305,7 +309,6 @@ export async function POST(req: Request) {
         result = `[도구 예외] ${toolName} 실패(${e?.message ?? 'unknown'}). 다른 경로로 우회하세요.`;
       }
 
-      // 🌟 [핵심 변경] 토큰 예산 적용 (길이 초과 시 자름)
       result = budget.spend(result, toolName);
 
       toolCallCache.set(key, result);
@@ -346,7 +349,6 @@ export async function POST(req: Request) {
             return '임베딩 일시 실패. 웹 검색으로 우회하세요.';
           }
 
-          // 🌟 [Private 폐기 후] 정부 모드 고정 — 임계값/카운트 상수화
           const RECALL_THRESHOLD = 0.42;
           const STRICT_THRESHOLD = 0.51;
 
@@ -432,7 +434,6 @@ export async function POST(req: Request) {
             return cached;
           }
 
-          // 🌟 [Private 폐기 후] 정부 모드 단일 쿼리
           const isAlreadyFiltered = /site:|go\.kr|or\.kr|\-/i.test(query);
           const officialQuery = isAlreadyFiltered 
             ? query 
@@ -609,7 +610,6 @@ export async function POST(req: Request) {
           ),
         ]);
 
-        // 🌟 [Private 폐기 후] 정부 모드 단일 시스템 프롬프트
         const baseSystemPrompt = buildSystemPrompt();
 
         const systemPromptWithTime = baseSystemPrompt + profileContext;
@@ -650,12 +650,12 @@ export async function POST(req: Request) {
             return;
           }
 
+          // 🌟 [핵심 변경] 플래그 순서 정상화 - 성공 후 set
           persistInflight = (async () => {
-            assistantPersisted = true; 
             try {
               const now = new Date().toISOString();
 
-              await supabase.from('chat_messages').insert({
+              const { error: insertErr } = await supabase.from('chat_messages').insert({
                 thread_id: threadId,
                 user_id: userId,
                 role: 'assistant',
@@ -663,6 +663,10 @@ export async function POST(req: Request) {
                 created_at: now,
                 updated_at: now,
               });
+              
+              if (insertErr) throw insertErr; 
+
+              assistantPersisted = true; // ✅ 성공 확정 후 세팅
 
               const { data: threadRow } = await supabase
                 .from('chat_threads')
@@ -695,7 +699,7 @@ export async function POST(req: Request) {
 
             } catch (dbError) {
               console.error("DB 저장 중 에러 발생:", dbError);
-              assistantPersisted = false; 
+              Sentry.captureException(dbError, { tags: { phase: 'persist-assistant' } });
               await persistFailurePlaceholder('db_error');
             }
           })();
@@ -797,20 +801,28 @@ export async function POST(req: Request) {
         } finally {
           console.log(`\n[🏁 스트림 종료] 길이=${fullAnswer.length}, error=${streamErrored}, aborted=${req.signal.aborted}`);
 
-          if (fullAnswer.trim().length > 0) {
-            void persistAssistant(fullAnswer, req.signal.aborted ? 'aborted' : 'errored');
-          } else if (streamErrored || req.signal.aborted) {
-            void persistFailurePlaceholder(req.signal.aborted ? 'aborted' : 'errored');
-          }
+          // 🌟 [핵심 변경] persist 작업을 after()로 등록하여 worker 종료 전 완료 보장
+          const finalAnswer = fullAnswer;            
+          const finalErrored = streamErrored;
+          const finalAborted = req.signal.aborted;
+          const finalReason = finalFinishReason;
 
-          if (!req.signal.aborted) {
+          after(async () => {
+            if (finalAnswer.trim().length > 0) {
+              await persistAssistant(finalAnswer, finalAborted ? 'aborted' : (finalErrored ? 'errored' : 'ok'));
+            } else if (finalErrored || finalAborted) {
+              await persistFailurePlaceholder(finalAborted ? 'aborted' : 'errored');
+            }
+          });
+
+          if (!finalAborted) {
             try {
               send({
                 type: 'done',
-                full_content: fullAnswer,
-                errored: streamErrored,
-                truncated: finalFinishReason === 'length',
-                finish_reason: finalFinishReason,
+                full_content: finalAnswer,
+                errored: finalErrored,
+                truncated: finalReason === 'length',
+                finish_reason: finalReason,
               });
             } catch { /* 무시 */ }
           }
@@ -833,7 +845,6 @@ export async function POST(req: Request) {
       after(async () => {
         const PROFILE_BUDGET_MS = 4_000;
         
-        // 🌟 [Private 폐기 후] 정책 자가 학습 추출 제거. 프로필 추출만 유지.
         try {
           await Promise.race([
             extractProfileCore({
@@ -858,7 +869,6 @@ export async function POST(req: Request) {
         'Content-Type': 'application/x-ndjson',
         'Cache-Control': 'no-cache, no-transform',
         'X-Accel-Buffering': 'no',
-        // 🌟 [Private 폐기 후] X-Search-Mode 헤더 제거 (단일 엔진)
       }
     });
 
