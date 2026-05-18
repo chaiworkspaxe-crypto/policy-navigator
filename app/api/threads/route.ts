@@ -1,13 +1,12 @@
 // app/api/threads/route.ts
 
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabase } from '@/lib/supabase';   // 🌟 [핵심 변경]
 import { v4 as uuidv4 } from 'uuid';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-);
+export const runtime = 'edge';                  // 🌟 [핵심 변경]
+
+const supabase = getSupabase();
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
