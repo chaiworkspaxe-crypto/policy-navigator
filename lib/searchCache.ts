@@ -106,7 +106,8 @@ const DEADLINE_RE = /(20\d{2})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/g;
 function maxTtlByImminentDeadline(result: string, requestedTtlHours: number): number {
   let earliestMs = Infinity;
   for (const m of result.matchAll(DEADLINE_RE)) {
-    const t = Date.parse(`${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}T23:59:59+09:00`);
+    // 🌟 TypeScript 에러 방지를 위해 (m[2] ?? '') 와 같이 Nullish Coalescing 적용
+    const t = Date.parse(`${m[1]}-${(m[2] ?? '').padStart(2,'0')}-${(m[3] ?? '').padStart(2,'0')}T23:59:59+09:00`);
     if (!Number.isNaN(t) && t > Date.now() && t < earliestMs) earliestMs = t;
   }
   if (earliestMs === Infinity) return requestedTtlHours;
