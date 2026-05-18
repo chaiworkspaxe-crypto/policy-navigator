@@ -129,23 +129,48 @@ function trimMessages(messages: unknown): CoreMessage[] {
   return firstUserIdx <= 0 ? sliced : sliced.slice(firstUserIdx);
 }
 
+// 🌟 [핵심 변경] URL 및 마크다운 표 정규식 추가
 const RECENT_KEEP = 4;
 const OLD_ASSISTANT_MAX = 800;
+const URL_RE = /https?:\/\/[^\s)\]]+/g;
+const TABLE_BLOCK_RE = /(^|\n)\s*\|.*?\|.*?\n\|[-: |]+\|\n(?:\|.*?\|\n?)+/gs;
 
 function compressOldAssistantMessages(messages: CoreMessage[]): CoreMessage[] {
   if (messages.length <= RECENT_KEEP) return messages;
-
   const splitIdx = messages.length - RECENT_KEEP;
+
   return messages.map((m, i) => {
     if (i >= splitIdx) return m;
     if (m.role !== 'assistant') return m;
     if (typeof m.content !== 'string') return m;
     if (m.content.length <= OLD_ASSISTANT_MAX) return m;
 
-    return {
-      ...m,
-      content: m.content.slice(0, OLD_ASSISTANT_MAX) + '\n\n…[이전 답변 축약 — 사용자가 구체적인 정책명을 다시 묻는다면 해당 키워드로 도구를 다시 호출하세요]',
-    };
+    // 🌟 [핵심 변경] 핵심 신호(URL/마크다운 표) 보존 로직 추가
+    const head = m.content.slice(0, OLD_ASSISTANT_MAX);
+
+    // 1) URL 보존 — 잘려나간 뒷부분에서 URL을 모아 부록처럼 첨부 (최대 15개)
+    const tailUrls = Array.from(
+      m.content.slice(OLD_ASSISTANT_MAX).matchAll(URL_RE),
+      (mm) => mm[0]
+    ).filter((u, idx, arr) => arr.indexOf(u) === idx).slice(0, 15);
+
+    // 2) 마크다운 표 헤더 보존 — 정책명 줄만 남김 (최대 10행)
+    const tableLines: string[] = [];
+    const tablesInTail = m.content.slice(OLD_ASSISTANT_MAX).match(TABLE_BLOCK_RE);
+    if (tablesInTail) {
+      const lines = tablesInTail.join('\n').split('\n').filter(l => l.trim().startsWith('|'));
+      tableLines.push(...lines.slice(0, 10));
+    }
+
+    const summary = [
+      head,
+      '',
+      '…[이전 답변 축약 — 이미 안내한 정책 중복 금지]',
+      tableLines.length > 0 ? `\n[이전 답변 표 핵심]\n${tableLines.join('\n')}` : '',
+      tailUrls.length > 0 ? `\n[이전 답변에서 인용된 URL — 중복 인용 금지]\n${tailUrls.join('\n')}` : '',
+    ].filter(Boolean).join('\n');
+
+    return { ...m, content: summary };
   });
 }
 
@@ -204,7 +229,6 @@ export async function POST(req: Request) {
 
     let userInsertedAt: string | null = null;
 
-    // 🌟 [핵심 변경] 사용자 메시지 insert를 after()로 안전 보장
     if (userId && threadId && lastMsg?.role === 'user') {
       const content = typeof lastMsg.content === 'string'
         ? lastMsg.content
@@ -294,6 +318,10 @@ export async function POST(req: Request) {
       toolName: string,
       exec: (args: T) => Promise<string>,
     ) => async (args: T) => {
+      if (budget.exhausted) {
+        return `[🛑 검색 예산 소진] ${toolName}를 더 호출하지 마세요. 지금까지 받은 정보로 답변을 마무리하세요.`;
+      }
+
       const key = `${toolName}::${normalizeToolQuery(args.query)}`;
 
       const prev = toolCallCache.get(key);
@@ -356,7 +384,7 @@ export async function POST(req: Request) {
             async () => supabase.rpc('match_policies_v2', {
               query_embedding: embedding,
               match_threshold: RECALL_THRESHOLD,
-              match_count: 20,
+              match_count: 20, 
               p_source_type: 'public',
               p_only_active: true, 
             }),
@@ -650,7 +678,6 @@ export async function POST(req: Request) {
             return;
           }
 
-          // 🌟 [핵심 변경] 플래그 순서 정상화 - 성공 후 set
           persistInflight = (async () => {
             try {
               const now = new Date().toISOString();
@@ -666,7 +693,7 @@ export async function POST(req: Request) {
               
               if (insertErr) throw insertErr; 
 
-              assistantPersisted = true; // ✅ 성공 확정 후 세팅
+              assistantPersisted = true; 
 
               const { data: threadRow } = await supabase
                 .from('chat_threads')
@@ -801,7 +828,6 @@ export async function POST(req: Request) {
         } finally {
           console.log(`\n[🏁 스트림 종료] 길이=${fullAnswer.length}, error=${streamErrored}, aborted=${req.signal.aborted}`);
 
-          // 🌟 [핵심 변경] persist 작업을 after()로 등록하여 worker 종료 전 완료 보장
           const finalAnswer = fullAnswer;            
           const finalErrored = streamErrored;
           const finalAborted = req.signal.aborted;
