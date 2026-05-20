@@ -1,7 +1,7 @@
 // app/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef, memo } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { api, ChatMessage, extractApiErrorMessage, ThreadInputs, ThreadItem } from "@/lib/api";
 import { CITY_TO_DISTRICTS } from "@/lib/regionData"; 
@@ -104,6 +104,153 @@ const downloadAsImage = async (elementId: string, filename: string) => {
   }
 };
 
+// ────────────────────────────────────────────────────────────
+// 🌟 [핵심 변경] MessageItem 컴포넌트 분리 및 React.memo 적용
+// ────────────────────────────────────────────────────────────
+interface MessageItemProps {
+  message: ChatMessage;
+  index: number;
+  isLastMessage: boolean;
+  loading: boolean;
+  lastTruncated: boolean;
+  aiStatus: string;
+  messages: ChatMessage[];
+  setQuery: (s: string) => void;
+  handleSearch: (isFollowUp: boolean, override?: string) => void;
+}
+
+const MessageItem = memo(function MessageItem({
+  message, index, isLastMessage, loading, lastTruncated, aiStatus, 
+  messages, setQuery, handleSearch
+}: MessageItemProps) {
+  const isAssistant = message.role !== "user";
+
+  // 🌟 [핵심 변경] content가 바뀌었을 때만 표 추출 재실행 (CPU 최적화)
+  const summaryTableText = useMemo(
+    () => isAssistant ? extractSummaryTableText(message.content) : "",
+    [isAssistant, message.content]
+  );
+  const hasSummary = summaryTableText.length > 0;
+
+  const displayContent = (!loading && isLastMessage && isAssistant && !hasSummary) 
+    ? message.content + "\n\n" 
+    : message.content;
+  
+  const isThisStreaming = isLastMessage && isAssistant && loading;
+
+  return (
+    <div className={`flex gap-3 sm:gap-4 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+      
+      {isAssistant && (
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full mt-1 shadow-sm bg-green-600">
+          <span className="text-[10px] sm:text-xs font-bold text-white">AI</span>
+        </div>
+      )}
+      
+      <div className={`max-w-[90%] sm:max-w-[85%] rounded-2xl p-4 shadow-sm overflow-hidden ${message.role === "user" ? "whitespace-pre-wrap border border-gray-200 dark:border-[#444] bg-white dark:bg-[#2d2d2d] text-gray-800 dark:text-gray-200 text-sm sm:text-base" : "bg-transparent text-gray-800 dark:text-gray-300"}`}>
+        
+        <div id={`capture-area-${index}`} className="p-1 rounded-xl">
+          {isAssistant ? (
+            <AssistantBubble content={displayContent} isStreaming={isThisStreaming} />
+          ) : (
+            <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>
+          )}
+        </div>
+        
+        {isLastMessage && isAssistant && loading && (
+          <div className="mt-4 flex items-center gap-2 text-sm font-bold px-4 py-2.5 rounded-xl w-fit animate-pulse border shadow-sm text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800/30">
+            <Loader2 size={16} className="animate-spin shrink-0" />
+            <span>{aiStatus || "좌뇌론 글 쓰고 우뇌론 검색 중! 🧠💥 멀티태스킹에 AI CPU가 울고 있으니 타자가 살짝 버벅여도 봐주세요 🥺💦"}</span>
+          </div>
+        )}
+
+        {!loading && isAssistant && message.content.length > 50 && (
+          <div className="mt-4 pt-3 border-t border-gray-200 dark:border-[#444] flex flex-wrap justify-end gap-2 animate-in fade-in duration-300">
+            
+            <button onClick={() => downloadTextFile(message.content, `정책내비게이터_전체응답.txt`)} className="text-xs font-bold bg-gray-100 dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-[#333] transition-colors flex items-center gap-1 border border-gray-200 dark:border-[#444]">
+              <FileText size={14}/> 텍스트 저장
+            </button>
+            
+            {hasSummary && (
+              <button onClick={() => downloadTextFile(summaryTableText, `정책내비게이터_요약표.txt`)} className="text-xs font-bold bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 px-3 py-1.5 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors flex items-center gap-1 border border-blue-200 dark:border-blue-800/30">
+                <Download size={14}/> 표 텍스트 저장
+              </button>
+            )}
+
+            <button onClick={() => downloadAsImage(`capture-area-${index}`, `정책내비게이터_결과.jpg`)} className="text-xs font-bold bg-pink-50 dark:bg-pink-900/20 text-pink-600 dark:text-pink-400 px-3 py-1.5 rounded-lg hover:bg-pink-100 dark:hover:bg-pink-900/40 transition-colors flex items-center gap-1 border border-pink-200 dark:border-pink-800/30">
+              <ImageIcon size={14}/> 이미지 저장
+            </button>
+            
+            <button onClick={async () => {
+                const shareData = { 
+                  title: '나에게 딱 맞는 맞춤형 정부 혜택 🎁',
+                  text: '정책 내비게이터가 찾아준 맞춤형 혜택을 확인해보세요!\n\n' + message.content + '\n\n', 
+                  url: window.location.href 
+                };
+                try { 
+                  const canNativeShare = 
+                    typeof navigator.share === 'function' && 
+                    (
+                      /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+                      (/Macintosh/i.test(navigator.userAgent) && 'ontouchend' in document)
+                    );
+
+                  if (canNativeShare) {
+                    await navigator.share(shareData);
+                  } else {
+                    await navigator.clipboard.writeText(shareData.text + shareData.url);
+                    alert('전체 결과가 클립보드에 복사되었습니다!');
+                  }
+                } catch (err) { console.error('공유/복사 실패:', err); }
+              }} className="text-xs font-bold bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-3 py-1.5 rounded-lg hover:bg-green-200 dark:hover:bg-green-800/50 transition-colors flex items-center gap-1 border border-green-200 dark:border-green-800/30">
+                🔗 공유하기
+            </button>
+          </div>
+        )}
+
+        {!loading && isLastMessage && isAssistant && message.content.length > 50 && (!hasSummary || lastTruncated) && (
+           <div className="mt-4 p-4 bg-gray-50 dark:bg-[#1a1a1a] rounded-xl border border-gray-200 dark:border-[#444] animate-in fade-in duration-300">
+             <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
+               <AlertCircle size={16} className="text-yellow-500" />
+               {lastTruncated 
+                 ? '🚨 응답이 너무 길어서 혜택 리스트가 중간에 잘렸어요. 아래 버튼으로 마저 받아보세요!' 
+                 : '답변이 중간에 끊긴 것 같나요? 아래 버튼을 눌러 마저 들을 수 있어요!'}
+             </p>
+             <button
+               onClick={() => {
+                 setQuery(""); 
+                 
+                 const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
+                 const tail = lastAssistant?.content
+                   ? lastAssistant.content.slice(-120).replace(/\s+/g, ' ').trim()
+                   : '';
+                 
+                 const continuePrompt = tail
+                   ? `[이어쓰기 모드] 직전 답변이 다음 문장에서 끊겼어요: "...${tail}". 정확히 이 문장 직후부터 자연스럽게 이어서 작성해주세요. 인사말 다시 X, 검색 계획 안내 다시 X, 이미 안내한 정책 중복 나열 X, 도구 호출은 누락된 정보가 있을 때만 1~2회만. 끊긴 정책이 있다면 그 정책부터 마무리하세요.`
+                   : `[이어쓰기 모드] 직전 답변을 자연스럽게 이어서 작성해주세요. 인사말 다시 안 함, 이미 안내한 정책 중복 안 함.`;
+                 
+                 void handleSearch(true, continuePrompt);
+               }}
+               className="w-full flex items-center justify-center gap-2 py-2.5 bg-white dark:bg-[#2d2d2d] border border-gray-300 dark:border-[#555] rounded-lg hover:bg-gray-100 dark:hover:bg-[#3d3d3d] transition-colors text-sm font-bold text-gray-700 dark:text-gray-200 shadow-sm"
+             >
+               <RefreshCw size={16} /> 답변 이어서 생성하기
+             </button>
+           </div>
+        )}
+        
+      </div>
+    </div>
+  );
+}, (prev, next) => {
+  // 🌟 [핵심 변경] 함수 참조(handleSearch, setQuery, messages)가 매번 바뀌어 
+  // 리렌더링이 풀리는 것을 막기 위해 명시적인 원시(Primitive) 상태값만 비교
+  return prev.message.content === next.message.content &&
+         prev.isLastMessage === next.isLastMessage &&
+         prev.loading === next.loading &&
+         prev.lastTruncated === next.lastTruncated &&
+         prev.aiStatus === next.aiStatus;
+});
+
 export default function Home() {
   const [userId, setUserId] = useState("");
   const [threads, setThreads] = useState<ThreadItem[]>([]);
@@ -129,10 +276,8 @@ export default function Home() {
   const scrollRafRef = useRef<number | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
-  // 🌟 [Private 폐기 후] 정부 모드 고정 상수. 기존 state 의존부와 100% 호환.
-  // setSearchMode 호출 부위가 있어도 동작이 변하지 않도록 no-op로 유지.
   const searchMode = 'public' as const;
-  const setSearchMode = (_: any) => {}; // 호환성용 no-op
+  const setSearchMode = (_: any) => {}; 
 
   const [city, setCity] = useState(EMPTY_INPUTS.selected_city);
   const [district, setDistrict] = useState(EMPTY_INPUTS.selected_district);
@@ -151,7 +296,6 @@ export default function Home() {
 
   const { stream, stop, isStreaming: loading, aiStatus, setAiStatus } = useChatStream();
 
-  // 🌟 추천 예시 텍스트 (정부 정책 단일 모드)
   const queryExamples = [
     "🧑‍🎓 대학생을 위한 월세 지원 정책 찾아줘",
     "💼 취업 준비생 국비 지원 교육 알려줘",
@@ -347,8 +491,6 @@ export default function Home() {
       setNextBefore((loadedData as any).nextBefore ?? null);
       
       applyInputs(loadedInputs);
-
-      // 🌟 [Private 폐기 후] 모드 복원 로직 불필요 (항상 public)
       
       if (msgs.length > 0) setIsFormExpanded(false); else setIsFormExpanded(true);
       
@@ -361,7 +503,6 @@ export default function Home() {
     } catch (error) { setErrorMessage(extractApiErrorMessage(error)); }
   };
 
-  // 🌟 [Private 폐기 후] forcedMode 파라미터 제거. 호출부 호환성 위해 두번째 인자 무시.
   const handleNewThread = async (uid = userId, _legacyForcedMode?: unknown) => {
     if (loading) stop();
     
@@ -455,7 +596,6 @@ export default function Home() {
     setAutoScroll(true);
 
     try {
-      // 🌟 [Private 폐기 후] search_mode 필드 제거 (백엔드 Zod 스키마는 optional이라 호환 OK)
       await api.saveThreadInputs(userId, targetThreadId, {
         selected_city: city,
         selected_district: district,
@@ -631,9 +771,6 @@ export default function Home() {
         <div className="shrink-0 bg-white dark:bg-[#1a1a1a] relative border-b border-gray-200 dark:border-[#333] md:pt-16 z-20">
           <div className={`mx-auto max-w-4xl px-4 transition-all duration-300 ease-in-out origin-top ${isFormExpanded ? 'max-h-[500px] py-4 opacity-100' : 'max-h-0 py-0 opacity-0 overflow-hidden'}`}>
             <div className="space-y-3">
-              
-              {/* 🌟 [Private 폐기 후] 모드 토글 UI 완전 제거 */}
-
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                 <select className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500" value={city} onChange={(e) => { setCity(e.target.value); setDistrict(DEFAULT_CITY); setDong(DEFAULT_DONG); }}><option>{DEFAULT_CITY}</option>{Object.keys(CITY_TO_DISTRICTS).map((c) => <option key={c}>{c}</option>)}</select>
                 <select className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500" value={district} onChange={(e) => { setDistrict(e.target.value); setDong(DEFAULT_DONG); }} disabled={city === DEFAULT_CITY}><option>{DEFAULT_CITY}</option>{availableDistricts.map((d) => <option key={d}>{d}</option>)}</select>
@@ -712,123 +849,21 @@ export default function Home() {
                 </div>
               )}
 
-              {messages.map((message, index) => {
-                const isLastMessage = index === messages.length - 1;
-                const isAssistant = message.role !== "user"; 
-                
-                const summaryTableText = isAssistant ? extractSummaryTableText(message.content) : "";
-                const hasSummary = summaryTableText.length > 0;
-                
-                const displayContent = (!loading && isLastMessage && isAssistant && !hasSummary) 
-                  ? message.content + "\n\n" 
-                  : message.content;
-
-                const isThisStreaming = isLastMessage && isAssistant && loading;
-
-                return (
-                  <div key={`${message.role}-${index}`} className={`flex gap-3 sm:gap-4 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-                    
-                    {isAssistant && (
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full mt-1 shadow-sm bg-green-600">
-                        <span className="text-[10px] sm:text-xs font-bold text-white">AI</span>
-                      </div>
-                    )}
-                    
-                    <div className={`max-w-[90%] sm:max-w-[85%] rounded-2xl p-4 shadow-sm overflow-hidden ${message.role === "user" ? "whitespace-pre-wrap border border-gray-200 dark:border-[#444] bg-white dark:bg-[#2d2d2d] text-gray-800 dark:text-gray-200 text-sm sm:text-base" : "bg-transparent text-gray-800 dark:text-gray-300"}`}>
-                      
-                      <div id={`capture-area-${index}`} className="p-1 rounded-xl">
-                        {isAssistant ? (
-                          <AssistantBubble content={displayContent} isStreaming={isThisStreaming} />
-                        ) : (
-                          <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>
-                        )}
-                      </div>
-                      
-                      {isLastMessage && isAssistant && loading && (
-                        <div className="mt-4 flex items-center gap-2 text-sm font-bold px-4 py-2.5 rounded-xl w-fit animate-pulse border shadow-sm text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800/30">
-                          <Loader2 size={16} className="animate-spin shrink-0" />
-                          <span>{aiStatus || "좌뇌론 글 쓰고 우뇌론 검색 중! 🧠💥 멀티태스킹에 AI CPU가 울고 있으니 타자가 살짝 버벅여도 봐주세요 🥺💦"}</span>
-                        </div>
-                      )}
-
-                      {!loading && isAssistant && message.content.length > 50 && (
-                        <div className="mt-4 pt-3 border-t border-gray-200 dark:border-[#444] flex flex-wrap justify-end gap-2 animate-in fade-in duration-300">
-                          
-                          <button onClick={() => downloadTextFile(message.content, `정책내비게이터_전체응답.txt`)} className="text-xs font-bold bg-gray-100 dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-[#333] transition-colors flex items-center gap-1 border border-gray-200 dark:border-[#444]">
-                            <FileText size={14}/> 텍스트 저장
-                          </button>
-                          
-                          {hasSummary && (
-                            <button onClick={() => downloadTextFile(summaryTableText, `정책내비게이터_요약표.txt`)} className="text-xs font-bold bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 px-3 py-1.5 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors flex items-center gap-1 border border-blue-200 dark:border-blue-800/30">
-                              <Download size={14}/> 표 텍스트 저장
-                            </button>
-                          )}
-
-                          <button onClick={() => downloadAsImage(`capture-area-${index}`, `정책내비게이터_결과.jpg`)} className="text-xs font-bold bg-pink-50 dark:bg-pink-900/20 text-pink-600 dark:text-pink-400 px-3 py-1.5 rounded-lg hover:bg-pink-100 dark:hover:bg-pink-900/40 transition-colors flex items-center gap-1 border border-pink-200 dark:border-pink-800/30">
-                            <ImageIcon size={14}/> 이미지 저장
-                          </button>
-                          
-                          <button onClick={async () => {
-                              const shareData = { 
-                                title: '나에게 딱 맞는 맞춤형 정부 혜택 🎁',
-                                text: '정책 내비게이터가 찾아준 맞춤형 혜택을 확인해보세요!\n\n' + message.content + '\n\n', 
-                                url: window.location.href 
-                              };
-                              try { 
-                                const canNativeShare = 
-                                  typeof navigator.share === 'function' && 
-                                  (
-                                    /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
-                                    (/Macintosh/i.test(navigator.userAgent) && 'ontouchend' in document)
-                                  );
-
-                                if (canNativeShare) {
-                                  await navigator.share(shareData);
-                                } else {
-                                  await navigator.clipboard.writeText(shareData.text + shareData.url);
-                                  alert('전체 결과가 클립보드에 복사되었습니다!');
-                                }
-                              } catch (err) { console.error('공유/복사 실패:', err); }
-                            }} className="text-xs font-bold bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-3 py-1.5 rounded-lg hover:bg-green-200 dark:hover:bg-green-800/50 transition-colors flex items-center gap-1 border border-green-200 dark:border-green-800/30">
-                              🔗 공유하기
-                          </button>
-                        </div>
-                      )}
-
-                      {!loading && isLastMessage && isAssistant && message.content.length > 50 && (!hasSummary || lastTruncated) && (
-                         <div className="mt-4 p-4 bg-gray-50 dark:bg-[#1a1a1a] rounded-xl border border-gray-200 dark:border-[#444] animate-in fade-in duration-300">
-                           <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
-                             <AlertCircle size={16} className="text-yellow-500" />
-                             {lastTruncated 
-                               ? '🚨 응답이 너무 길어서 혜택 리스트가 중간에 잘렸어요. 아래 버튼으로 마저 받아보세요!' 
-                               : '답변이 중간에 끊긴 것 같나요? 아래 버튼을 눌러 마저 들을 수 있어요!'}
-                           </p>
-                           <button
-                             onClick={() => {
-                               setQuery(""); 
-                               
-                               const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
-                               const tail = lastAssistant?.content
-                                 ? lastAssistant.content.slice(-120).replace(/\s+/g, ' ').trim()
-                                 : '';
-                               
-                               const continuePrompt = tail
-                                 ? `[이어쓰기 모드] 직전 답변이 다음 문장에서 끊겼어요: "...${tail}". 정확히 이 문장 직후부터 자연스럽게 이어서 작성해주세요. 인사말 다시 X, 검색 계획 안내 다시 X, 이미 안내한 정책 중복 나열 X, 도구 호출은 누락된 정보가 있을 때만 1~2회만. 끊긴 정책이 있다면 그 정책부터 마무리하세요.`
-                                 : `[이어쓰기 모드] 직전 답변을 자연스럽게 이어서 작성해주세요. 인사말 다시 안 함, 이미 안내한 정책 중복 안 함.`;
-                               
-                               void handleSearch(true, continuePrompt);
-                             }}
-                             className="w-full flex items-center justify-center gap-2 py-2.5 bg-white dark:bg-[#2d2d2d] border border-gray-300 dark:border-[#555] rounded-lg hover:bg-gray-100 dark:hover:bg-[#3d3d3d] transition-colors text-sm font-bold text-gray-700 dark:text-gray-200 shadow-sm"
-                           >
-                             <RefreshCw size={16} /> 답변 이어서 생성하기
-                           </button>
-                         </div>
-                      )}
-                      
-                    </div>
-                  </div>
-                );
-              })}
+              {/* 🌟 [핵심 변경] React.memo가 적용된 MessageItem 렌더링 및 안정적인 key 부여 */}
+              {messages.map((message, index) => (
+                <MessageItem
+                  key={(message as any).created_at ?? `${message.role}-${message.content.slice(0, 30)}-${index}`}
+                  message={message}
+                  index={index}
+                  isLastMessage={index === messages.length - 1}
+                  loading={loading}
+                  lastTruncated={lastTruncated}
+                  aiStatus={aiStatus}
+                  messages={messages}
+                  setQuery={setQuery}
+                  handleSearch={handleSearch}
+                />
+              ))}
               <div ref={messagesEndRef} />
             </div>
           )}
