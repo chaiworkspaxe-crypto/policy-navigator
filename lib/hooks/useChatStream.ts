@@ -56,9 +56,6 @@ export function useChatStream() {
 
   const stream = useCallback(
     async (opts: StreamOpts, handlers: StreamHandlers = {}) => {
-      // 🛡️ [핵심 변경] 진행 중인 스트림이 있으면 새 요청을 거부 (의도적 정책)
-      //               사용자가 '중단' 버튼을 명시적으로 누를 때만 stop()으로 끊도록 유도.
-      //               이미 in-flight인 OpenAI 호출의 토큰 누수를 방지합니다.
       if (abortControllerRef.current) {
         console.warn('[useChatStream] 이미 진행 중인 스트림이 있어 새 요청을 거부합니다.');
         handlers.onError?.('아직 이전 답변을 받고 있어요. 잠시만 기다려주세요. (중단하려면 ⏹ 버튼)');
@@ -75,13 +72,16 @@ export function useChatStream() {
       let firstDeltaFired = false; 
       let watchdogTimedOut = false;  
 
-      // 🌟 [핵심 변경] 무료 Edge 현실에 맞춘 보수적 타임아웃
-      const CONNECT_TIMEOUT_MS = 45_000;          // 60 → 45
-      const IDLE_TIMEOUT_MS = 35_000;             // 45 → 35
+      const CONNECT_TIMEOUT_MS = 45_000;          
+      const IDLE_TIMEOUT_MS = 35_000;             
       
-      const NO_CONTENT_TIMEOUT_INITIAL_MS = 60_000;       // 90 → 60
-      const NO_CONTENT_EXTENSION_PER_STATUS_MS = 20_000;  // 25 → 20
-      const NO_CONTENT_HARD_CAP_MS = 120_000;             // 240 → 120 (4분 → 2분)
+      const NO_CONTENT_TIMEOUT_INITIAL_MS = 60_000;       
+      const NO_CONTENT_EXTENSION_PER_STATUS_MS = 20_000;  
+      const NO_CONTENT_HARD_CAP_MS = 120_000;             
+
+      // 🛡️ [신규] 비정상 응답으로부터 클라이언트 메모리 보호
+      const MAX_BUFFER_BYTES = 2_097_152;   // 2MB — NDJSON 한 메시지가 이걸 넘으면 비정상
+      const MAX_LINE_BYTES = 524_288;       // 단일 라인 512KB 상한
 
       const streamStartedAt = Date.now();
       let contentWatchdogDeadline = streamStartedAt + NO_CONTENT_TIMEOUT_INITIAL_MS;
@@ -185,8 +185,25 @@ export function useChatStream() {
           resetWatchdog();             
 
           buffer += decoder.decode(value, { stream: true });
+
+          // 🛡️ [핵심 변경] 버퍼 무한 누적 방어
+          if (buffer.length > MAX_BUFFER_BYTES) {
+            console.error(`[useChatStream] 버퍼 ${MAX_BUFFER_BYTES} 초과 → 중단`);
+            handlers.onError?.('서버 응답이 비정상적으로 큽니다. 잠시 후 다시 시도해 주세요.');
+            abortControllerRef.current?.abort();
+            break;
+          }
+
           const lines = buffer.split('\n');
           buffer = lines.pop() ?? ''; 
+
+          // 🛡️ [신규] 남은 buffer가 한 라인 한도 초과 → 비정상 응답으로 간주 중단
+          if (buffer.length > MAX_LINE_BYTES) {
+            console.error(`[useChatStream] 단일 라인 ${MAX_LINE_BYTES} 초과 → 중단`);
+            handlers.onError?.('스트림 응답에 문제가 있어 중단했어요. 한 번 더 시도해 주세요.');
+            abortControllerRef.current?.abort();
+            break;
+          }
 
           for (const line of lines) {
             if (!isMountedRef.current) break;
