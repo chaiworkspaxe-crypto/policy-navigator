@@ -13,39 +13,112 @@ import { extractProfileCore } from '@/app/api/profile/extract/_logic';
 import { getEmbedding } from '@/lib/embeddingCache';
 
 // ────────────────────────────────────────────────────────────
-// 🌟 도구 결과 토큰 예산 — 단일 턴 모든 도구 결과 합계 상한
+// 🛡️ [신규] 보안 상수 및 식별자 검증 정규식
 // ────────────────────────────────────────────────────────────
-const TOTAL_TOOL_BUDGET_CHARS = 40_000; // 약 10K 토큰 (한글 기준)
-const PER_TOOL_HARD_CAP_CHARS = 18_000;  // 단일 도구 결과 상한
+const USER_ID_RE = /^user_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE    = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function makeToolBudgetTracker() {
-  let used = 0;
-  return {
-    spend(text: string, toolName: string): string {
-      let out = text.length > PER_TOOL_HARD_CAP_CHARS
-        ? text.slice(0, PER_TOOL_HARD_CAP_CHARS) + 
-          `\n\n[ℹ️ ${toolName} 결과가 너무 길어 ${PER_TOOL_HARD_CAP_CHARS}자에서 잘렸습니다. 더 구체적인 키워드로 재검색하세요.]`
-        : text;
-      
-      const remaining = TOTAL_TOOL_BUDGET_CHARS - used;
-      if (remaining <= 0) {
-        return `[⚠️ 토큰 예산 소진] ${toolName}는 이번 턴에 더 호출하지 않거나, 보유한 정보로 답변을 마무리하세요.`;
-      }
-      if (out.length > remaining) {
-        out = out.slice(0, remaining) + 
-          `\n\n[ℹ️ 토큰 예산 절감을 위해 잘림. 보유한 정보로 답변 정리 권장.]`;
-      }
-      used += out.length;
-      return out;
-    },
-    get remaining() { return Math.max(0, TOTAL_TOOL_BUDGET_CHARS - used); },
-  };
+// 🛡️ [신규] 허용 Origin 화이트리스트
+const ALLOWED_ORIGINS = new Set<string>([
+  'https://policyai.kr',
+  'https://www.policyai.kr',
+]);
+
+function isAllowedOrigin(req: Request): boolean {
+  // 개발 환경은 통과 (NODE_ENV가 production 아닐 때)
+  if (process.env.NODE_ENV !== 'production') return true;
+
+  const origin = req.headers.get('origin');
+  const referer = req.headers.get('referer');
+
+  // Origin 헤더가 있다면 우선 검증
+  if (origin) {
+    if (ALLOWED_ORIGINS.has(origin)) return true;
+    // Vercel preview 도메인 패턴 (선택)
+    if (/^https:\/\/policy-navigator-.*\.vercel\.app$/.test(origin)) return true;
+    return false;
+  }
+
+  // Origin 없을 때 referer로 폴백 (모바일 일부 브라우저)
+  if (referer) {
+    try {
+      const u = new URL(referer);
+      const refOrigin = `${u.protocol}//${u.host}`;
+      if (ALLOWED_ORIGINS.has(refOrigin)) return true;
+      if (/^https:\/\/policy-navigator-.*\.vercel\.app$/.test(refOrigin)) return true;
+      return false;
+    } catch { return false; }
+  }
+
+  // 둘 다 없으면 차단 (정상 브라우저는 최소 하나는 보냄)
+  return false;
+}
+
+// 🛡️ [신규] 익명 사용자(IP 기반) — 무료 요금제 비용 누수 방지
+const ipBucket = new Map<string, { count: number; resetAt: number }>();
+const ANON_LIMIT = 20;          // 익명 IP당 분당 20회
+const ANON_WINDOW_MS = 60_000;
+
+function checkAnonRateLimit(req: Request): boolean {
+  const xff = req.headers.get('x-forwarded-for') ?? req.headers.get('x-real-ip') ?? '';
+  const ip = xff.split(',')[0]?.trim() || 'anon';
+
+  const now = Date.now();
+  const slot = ipBucket.get(ip);
+
+  if (!slot || slot.resetAt < now) {
+    ipBucket.set(ip, { count: 1, resetAt: now + ANON_WINDOW_MS });
+    return true;
+  }
+  slot.count++;
+  if (slot.count > ANON_LIMIT) return false;
+  return true;
 }
 
 // ────────────────────────────────────────────────────────────
-// 🛡️ 격벽 진입점 — Private 모드 폐기됨. 항상 'public' 강제.
-// (외부에서 searchMode:'private'를 보내도 무시되어 정부 모드로 처리됨)
+// 🌟 도구 결과 토큰 예산 — 단일 턴 모든 도구 결과 합계 상한
 // ────────────────────────────────────────────────────────────
+const TOTAL_TOOL_BUDGET_CHARS = 48_000; // 약 12K 토큰
+const PER_TOOL_HARD_CAP_CHARS = 12_000;  // 한 번에 너무 큰 덩어리 방지 — 분야별 분산 유도
+const BUDGET_WARN_AT = 0.80;             // 80% 도달 시 모델에 정리 신호
+
+function makeToolBudgetTracker() {
+  let used = 0;
+  let warned = false;
+
+  return {
+    spend(text: string, toolName: string): string {
+      let out = text.length > PER_TOOL_HARD_CAP_CHARS
+        ? text.slice(0, PER_TOOL_HARD_CAP_CHARS) +
+          `\n\n[ℹ️ ${toolName} 결과를 ${PER_TOOL_HARD_CAP_CHARS}자로 압축했습니다. 더 좁힌 키워드(지역+분야 조합)로 재시도하면 누락 없이 받을 수 있습니다.]`
+        : text;
+
+      const remaining = TOTAL_TOOL_BUDGET_CHARS - used;
+
+      if (remaining <= 0) {
+        return `[🛑 검색 예산 소진] ${toolName} 호출 중단. **지금까지 수집한 정보만으로 답변을 마무리하세요.** 더 이상 도구를 호출하지 말 것. (분야가 부족하면 "이런 분야는 아직 미탐색"이라고 답변에 솔직히 명시하세요.)`;
+      }
+
+      if (out.length > remaining) {
+        out = out.slice(0, remaining) +
+          `\n\n[ℹ️ 토큰 예산 ${Math.round((1 - remaining / TOTAL_TOOL_BUDGET_CHARS) * 100)}% 도달. 다음 호출부터는 키워드를 더 좁혀주세요.]`;
+      }
+
+      used += out.length;
+
+      if (!warned && used / TOTAL_TOOL_BUDGET_CHARS >= BUDGET_WARN_AT) {
+        warned = true;
+        out += `\n\n[⚠️ 검색 예산 ${Math.round(used / TOTAL_TOOL_BUDGET_CHARS * 100)}% 사용. 남은 분야 중 사용자에게 가장 가치 큰 1~2개만 추가 검색하고 답변 정리하세요.]`;
+      }
+
+      return out;
+    },
+    get used() { return used; },
+    get remaining() { return Math.max(0, TOTAL_TOOL_BUDGET_CHARS - used); },
+    get exhausted() { return used >= TOTAL_TOOL_BUDGET_CHARS; },
+  };
+}
+
 type SearchMode = 'public';
 
 function normalizeSearchMode(_raw: unknown): SearchMode {
@@ -129,7 +202,6 @@ function trimMessages(messages: unknown): CoreMessage[] {
   return firstUserIdx <= 0 ? sliced : sliced.slice(firstUserIdx);
 }
 
-// 🌟 [핵심 변경] URL 및 마크다운 표 정규식 추가 (ES버전 호환성을 위해 s 플래그 제거 및 [^\n] 사용)
 const RECENT_KEEP = 4;
 const OLD_ASSISTANT_MAX = 800;
 const URL_RE = /https?:\/\/[^\s)\]]+/g;
@@ -145,16 +217,13 @@ function compressOldAssistantMessages(messages: CoreMessage[]): CoreMessage[] {
     if (typeof m.content !== 'string') return m;
     if (m.content.length <= OLD_ASSISTANT_MAX) return m;
 
-    // 🌟 [핵심 변경] 핵심 신호(URL/마크다운 표) 보존 로직 추가
     const head = m.content.slice(0, OLD_ASSISTANT_MAX);
 
-    // 1) URL 보존 — 잘려나간 뒷부분에서 URL을 모아 부록처럼 첨부 (최대 15개)
     const tailUrls = Array.from(
       m.content.slice(OLD_ASSISTANT_MAX).matchAll(URL_RE),
       (mm) => mm[0]
     ).filter((u, idx, arr) => arr.indexOf(u) === idx).slice(0, 15);
 
-    // 2) 마크다운 표 헤더 보존 — 정책명 줄만 남김 (최대 10행)
     const tableLines: string[] = [];
     const tablesInTail = m.content.slice(OLD_ASSISTANT_MAX).match(TABLE_BLOCK_RE);
     if (tablesInTail) {
@@ -200,11 +269,41 @@ function decodeNaverEntities(s: string): string {
 
 export async function POST(req: Request) {
   try {
+    // 🛡️ [핵심 변경 1] Origin/Referer 화이트리스트 검증 — 외부 도메인 차단
+    if (!isAllowedOrigin(req)) {
+      return new Response(JSON.stringify({ detail: '잘못된 접근입니다.' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // 🛡️ [핵심 변경 2] 익명 IP 기반 rate limit — userId 부재/위조 케이스 방어
+    if (!checkAnonRateLimit(req)) {
+      return new Response(JSON.stringify({ detail: '잠시 후 다시 시도해 주세요.' }), {
+        status: 429,
+        headers: { 'Content-Type': 'application/json', 'Retry-After': '60' },
+      });
+    }
+
     const body = await req.json().catch(() => ({} as Record<string, unknown>));
     const messages = (body as any).messages;
     const userId = (body as any).userId;
     const threadId = (body as any).threadId;
     const mode: SearchMode = normalizeSearchMode((body as any).searchMode);
+
+    // 🛡️ [핵심 변경 3] user_id / thread_id 형식 검증
+    if (userId && (typeof userId !== 'string' || !USER_ID_RE.test(userId))) {
+      return new Response(JSON.stringify({ detail: '잘못된 사용자 식별자입니다.' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (threadId && (typeof threadId !== 'string' || !UUID_RE.test(threadId))) {
+      return new Response(JSON.stringify({ detail: '잘못된 대화 식별자입니다.' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     
     if (userId) {
       const rate = await checkRateLimit(userId);
@@ -230,6 +329,23 @@ export async function POST(req: Request) {
     let userInsertedAt: string | null = null;
 
     if (userId && threadId && lastMsg?.role === 'user') {
+      // 🛡️ [신규] thread 소유권 사전 검증 (IDOR 방지, 200ms race로 latency 영향 최소화)
+      const ownershipCheck = await Promise.race([
+        supabase.from('chat_threads')
+          .select('user_id')
+          .eq('thread_id', threadId)
+          .maybeSingle(),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 200)),
+      ]);
+
+      if (ownershipCheck && (ownershipCheck as any).data && 
+          (ownershipCheck as any).data.user_id !== userId) {
+        return new Response(JSON.stringify({ detail: '권한이 없는 대화입니다.' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
       const content = typeof lastMsg.content === 'string'
         ? lastMsg.content
         : JSON.stringify(lastMsg.content);
@@ -297,7 +413,7 @@ export async function POST(req: Request) {
 - 거주지: ${safeCity || '미상'} ${safeDistrict || ''}
 - 출생연도: ${safeBirth || '미상'}
 - 추가 정보: ${safeExtra || '없음'}
-- 백그라운 추출: ${bgProfile || '없음'}${notesBlock}
+- 백그라운드 추출: ${bgProfile || '없음'}${notesBlock}
 [프로필 끝]
 
 이 프로필을 활용해 검색을 더 정밀하게 수행하세요. 이미 알고 있는 정보는 다시 묻지 마세요.`;
@@ -318,6 +434,10 @@ export async function POST(req: Request) {
       toolName: string,
       exec: (args: T) => Promise<string>,
     ) => async (args: T) => {
+      if (budget.exhausted) {
+        return `[🛑 검색 예산 소진] ${toolName}를 더 호출하지 마세요. 지금까지 받은 정보로 답변을 마무리하세요.`;
+      }
+
       const key = `${toolName}::${normalizeToolQuery(args.query)}`;
 
       const prev = toolCallCache.get(key);
@@ -380,7 +500,7 @@ export async function POST(req: Request) {
             async () => supabase.rpc('match_policies_v2', {
               query_embedding: embedding,
               match_threshold: RECALL_THRESHOLD,
-              match_count: 20, 
+              match_count: 25, 
               p_source_type: 'public',
               p_only_active: true, 
             }),
@@ -461,14 +581,36 @@ export async function POST(req: Request) {
           const isAlreadyFiltered = /site:|go\.kr|or\.kr|\-/i.test(query);
           const officialQuery = isAlreadyFiltered 
             ? query 
-            : `${query} (지원 OR 안내 OR 혜택) (site:go.kr OR site:or.kr)`;
+            : `${query} 정부 지자체 공고 (지원 OR 혜택 OR 안내)`;
           const generalQuery = isAlreadyFiltered 
             ? query 
-            : `${query} 지원금 OR 혜택`;
+            : `${query} 지원금 혜택`;
 
           const headers = { 'X-Naver-Client-Id': clientId, 'X-Naver-Client-Secret': clientSecret };
-          const out: string[] = [];
-          const seenLinks = new Set<string>();
+
+          const [officialSettled, generalSettled, newsSettled] = await Promise.allSettled([
+            withTimeout(
+              async (signal) => fetch(
+                `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(officialQuery)}&display=10&sort=sim`,
+                { headers, signal }
+              ),
+              TOOL_TIMEOUT_MS, 'naver-official', req.signal,
+            ),
+            withTimeout(
+              async (signal) => fetch(
+                `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(generalQuery)}&display=5&sort=sim`,
+                { headers, signal }
+              ),
+              TOOL_TIMEOUT_MS, 'naver-general', req.signal,
+            ),
+            withTimeout(
+              async (signal) => fetch(
+                `https://openapi.naver.com/v1/search/news?query=${encodeURIComponent(query)}&display=3&sort=date`,
+                { headers, signal }
+              ),
+              TOOL_TIMEOUT_MS, 'naver-news', req.signal,
+            ),
+          ]);
 
           const formatItem = (item: any, source: string) => {
             const t = decodeNaverEntities(item?.title ?? '');
@@ -479,10 +621,16 @@ export async function POST(req: Request) {
             return `- [${source}] ${tier} 제목: ${t}\n  내용: ${d}\n  링크: ${link}`;
           };
 
-          const pushItems = async (
-            settled: PromiseSettledResult<unknown>,
-            sourceLabel: string,
-          ) => {
+          const out: string[] = [];
+          const seenLinks = new Set<string>();
+
+          const DOMAIN_TIER = (link: string): number => {
+            if (/\.(go|or|gov)\.kr(\/|$)/i.test(link)) return 100;
+            if (/(yna\.co\.kr|kbs\.co\.kr|hani\.co\.kr|chosun\.com|donga\.com|mk\.co\.kr|mbn\.co\.kr|ytn\.co\.kr)/i.test(link)) return 50;
+            return 10;
+          };
+
+          const collect = async (settled: PromiseSettledResult<unknown>, sourceLabel: string) => {
             if (settled.status !== 'fulfilled') return;
             const response = settled.value as Response;
             if (!response.ok) return;
@@ -505,43 +653,15 @@ export async function POST(req: Request) {
             }
           };
 
-          const officialDisplayCount = 10; 
-          
-          const officialRes = await withTimeout(
-            async (signal) => fetch(
-              `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(officialQuery)}&display=${officialDisplayCount}&sort=sim`,
-              { headers, signal }
-            ),
-            TOOL_TIMEOUT_MS, 'naver-official', req.signal,
-          ).catch(() => null);
-          
-          await pushItems(
-            officialRes ? { status: 'fulfilled' as const, value: officialRes } : { status: 'rejected' as const, reason: 'fail' }, 
-            '공식'
-          );
+          await collect(officialSettled, '공식');
+          await collect(generalSettled, '일반');
+          await collect(newsSettled, '뉴스');
 
-          const NEED_MORE_THRESHOLD = 7;
-          if (out.length < NEED_MORE_THRESHOLD) {
-            const [generalRes, newsRes] = await Promise.allSettled([
-              withTimeout(
-                async (signal) => fetch(
-                  `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(generalQuery)}&display=4&sort=sim`,
-                  { headers, signal }
-                ),
-                TOOL_TIMEOUT_MS, 'naver-general', req.signal,
-              ),
-              withTimeout(
-                async (signal) => fetch(
-                  `https://openapi.naver.com/v1/search/news?query=${encodeURIComponent(query)}&display=3&sort=date`,
-                  { headers, signal }
-                ),
-                TOOL_TIMEOUT_MS, 'naver-news', req.signal,
-              ),
-            ]);
-            
-            await pushItems(generalRes, '일반블로그');
-            await pushItems(newsRes, '뉴스');
-          }
+          out.sort((a, b) => {
+            const linkA = a.match(/링크:\s*(\S+)/)?.[1] ?? '';
+            const linkB = b.match(/링크:\s*(\S+)/)?.[1] ?? '';
+            return DOMAIN_TIER(linkB) - DOMAIN_TIER(linkA);
+          });
 
           if (out.length === 0) {
             return '네이버 검색 결과 없음. 키워드를 더 구체적으로 바꿔 재시도하거나 global_web_search로 우회하세요.';
