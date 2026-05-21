@@ -17,19 +17,24 @@ const DEFAULT_CITY = "선택하세요";
 const DEFAULT_DONG = "선택 안 함";
 const EMPTY_INPUTS: ThreadInputs = { selected_city: DEFAULT_CITY, selected_district: DEFAULT_CITY, selected_dong: DEFAULT_DONG, birth_year: "", extra_info: "" };
 
+// ────────────────────────────────────────────────────────────
+// 🌟 [최적화 & 기능 보강] 역방향 스캔 및 메타 다양성 대응 표 파서
+// ────────────────────────────────────────────────────────────
 const extractSummaryTableText = (text: string) => {
   const lines = text.split('\n');
   let headerIdx = -1;
   
+  // 🌟 [확장] 모델 표현 다양성 흡수
   const tokenGroups: string[][] = [
-    ['분야', '카테고리'],
-    ['정책', '정책명', '사업명', '이름'],
-    ['주관', '기관', '주관기관', '운영'],
-    ['혜택', '핵심혜택', '내용', '지원'],
-    ['마감', '마감일', '신청마감', '기간'],
+    ['분야', '카테고리', '구분', '분류'],
+    ['정책', '정책명', '사업명', '이름', '프로그램명', '혜택명'],
+    ['주관', '기관', '주관기관', '운영', '운영기관', '주관처'],
+    ['혜택', '핵심혜택', '내용', '지원', '지원내용', '혜택내용'],
+    ['마감', '마감일', '신청마감', '기간', '신청기간', '신청마감일'],
   ];
 
-  for (let i = 0; i < lines.length; i++) {
+  // 🌟 [핵심 변경] 답변 끝에서부터 역방향 스캔 — "마지막 요약 표"가 보통 정답
+  for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
     if (line === undefined) continue;
     
@@ -52,12 +57,23 @@ const extractSummaryTableText = (text: string) => {
   if (headerLine === undefined) return "";
 
   const tableLines = [headerLine];
+  // 🌟 [핵심 변경] 표 중간 빈 줄 1회까지는 무시하고 계속 읽기 (모델이 설명 끼우는 경우 흡수)
+  let consecutiveBlanks = 0;
   for (let i = headerIdx + 1; i < lines.length; i++) {
     const line = lines[i];
     if (line === undefined) continue;
     const trimmed = line.trim();
-    if (!trimmed) { if (tableLines.length >= 2) break; continue; }
-    if (!trimmed.includes('|')) { if (tableLines.length >= 2) break; continue; }
+
+    if (!trimmed) {
+      consecutiveBlanks++;
+      if (consecutiveBlanks >= 2) break;     // 빈 줄 연속 2번이면 표 끝
+      continue;
+    }
+    if (!trimmed.includes('|')) {
+      if (tableLines.length >= 2) break;     // 표가 시작된 후 비-표 라인이면 끝
+      continue;
+    }
+    consecutiveBlanks = 0;
     tableLines.push(line);
   }
   return tableLines.join('\n');
@@ -105,7 +121,7 @@ const downloadAsImage = async (elementId: string, filename: string) => {
 };
 
 // ────────────────────────────────────────────────────────────
-// 🌟 [핵심 변경] MessageItem 컴포넌트 분리 및 React.memo 적용
+// 🌟 MessageItem 컴포넌트 분리 및 React.memo 적용
 // ────────────────────────────────────────────────────────────
 interface MessageItemProps {
   message: ChatMessage;
@@ -242,8 +258,6 @@ const MessageItem = memo(function MessageItem({
     </div>
   );
 }, (prev, next) => {
-  // 🌟 [핵심 변경] 함수 참조(handleSearch, setQuery, messages)가 매번 바뀌어 
-  // 리렌더링이 풀리는 것을 막기 위해 명시적인 원시(Primitive) 상태값만 비교
   return prev.message.content === next.message.content &&
          prev.isLastMessage === next.isLastMessage &&
          prev.loading === next.loading &&
@@ -849,7 +863,6 @@ export default function Home() {
                 </div>
               )}
 
-              {/* 🌟 [핵심 변경] React.memo가 적용된 MessageItem 렌더링 및 안정적인 key 부여 */}
               {messages.map((message, index) => (
                 <MessageItem
                   key={(message as any).created_at ?? `${message.role}-${message.content.slice(0, 30)}-${index}`}
