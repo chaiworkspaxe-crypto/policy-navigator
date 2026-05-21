@@ -221,12 +221,27 @@ ${safeMessage}
     return lower.length > 0 && lower.length <= 120;
   }).slice(0, 3);
 
-  // 4) RPC로 원자적 patch
+  // 🌟 [신규] 동일/유사 notes 중복 방지 — 기존 notes와의 정확 일치만 차단(저비용)
+  const existingNotes: string[] = (existingProfile.notes ?? []) as string[];
+  const existingSet = new Set(existingNotes.map(n => n.trim().toLowerCase()));
+  const dedupedNotes = safeNotes.filter(n => !existingSet.has(n.trim().toLowerCase()));
+
+  // 🌟 [신규] 추출할 새 정보가 0건이면 RPC 호출조차 스킵 (비용 절감)
+  if (dedupedNotes.length === 0 && Object.keys(patch).length === 0) {
+    await supabase
+      .from('chat_thread_inputs')
+      .update({ last_extract_msg_hash: msgHash })
+      .eq('thread_id', threadId)
+      .eq('user_id', userId);
+    return { ok: true, profile: existingProfile, reasoning: _reasoning };
+  }
+
+  // 4) RPC로 원자적 patch (dedupedNotes 사용)
   const { data: merged, error: rpcErr } = await supabase.rpc('patch_profile_json', {
     p_user_id: userId,
     p_thread_id: threadId,
     p_patch: patch,
-    p_new_notes: safeNotes,
+    p_new_notes: dedupedNotes,
   });
 
   if (rpcErr) {
