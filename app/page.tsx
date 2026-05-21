@@ -17,14 +17,10 @@ const DEFAULT_CITY = "선택하세요";
 const DEFAULT_DONG = "선택 안 함";
 const EMPTY_INPUTS: ThreadInputs = { selected_city: DEFAULT_CITY, selected_district: DEFAULT_CITY, selected_dong: DEFAULT_DONG, birth_year: "", extra_info: "" };
 
-// ────────────────────────────────────────────────────────────
-// 🌟 [최적화 & 기능 보강] 역방향 스캔 및 메타 다양성 대응 표 파서
-// ────────────────────────────────────────────────────────────
 const extractSummaryTableText = (text: string) => {
   const lines = text.split('\n');
   let headerIdx = -1;
   
-  // 🌟 [확장] 모델 표현 다양성 흡수
   const tokenGroups: string[][] = [
     ['분야', '카테고리', '구분', '분류'],
     ['정책', '정책명', '사업명', '이름', '프로그램명', '혜택명'],
@@ -33,7 +29,6 @@ const extractSummaryTableText = (text: string) => {
     ['마감', '마감일', '신청마감', '기간', '신청기간', '신청마감일'],
   ];
 
-  // 🌟 [핵심 변경] 답변 끝에서부터 역방향 스캔 — "마지막 요약 표"가 보통 정답
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
     if (line === undefined) continue;
@@ -57,7 +52,6 @@ const extractSummaryTableText = (text: string) => {
   if (headerLine === undefined) return "";
 
   const tableLines = [headerLine];
-  // 🌟 [핵심 변경] 표 중간 빈 줄 1회까지는 무시하고 계속 읽기 (모델이 설명 끼우는 경우 흡수)
   let consecutiveBlanks = 0;
   for (let i = headerIdx + 1; i < lines.length; i++) {
     const line = lines[i];
@@ -66,11 +60,11 @@ const extractSummaryTableText = (text: string) => {
 
     if (!trimmed) {
       consecutiveBlanks++;
-      if (consecutiveBlanks >= 2) break;     // 빈 줄 연속 2번이면 표 끝
+      if (consecutiveBlanks >= 2) break;
       continue;
     }
     if (!trimmed.includes('|')) {
-      if (tableLines.length >= 2) break;     // 표가 시작된 후 비-표 라인이면 끝
+      if (tableLines.length >= 2) break;
       continue;
     }
     consecutiveBlanks = 0;
@@ -120,9 +114,6 @@ const downloadAsImage = async (elementId: string, filename: string) => {
   }
 };
 
-// ────────────────────────────────────────────────────────────
-// 🌟 MessageItem 컴포넌트 분리 및 React.memo 적용
-// ────────────────────────────────────────────────────────────
 interface MessageItemProps {
   message: ChatMessage;
   index: number;
@@ -141,7 +132,6 @@ const MessageItem = memo(function MessageItem({
 }: MessageItemProps) {
   const isAssistant = message.role !== "user";
 
-  // 🌟 [핵심 변경] content가 바뀌었을 때만 표 추출 재실행 (CPU 최적화)
   const summaryTableText = useMemo(
     () => isAssistant ? extractSummaryTableText(message.content) : "",
     [isAssistant, message.content]
@@ -316,6 +306,17 @@ export default function Home() {
     "💰 20대 청년 적금 혜택 정리해 줘",
   ];
 
+  // 🌟 [신규] 최신 값 백그라운드 추적용 안정성 레퍼런스 버킷
+  const loadingRef = useRef(loading);
+  const currentThreadIdRef = useRef(currentThreadId);
+  const userIdRef = useRef(userId);
+  const messagesLengthRef = useRef(messages.length);
+
+  useEffect(() => { loadingRef.current = loading; }, [loading]);
+  useEffect(() => { currentThreadIdRef.current = currentThreadId; }, [currentThreadId]);
+  useEffect(() => { userIdRef.current = userId; }, [userId]);
+  useEffect(() => { messagesLengthRef.current = messages.length; }, [messages.length]);
+
   useEffect(() => {
     return () => {
       if (deleteTimeoutRef.current) {
@@ -333,27 +334,40 @@ export default function Home() {
     document.documentElement.classList.add('dark');
   }, []);
 
+  // 🌟 [핵심 변경] 단 한 번만 리스너 등록 후 최신 Ref를 바라보며 경합/중복 호출 전면 차단
   useEffect(() => {
+    let inFlightLoad = false;     // 🛡️ 중복 fetch 방지
+    let lastLoadAt = 0;            // 🛡️ 디바운스
+
     const handleVisibilityChange = () => {
-      if (loading) return;
+      if (loadingRef.current) return;
       if (document.activeElement instanceof HTMLInputElement || 
           document.activeElement instanceof HTMLTextAreaElement) return;
+      if (document.visibilityState !== 'visible') return;
+      if (!currentThreadIdRef.current || !userIdRef.current) return;
       
-      if (document.visibilityState === 'visible' && currentThreadId && userId) {
-        api.loadMessages(userId, currentThreadId)
-          .then((res) => {
-            const msgs = res.messages || [];
-            if (msgs.length > 0 && msgs.length >= messages.length) {
-              setMessages(msgs);
-              setNextBefore(res.nextBefore ?? null);
-            }
-          })
-          .catch(console.error);
-      }
+      // 🛡️ [신규] 5초 이내 폭풍적인 재호출 방지 가드레일
+      const now = Date.now();
+      if (now - lastLoadAt < 5_000 || inFlightLoad) return;
+      lastLoadAt = now;
+      inFlightLoad = true;
+
+      api.loadMessages(userIdRef.current, currentThreadIdRef.current)
+        .then((res) => {
+          const msgs = res.messages || [];
+          // 🌟 [핵심] 진입 시점에 얻은 최신 스냅샷 ref값과 검증 — 그 사이 유저가 방을 나갔을 수 있음
+          if (msgs.length > 0 && msgs.length >= messagesLengthRef.current && !loadingRef.current) {
+            setMessages(msgs);
+            setNextBefore(res.nextBefore ?? null);
+          }
+        })
+        .catch(console.error)
+        .finally(() => { inFlightLoad = false; });
     };
+
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, [currentThreadId, userId, loading, messages.length]);
+  }, []); // 🌟 [핵심] 빈 의존성으로 불필요한 해제/재설정 비용 0 최적화
 
   useEffect(() => {
     const el = scrollContainerRef.current;
