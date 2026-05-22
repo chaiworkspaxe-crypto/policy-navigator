@@ -1,10 +1,10 @@
 // app/api/threads/route.ts
 
 import { NextResponse } from 'next/server';
-import { getSupabase } from '@/lib/supabase';   // 🌟 [핵심 변경]
+import { getSupabase } from '@/lib/supabase';
 import { v4 as uuidv4 } from 'uuid';
 
-export const runtime = 'edge';                  // 🌟 [핵심 변경]
+export const runtime = 'edge';
 
 const supabase = getSupabase();
 
@@ -38,7 +38,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'user_id 누락' }, { status: 400 });
     }
     
-    // 🌟 user_id 포맷 검증 추가 (IDOR 방어)
+    // user_id 포맷 검증 (IDOR 방어)
     if (!/^user_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user_id)) {
       return NextResponse.json({ error: 'invalid user_id' }, { status: 400 });
     }
@@ -46,27 +46,34 @@ export async function POST(req: Request) {
     const thread_id = uuidv4();
     const now = new Date().toISOString();
 
-    // 🌟 두 INSERT를 병렬로 (Supabase REST는 stateless → 안전 & Latency 단축)
-    const [threadResult, inputsResult] = await Promise.all([
-      supabase.from('chat_threads').insert({
-        thread_id, user_id, title: '새 대화', created_at: now, updated_at: now,
-      }),
-      supabase.from('chat_thread_inputs').insert({
-        thread_id, user_id, updated_at: now,
-      }),
-    ]);
+    // 1️⃣ [필수] 부모 테이블(chat_threads)에 방을 먼저 생성 (동기적 순서 보장)
+    const threadResult = await supabase.from('chat_threads').insert({
+      thread_id, 
+      user_id, 
+      title: '새 대화', 
+      created_at: now, 
+      updated_at: now,
+    });
 
+    // 🛡️ 부모방 생성 실패 시 자식 로직으로 넘어가지 못하게 즉시 차단
     if (threadResult.error) {
-      // thread 인서트 실패는 치명적
       console.error('[POST /api/threads]', threadResult.error);
       return NextResponse.json({ error: threadResult.error.message }, { status: 500 });
     }
 
+    // 2️⃣ [필수] 부모 생성이 완료된 후, 자식 테이블(chat_thread_inputs) 초기화 진행
+    const inputsResult = await supabase.from('chat_thread_inputs').insert({
+      thread_id, 
+      user_id, 
+      updated_at: now,
+    });
+
     if (inputsResult.error) {
-      // inputs 실패는 비치명적 — 첫 chat에서 upsert로 자연 복구됨
+      // inputs 실패는 비치명적 에러 로그 처리 — 첫 chat에서 upsert로 자연 복구됨
       console.error('[POST /api/threads inputs init]', inputsResult.error);
     }
 
+    // 프론트엔드 호환성을 위해 원본 객체 구조 유지
     return NextResponse.json({ thread_id });
   } catch (e: any) {
     console.error('[POST /api/threads] parse:', e);
@@ -90,8 +97,7 @@ export async function DELETE(req: Request) {
     );
   }
 
-  // 🌟 [최적화] 부모 thread만 지우면 DB의 ON DELETE CASCADE가 자식 테이블을 자동 정리함
-  // 트랜잭션 무결성 보장 및 쿼리 속도 대폭 향상!
+  // 부모 thread만 지우면 DB의 ON DELETE CASCADE가 자식 테이블을 자동 정리함
   const isAll = deleteAll === 'true';
   let q = supabase.from('chat_threads').delete().eq('user_id', userId);
   
