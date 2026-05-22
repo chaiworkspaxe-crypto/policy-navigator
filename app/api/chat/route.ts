@@ -500,7 +500,7 @@ export async function POST(req: Request) {
             async () => supabase.rpc('match_policies_v2', {
               query_embedding: embedding,
               match_threshold: RECALL_THRESHOLD,
-              match_count: 25, 
+              match_count: 60, 
               p_source_type: 'public',
               p_only_active: true, 
             }),
