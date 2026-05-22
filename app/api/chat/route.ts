@@ -63,6 +63,8 @@ function checkAnonRateLimit(req: Request): boolean {
   const xff = req.headers.get('x-forwarded-for') ?? req.headers.get('x-real-ip') ?? '';
   const ip = xff.split(',')[0]?.trim() || 'anon';
 
+  console.log(`[📡 Request IP] ${ip}`);
+
   const now = Date.now();
   const slot = ipBucket.get(ip);
 
