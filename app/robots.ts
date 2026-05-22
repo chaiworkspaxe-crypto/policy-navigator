@@ -9,7 +9,7 @@ export default function robots(): MetadataRoute.Robots {
       { 
         userAgent: '*', 
         allow: '/', 
-        disallow: '/admin/' // 🌟 관리자 테스트 페이지는 구글 노출 차단
+        disallow: ['/admin/', '/api/'],  // 🌟 관리자 + API 엔드포인트 크롤링 차단
       },
     ],
     sitemap: `${SITE_URL}/sitemap.xml`,
