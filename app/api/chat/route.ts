@@ -1,4 +1,5 @@
 // app/api/chat/route.ts
+
 import { openai } from '@ai-sdk/openai';
 import { streamText, tool, type CoreMessage } from 'ai'; 
 import { z } from 'zod';
@@ -502,7 +503,7 @@ export async function POST(req: Request) {
             async () => supabase.rpc('match_policies_v2', {
               query_embedding: embedding,
               match_threshold: RECALL_THRESHOLD,
-              match_count: 60, 
+              match_count: 40,        // 🌟 25 → 40 (분야별 누락 방지: 좁은 쿼리에서 해당 분야 정책을 더 많이 확보)
               p_source_type: 'public',
               p_only_active: true, 
             }),
@@ -541,7 +542,10 @@ export async function POST(req: Request) {
                   return days >= 0 ? ` [D-${days}]` : ' [만료됨 — 답변에서 제외]';
                 })()
               : ' [상시모집]';
-            return `- 정책명: ${p?.title ?? '미상'} (${p?.provider ?? '미상'}) [유사도 ${sim}%]${dday}\n  내용: ${p?.summary ?? ''}\n  링크: ${p?.url ?? ''}`;
+            // 🌟 요약을 150자로 압축 — 40건이 예산 안에 들어가도록. 상세는 모델이 naver로 보강.
+            const shortSummary = (p?.summary ?? '').slice(0, 150);
+            const ellipsis = (p?.summary ?? '').length > 150 ? '…' : '';
+            return `- 정책명: ${p?.title ?? '미상'} (${p?.provider ?? '미상'}) [유사도 ${sim}%]${dday}\n  내용: ${shortSummary}${ellipsis}\n  링크: ${p?.url ?? ''}`;
           };
 
           let result = '';
