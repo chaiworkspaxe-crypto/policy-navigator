@@ -39,6 +39,8 @@ export interface ThreadInputs {
   selected_dong: string;
   birth_year: string;
   extra_info: string;
+  children_count?: number;   // 🌟 가구 단위 탐색: 자녀 수 (0~5+)
+  has_spouse?: boolean;      // 🌟 가구 단위 탐색: 배우자 유무
 }
 
 export interface LoadMessagesResult {
