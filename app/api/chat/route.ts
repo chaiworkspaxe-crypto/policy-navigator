@@ -157,9 +157,9 @@ function getEligibilityBadge(text: string, birthYear: string, region: string): s
   let ageMax: number | null = null;
   // "만 19~34세", "만19세~만34세", "19세 이상 34세 이하"
   const rangeM = text.match(/만?\s*(\d{1,3})\s*[~\-세]\s*(?:이상)?\s*(?:만?\s*)?(\d{1,3})\s*세/);
-  if (rangeM) { ageMin = parseInt(rangeM[1]); ageMax = parseInt(rangeM[2]); }
-  if (ageMin === null) { const m = text.match(/만?\s*(\d{1,3})\s*세\s*이상/); if (m) ageMin = parseInt(m[1]); }
-  if (ageMax === null) { const m = text.match(/만?\s*(\d{1,3})\s*세\s*이하/); if (m) ageMax = parseInt(m[1]); }
+  if (rangeM) { ageMin = parseInt(rangeM[1]!); ageMax = parseInt(rangeM[2]!); }
+  if (ageMin === null) { const m = text.match(/만?\s*(\d{1,3})\s*세\s*이상/); if (m) ageMin = parseInt(m[1]!); }
+  if (ageMax === null) { const m = text.match(/만?\s*(\d{1,3})\s*세\s*이하/); if (m) ageMax = parseInt(m[1]!); }
   // 키워드 추론
   if (ageMin === null && ageMax === null) {
     if (/청년/.test(text)) { ageMin = 19; ageMax = 39; }
