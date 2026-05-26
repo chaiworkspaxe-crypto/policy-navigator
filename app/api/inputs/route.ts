@@ -14,6 +14,8 @@ const InputsSchema = z.object({
   selected_dong: z.string().max(50).optional(),
   birth_year: z.string().regex(/^\d{4}$/, "출생연도는 4자리 숫자여야 합니다.").optional(),
   extra_info: z.string().max(500, "추가 정보는 500자 이내여야 합니다.").optional(),
+  children_count: z.number().int().min(0).max(10).optional(),  // 🌟 가구 단위 탐색
+  has_spouse: z.boolean().optional(),                           // 🌟 가구 단위 탐색
   search_mode: z.enum(['public', 'private']).optional(), // 🌟 신규: 모드 영속성 추가
 });
 
