@@ -135,6 +135,18 @@ function normalizeToolQuery(q: string): string {
     .slice(0, 200);
 }
 
+// 🌟 세션 정책 풀 공유 타입/헬퍼 (RpcRow = search_internal_db 결과 한 행)
+type RpcRow = { title?: string; provider?: string; summary?: string; url?: string; deadline?: string | null; similarity?: number };
+function policyKey(p: RpcRow): string {
+  // 복합키: 같은 DB 행은 title·provider·url이 모두 동일 → 정상 dedup.
+  // 서로 다른 정책은 셋 중 하나라도 달라 절대 합쳐지지 않음(포털 공유 URL로 인한 오병합·누락 방지).
+  return [
+    (p.title ?? '').trim(),
+    (p.provider ?? '').trim(),
+    (p.url ?? '').trim(),
+  ].join('|').toLowerCase();
+}
+
 const supabase = getSupabase();
 
 export const runtime = 'edge';
@@ -430,6 +442,9 @@ export async function POST(req: Request) {
 
     const toolCallCache = new Map<string, string>();
     const seenUrls = new Set<string>();
+    // 🌟 세션 정책 풀(턴 스코프, per-request): search_internal_db 결과를 정책 단위로 dedup 누적.
+    //    리스크 A(누적 출력이 per-tool 캡 초과 → 꼬리 잘림) · B(중복 정책의 반복 예산 소모)를 동시에 완화.
+    const policyPool = new Map<string, RpcRow>();
     
     const budget = makeToolBudgetTracker(); 
 
@@ -483,7 +498,7 @@ export async function POST(req: Request) {
             .describe('한국어 자연어 검색어')
         }),
         execute: withToolGuard('search_internal_db', async ({ query }) => {
-          type RpcRow = { title?: string; provider?: string; summary?: string; url?: string; deadline?: string | null; similarity?: number };
+          // RpcRow 타입은 모듈 스코프로 이동(세션 정책 풀에서 공유)
 
           const embedding = await withTimeout(
             (signal) => getEmbedding(query, signal),
@@ -531,8 +546,33 @@ export async function POST(req: Request) {
             return '내부 DB에 신청 가능한 공고가 없음. 웹 검색으로 보완하세요.';
           }
 
-          const strict = live.filter(p => (p.similarity ?? 0) >= STRICT_THRESHOLD);
-          const recall = live.filter(p => (p.similarity ?? 0) < STRICT_THRESHOLD);
+          // 🌟 세션 정책 풀 dedup: 이미 앞 슬롯에서 수집된 정책은 전체 텍스트를 다시 내보내지 않는다.
+          //    → 중복 정책이 예산을 반복 소모하지 않고(리스크 B), 모델은 그 정책을 앞 결과에서 이미 1회 봤으므로 누락 없음.
+          const fresh: RpcRow[] = [];
+          const dup: RpcRow[] = [];
+          for (const p of live) {
+            const key = policyKey(p);
+            const prev = policyPool.get(key);
+            if (!prev) {
+              policyPool.set(key, p);
+              fresh.push(p);
+              continue;
+            }
+            const prevSim = prev.similarity ?? 0;
+            const curSim = p.similarity ?? 0;
+            // 🌟 위험 2 보강: 앞서 🟡(약한 매칭)로 저장됐는데 이번 슬롯에서 🟢(강한 매칭)이면
+            //    신뢰도가 강등된 채 누락되지 않도록 더 높은 유사도로 갱신 후 1회 재노출(🟢).
+            if (prevSim < STRICT_THRESHOLD && curSim >= STRICT_THRESHOLD) {
+              policyPool.set(key, p);
+              fresh.push(p);
+            } else {
+              if (curSim > prevSim) policyPool.set(key, p); // 메타(유사도)만 최신화
+              dup.push(p);
+            }
+          }
+
+          const strict = fresh.filter(p => (p.similarity ?? 0) >= STRICT_THRESHOLD);
+          const recall = fresh.filter(p => (p.similarity ?? 0) < STRICT_THRESHOLD);
 
           const fmt = (p: RpcRow) => {
             const sim = ((p.similarity ?? 0) * 100).toFixed(0);
@@ -555,6 +595,18 @@ export async function POST(req: Request) {
           if (recall.length > 0) {
             result += (strict.length > 0 ? '\n\n' : '');
             result += `[🟡 약한 매칭 — 사용자 요청과 다를 수 있음. 본문 직접 인용 금지. 웹 검색으로 한 번 더 검증한 후에만 언급 가능.]\n${recall.map(fmt).join('\n\n')}`;
+          }
+
+          // 🌟 이미 풀에 있는(앞 슬롯에서 수집된) 정책은 제목만 1줄로 — 중복 출력/예산 낭비 방지
+          if (dup.length > 0) {
+            const dupLines = dup.map(p => `- ${p?.title ?? '미상'} (${p?.provider ?? '미상'})`).join('\n');
+            result += (result ? '\n\n' : '');
+            result += `[♻️ 이미 앞 검색에서 수집된 정책 ${dup.length}건 — 답변에 중복 나열 금지. 새 정보 아님]\n${dupLines}`;
+          }
+
+          // 🌟 새 정책이 0건이면(이 분야는 이미 충분히 탐색됨) 모델에 "다음 분야로 이동" 신호
+          if (fresh.length === 0) {
+            return `[ℹ️ 이번 검색 결과는 모두 앞서 수집된 정책과 동일합니다(새 정책 0건). 이 분야는 충분히 탐색됐으니 다른 분야 키워드로 넘어가거나 naver_web_search로 지역 밀착 공고를 보완하세요.]`;
           }
 
           if (strict.length === 0 && recall.length > 0) {
