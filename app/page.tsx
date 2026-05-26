@@ -15,7 +15,7 @@ import {
 
 const DEFAULT_CITY = "선택하세요";
 const DEFAULT_DONG = "선택 안 함";
-const EMPTY_INPUTS: ThreadInputs = { selected_city: DEFAULT_CITY, selected_district: DEFAULT_CITY, selected_dong: DEFAULT_DONG, birth_year: "", extra_info: "" };
+const EMPTY_INPUTS: ThreadInputs = { selected_city: DEFAULT_CITY, selected_district: DEFAULT_CITY, selected_dong: DEFAULT_DONG, birth_year: "", extra_info: "", children_count: 0, has_spouse: false };
 
 const extractSummaryTableText = (text: string) => {
   const lines = text.split('\n');
@@ -288,6 +288,8 @@ export default function Home() {
   const [dong, setDong] = useState(EMPTY_INPUTS.selected_dong);
   const [birthYear, setBirthYear] = useState(EMPTY_INPUTS.birth_year);
   const [extraInfo, setExtraInfo] = useState(EMPTY_INPUTS.extra_info);
+  const [childrenCount, setChildrenCount] = useState(EMPTY_INPUTS.children_count ?? 0);
+  const [hasSpouse, setHasSpouse] = useState(EMPTY_INPUTS.has_spouse ?? false);
   const [query, setQuery] = useState("");
 
   const [lastTruncated, setLastTruncated] = useState(false);
@@ -489,6 +491,8 @@ export default function Home() {
     setDong(inputs?.selected_dong || EMPTY_INPUTS.selected_dong);
     setBirthYear(inputs?.birth_year || "");
     setExtraInfo(inputs?.extra_info || "");
+    setChildrenCount(inputs?.children_count ?? 0);
+    setHasSpouse(inputs?.has_spouse ?? false);
   };
 
   const loadThreads = async (uid: string) => {
@@ -609,7 +613,7 @@ export default function Home() {
     const followUpText = overridePrompt || query.trim();
     const userText = isFollowUp 
       ? followUpText 
-      : `📍 ${city} ${district} ${dong !== DEFAULT_DONG ? dong : ''} | 🎂 ${birthYear}년생 | 📝 ${extraInfo}`;
+      : `📍 ${city} ${district} ${dong !== DEFAULT_DONG ? dong : ''} | 🎂 ${birthYear}년생${hasSpouse ? ' | 💑 배우자' : ''}${childrenCount > 0 ? ` | 👶 자녀${childrenCount}명` : ''} | 📝 ${extraInfo}`;
 
     const userTextSnapshot = isFollowUp ? followUpText : "";
 
@@ -630,6 +634,8 @@ export default function Home() {
         selected_dong: dong,
         birth_year: birthYear,
         extra_info: extraInfo,
+        children_count: childrenCount,
+        has_spouse: hasSpouse,
       });
     } catch (e) {
       console.error('[saveThreadInputs]', e);
@@ -828,6 +834,21 @@ export default function Home() {
                   value={extraInfo} 
                   onChange={(e) => setExtraInfo(e.target.value)} 
                 />
+              </div>
+              {/* 🌟 가구 단위 탐색: 자녀·배우자 (선택사항) */}
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <select className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500 sm:w-1/2" value={childrenCount} onChange={(e) => setChildrenCount(Number(e.target.value))}>
+                  <option value={0}>자녀 없음</option>
+                  <option value={1}>자녀 1명</option>
+                  <option value={2}>자녀 2명</option>
+                  <option value={3}>자녀 3명 (다자녀)</option>
+                  <option value={4}>자녀 4명 (다자녀)</option>
+                  <option value={5}>자녀 5명+ (다자녀)</option>
+                </select>
+                <select className="w-full rounded-lg border border-gray-300 dark:border-[#444] bg-white dark:bg-[#2a2a2a] p-3 text-sm text-gray-800 dark:text-gray-100 outline-none transition focus:border-green-500 sm:w-1/2" value={hasSpouse ? "yes" : "no"} onChange={(e) => setHasSpouse(e.target.value === "yes")}>
+                  <option value="no">배우자 없음</option>
+                  <option value="yes">배우자 있음 (기혼)</option>
+                </select>
               </div>
               
               <button 
