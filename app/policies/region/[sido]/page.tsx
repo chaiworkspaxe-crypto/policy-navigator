@@ -13,7 +13,7 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://policyai.kr';
 
 // ── 동적 경로 사전 생성 ──
 export async function generateStaticParams() {
-  return REGION_LIST.map((sido) => ({ sido: encodeURIComponent(sido) }));
+  return REGION_LIST.map((sido) => ({ sido }));
 }
 
 // ── 메타데이터 ──
