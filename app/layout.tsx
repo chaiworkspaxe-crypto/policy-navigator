@@ -100,6 +100,18 @@ export default function RootLayout({
         {/* 화면 최상단에 가이드 컴포넌트를 배치 (인앱일 때만 알아서 나타남!) */}
         <InAppGuide />
 
+        {/* 🌟 FAQ JSON-LD — 구글 리치 스니펫용 */}
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "FAQPage",
+          "mainEntity": [
+            { "@type": "Question", "name": "정책 내비게이터는 무료인가요?", "acceptedAnswer": { "@type": "Answer", "text": "네, 완전 무료입니다. 로그인도 필요 없습니다. 거주지와 출생연도만 입력하면 바로 맞춤 정책을 찾아드립니다." }},
+            { "@type": "Question", "name": "어떤 정책을 찾아주나요?", "acceptedAnswer": { "@type": "Answer", "text": "정부, 지방자치단체, 공공기관의 보조금, 지원금, 청년정책, 주거지원, 취업지원, 복지혜택 등 약 10,000건 이상의 정책을 AI가 실시간으로 검색합니다." }},
+            { "@type": "Question", "name": "내 개인정보는 안전한가요?", "acceptedAnswer": { "@type": "Answer", "text": "회원가입이 없고, 입력하신 정보는 기기(localStorage)에만 저장됩니다. 서버에 개인정보를 저장하지 않습니다." }},
+            { "@type": "Question", "name": "가족(배우자, 자녀) 관련 정책도 찾을 수 있나요?", "acceptedAnswer": { "@type": "Answer", "text": "네, 입력폼에서 배우자 유무와 자녀 수를 입력하시면 신혼부부 지원, 육아 수당, 다자녀 혜택 등 가구 단위 정책도 함께 검색합니다." }},
+            { "@type": "Question", "name": "정책 정보는 얼마나 최신인가요?", "acceptedAnswer": { "@type": "Answer", "text": "매일 자동으로 보조금24, 온라인청년센터 등 공식 데이터를 동기화합니다. 실시간에 가까운 최신 정보를 제공합니다." }},
+          ]
+        }) }} />
         {children}
       </body>
     </html>
