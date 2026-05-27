@@ -58,8 +58,8 @@ export function addPolicies(items: Omit<SavedPolicy, 'id' | 'status' | 'savedAt'
 
 export function updateStatus(id: string, status: SavedPolicy['status']) {
   const all = getAll();
-  const idx = all.findIndex(p => p.id === id);
-  if (idx >= 0) { all[idx].status = status; saveAll(all); }
+  const target = all.find(p => p.id === id);
+  if (target) { target.status = status; saveAll(all); }
 }
 
 export function removePolicy(id: string) {
@@ -102,14 +102,14 @@ export function parsePoliciesFromTable(text: string): Omit<SavedPolicy, 'id' | '
     const lastCell = cells[cells.length - 1] || '';
     if (/\d{4}[-/]\d{2}[-/]\d{2}/.test(lastCell)) {
       const m = lastCell.match(/\d{4}[-/]\d{2}[-/]\d{2}/);
-      if (m) deadline = m[0];
+      if (m && m[0]) deadline = m[0];
     }
 
     // URL 추출: 셀 내 (https://...)
     let url = '';
     for (const c of cells) {
       const um = c.match(/https?:\/\/[^\s)]+/);
-      if (um) { url = um[0]; break; }
+      if (um && um[0]) { url = um[0]; break; }
     }
 
     results.push({ title, provider, url, deadline, category: cells[0] || null });
