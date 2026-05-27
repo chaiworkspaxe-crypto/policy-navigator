@@ -7,6 +7,8 @@ import { api, ChatMessage, extractApiErrorMessage, ThreadInputs, ThreadItem } fr
 import { CITY_TO_DISTRICTS } from "@/lib/regionData"; 
 import { useChatStream } from '@/lib/hooks/useChatStream';
 import AssistantBubble from '@/components/AssistantBubble';
+import PolicyChecklist from '@/components/PolicyChecklist';
+import { addPolicies, parsePoliciesFromTable } from '@/lib/policyChecklist';
 import { 
   MessageSquare, Plus, Send, Loader2, MapPin, Search, AlertCircle, 
   Menu, X, Trash2, Sun, Moon, Coffee, ChevronUp, ChevronDown, 
@@ -210,6 +212,17 @@ const MessageItem = memo(function MessageItem({
                 } catch (err) { console.error('공유/복사 실패:', err); }
               }} className="text-xs font-bold bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-3 py-1.5 rounded-lg hover:bg-green-200 dark:hover:bg-green-800/50 transition-colors flex items-center gap-1 border border-green-200 dark:border-green-800/30">
                 🔗 공유하기
+            </button>
+
+            {/* 🌟 내 정책 체크리스트에 저장 */}
+            <button onClick={() => {
+              const parsed = parsePoliciesFromTable(message.content);
+              if (parsed.length === 0) { alert('저장할 정책을 찾지 못했어요. 요약표가 있는 응답에서 시도해주세요.'); return; }
+              const count = addPolicies(parsed);
+              alert(count > 0 ? `${count}건이 내 체크리스트에 저장됐어요!` : '이미 모두 저장된 정책이에요.');
+              window.dispatchEvent(new Event('checklist-updated'));
+            }} className="text-xs font-bold bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400 px-3 py-1.5 rounded-lg hover:bg-yellow-100 dark:hover:bg-yellow-800/40 transition-colors flex items-center gap-1 border border-yellow-200 dark:border-yellow-800/30">
+              📋 내 목록에 저장
             </button>
           </div>
         )}
@@ -897,6 +910,9 @@ export default function Home() {
                   </button>
                 </div>
               )}
+
+              {/* 🌟 내 정책 체크리스트 (저장된 정책이 있을 때만 표시) */}
+              <PolicyChecklist />
 
               {messages.map((message, index) => (
                 <MessageItem
