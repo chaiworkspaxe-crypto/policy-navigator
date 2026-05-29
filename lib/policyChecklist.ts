@@ -86,18 +86,37 @@ export function parsePoliciesFromTable(text: string): Omit<SavedPolicy, 'id' | '
 
   for (const line of lines) {
     const t = line.trim();
-    if (!t.startsWith('|')) { if (inTable && results.length > 0) break; continue; }
-    if (t.includes('---')) { inTable = true; continue; }
-    if (!inTable) { inTable = true; continue; } // 헤더 행 스킵
+    // 표가 시작되지 않았거나, 테이블 포맷이 아니면 스킵
+    if (!t.startsWith('|')) { 
+      if (inTable && results.length > 0) break; 
+      continue; 
+    }
+    // 헤더 구분선(|---|---|) 스킵
+    if (t.includes('---')) { 
+      inTable = true; 
+      continue; 
+    }
+    // 첫 번째 줄(헤더 제목) 스킵
+    if (!inTable) { 
+      inTable = true; 
+      continue; 
+    } 
 
-    const cells = t.split('|').map(c => c.replace(/\*+/g, '').trim()).filter(Boolean);
+    // 🌟 [핵심 버그 수정] 양끝의 '|' 기호만 제거하고 split. filter(Boolean) 제거!
+    // 이렇게 해야 빈 칸(empty cell)이 있어도 배열 인덱스가 어긋나지 않습니다.
+    const rowContent = t.replace(/^\||\|$/g, ''); 
+    const cells = rowContent.split('|').map(c => c.replace(/\*+/g, '').trim());
+    
+    // 기본적으로 [분야, 정책명, 주관기관, 혜택, 마감일] 최소 3칸 이상이어야 유효한 데이터로 간주
     if (cells.length < 3) continue;
 
+    const category = cells[0] || null;
     const title = cells[1] || '';
     const provider = cells[2] || '';
+    
     if (!title || title.length < 2) continue;
 
-    // 마감일: "2026-04-10" 또는 "상시 모집" 등
+    // 마감일 추출: "2026-04-10" 형식 찾기
     let deadline: string | null = null;
     const lastCell = cells[cells.length - 1] || '';
     if (/\d{4}[-/]\d{2}[-/]\d{2}/.test(lastCell)) {
@@ -112,7 +131,7 @@ export function parsePoliciesFromTable(text: string): Omit<SavedPolicy, 'id' | '
       if (um && um[0]) { url = um[0]; break; }
     }
 
-    results.push({ title, provider, url, deadline, category: cells[0] || null });
+    results.push({ title, provider, url, deadline, category });
   }
   return results;
 }
