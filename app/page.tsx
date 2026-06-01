@@ -892,9 +892,35 @@ export default function Home() {
           className="mx-auto flex w-full max-w-4xl flex-1 flex-col overflow-y-auto p-4 sm:p-8 z-10"
         >
           {messages.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center text-gray-400 dark:text-gray-500 text-center px-4">
-              <MapPin size={48} className="mb-4 opacity-20" />
-              <p className="text-sm sm:text-base">거주지와 정보를 입력하고<br className="sm:hidden" /> 당신만의 혜택을 찾아보세요.</p>
+            <div className="flex h-full flex-col items-center justify-center text-center px-4 sm:px-8 py-10 animate-in fade-in duration-500">
+              <div className="w-20 h-20 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mb-6">
+                <Search size={40} className="text-green-600 dark:text-green-400" />
+              </div>
+              
+              <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-4">
+                숨은 내 돈 찾기, <br className="sm:hidden" />AI 정책 내비게이터 🧭
+              </h2>
+              
+              <p className="text-gray-600 dark:text-gray-400 mb-8 max-w-lg leading-relaxed">
+                매번 찾아보기 힘든 정부 지원금, 청년 정책, 복지 혜택을 AI가 10초 만에 분석해 드립니다. 
+                거주지와 나이만 입력하고 지금 바로 신청 가능한 혜택을 확인해 보세요.
+              </p>
+
+              {/* SEO를 위한 핵심 키워드 텍스트 덩어리 (구글 봇 먹이) */}
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 w-full max-w-2xl text-left">
+                <div className="bg-white dark:bg-[#1e1e1e] p-4 rounded-2xl border border-gray-200 dark:border-[#333] shadow-sm">
+                  <h3 className="font-bold text-gray-800 dark:text-gray-200 mb-1">💼 일자리·창업</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">취업지원금, 국비교육, 창업지원, 청년인턴</p>
+                </div>
+                <div className="bg-white dark:bg-[#1e1e1e] p-4 rounded-2xl border border-gray-200 dark:border-[#333] shadow-sm">
+                  <h3 className="font-bold text-gray-800 dark:text-gray-200 mb-1">🏠 주거·금융</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">월세지원, 청년적금, 전세보증금 대출, 디딤돌</p>
+                </div>
+                <div className="bg-white dark:bg-[#1e1e1e] p-4 rounded-2xl border border-gray-200 dark:border-[#333] shadow-sm hidden md:block">
+                  <h3 className="font-bold text-gray-800 dark:text-gray-200 mb-1">❤️ 복지·육아</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">신혼부부 혜택, 아동수당, 기초생활, 생활비</p>
+                </div>
+              </div>
             </div>
           ) : (
             <div className="space-y-6 pb-4">
