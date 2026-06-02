@@ -9,6 +9,7 @@ import { after } from 'next/server';
 import { buildSystemPrompt } from '@/lib/prompts/policyNavigator';
 import { getCachedSearch, setCachedSearch } from '@/lib/searchCache'; 
 import { checkRateLimit } from '@/lib/rateLimit'; 
+import { reserveTavilyUsage } from '@/lib/tavilyUsage';
 
 import { extractProfileCore } from '@/app/api/profile/extract/_logic';
 import { getEmbedding } from '@/lib/embeddingCache';
@@ -375,7 +376,12 @@ function makeCoverageLedger(plan: ReturnType<typeof buildCoveragePlan>) {
     });
   }
 
-  const classifyDomains = (query: string): CoverageDomain[] => {
+  const classifyDomains = (query: string, domainId?: string): CoverageDomain[] => {
+    if (domainId) {
+      const explicit = entries.get(domainId);
+      if (explicit) return [explicit.domain];
+    }
+
     const matched = detectMatchedDomains(query);
 
     if (matched.length > 0) {
@@ -390,8 +396,8 @@ function makeCoverageLedger(plan: ReturnType<typeof buildCoveragePlan>) {
   };
 
   return {
-    record(toolName: CoverageToolName, query: string, result: string) {
-      const domains = classifyDomains(query);
+    record(toolName: CoverageToolName, query: string, result: string, domainId?: string) {
+      const domains = classifyDomains(query, domainId);
       const resultCount = countPolicyLikeItems(result);
       const isEmpty = /결과 없음|데이터 없음|0건|새 정책 0건|매칭되는 데이터 없음|신청 가능한 공고가 없음/i.test(result);
 
@@ -411,7 +417,7 @@ function makeCoverageLedger(plan: ReturnType<typeof buildCoveragePlan>) {
 
     toSystemContext() {
       const domainLines = plan.domains
-        .map((d) => `- ${d.emoji} ${d.label}: ${d.keywords}`)
+        .map((d) => `- ${d.id}: ${d.emoji} ${d.label}`)
         .join('\n');
 
       return `
@@ -419,15 +425,17 @@ function makeCoverageLedger(plan: ReturnType<typeof buildCoveragePlan>) {
 [서버 생성 Coverage Plan — 모델은 이 계획을 우선 따르세요]
 - 탐색 모드: ${plan.mode === 'full' ? '전 분야 Coverage 탐색' : '특정 분야 집중 탐색'}
 - 계획 사유: ${plan.reason}
+- 핵심 원칙: search_internal_db는 1개 호출당 1개 분야만 검색하세요. 여러 분야 키워드를 한 쿼리에 섞지 마세요.
+- 권장 방식: 여러 분야를 봐야 하면 search_internal_db를 분야별로 나눠 병렬 호출하고, 가능하면 각 호출에 domainId를 함께 넣으세요.
 - 매우 중요: 내부 DB는 정부 정책 중심 1차 검색입니다. DB 결과가 있어도 시군구·읍면동·주민센터·청년센터·복지포털·공공기관·공공재단의 최신 공고는 naver_web_search로 보완해야 합니다.
-- Tavily(global_web_search)는 넓은 탐색용이 아니라 마감일·금액·공식 신청 링크 검증용입니다.
-- 탐색 대상 분야:
+- Naver는 지역/공공기관/공공재단 최신 공고 보완용입니다. Tavily(global_web_search)는 넓은 탐색용이 아니라 마감일·금액·공식 신청 링크 검증용입니다.
+- 탐색 대상 분야 ID:
 ${domainLines}
 [Coverage Plan 끝]
 `;
     },
 
-    footer(toolName: CoverageToolName, query: string) {
+    footer(toolName: CoverageToolName, query: string, domainId?: string) {
       const checked = Array.from(entries.values())
         .filter((e) => e.searched)
         .map((e) => e.domain.label);
@@ -441,6 +449,7 @@ ${domainLines}
 [Coverage 진행상황 — 내부 참고용]
 - 방금 사용한 도구: ${toolName}
 - 방금 검색어: ${query}
+- 방금 분야 ID: ${domainId || '미지정'}
 - 현재까지 확인한 분야: ${checked.length > 0 ? checked.join(', ') : '아직 없음'}
 - 아직 추가 확인이 필요한 분야: ${pending.length > 0 ? pending.join(', ') : '없음'}
 - 주의: 위 진행상황은 사용자에게 그대로 노출하지 말고, 답변 마지막 Coverage Report에 자연스럽게 반영하세요.
@@ -448,7 +457,6 @@ ${domainLines}
     },
   };
 }
-
 
 // 🌟 세션 정책 풀 공유 타입/헬퍼 (RpcRow = search_internal_db 결과 한 행)
 type RpcRow = { title?: string; provider?: string; summary?: string; url?: string; deadline?: string | null; similarity?: number };
@@ -913,7 +921,7 @@ export async function POST(req: Request) {
     let tavilyCallCount = 0;
     const MAX_TAVILY_CALLS = coveragePlan.mode === 'full' ? 2 : 1;
 
-    const withToolGuard = <T extends { query: string }>(
+    const withToolGuard = <T extends { query: string; domainId?: string }>(
       toolName: string,
       exec: (args: T) => Promise<string>,
     ) => async (args: T) => {
@@ -937,8 +945,8 @@ export async function POST(req: Request) {
       }
 
       if (isCoverageToolName(toolName)) {
-        coverageLedger.record(toolName, args.query, result);
-        result += coverageLedger.footer(toolName, args.query);
+        coverageLedger.record(toolName, args.query, result, args.domainId);
+        result += coverageLedger.footer(toolName, args.query, args.domainId);
       }
 
       result = budget.spend(result, toolName);
@@ -984,7 +992,10 @@ export async function POST(req: Request) {
           query: z.string()
             .min(1, '검색어가 비어있습니다.')
             .max(150, '검색어가 너무 깁니다.')
-            .describe('한국어 자연어 검색어')
+            .describe('한국어 자연어 검색어'),
+          domainId: z.string()
+            .optional()
+            .describe('Coverage 분야 ID. 예: housing, finance, job, startup, education, culture, welfare, health, career, family, married, senior, local, community, transport, activity')
         }),
         execute: withToolGuard('search_internal_db', async ({ query }) => {
           // RpcRow 타입은 모듈 스코프로 이동(세션 정책 풀에서 공유)
@@ -1119,7 +1130,10 @@ export async function POST(req: Request) {
           query: z.string()
             .min(1, '검색어가 비어있습니다.')
             .max(150, '검색어가 너무 깁니다.')
-            .describe('한국어 자연어 검색어')
+            .describe('한국어 자연어 검색어'),
+          domainId: z.string()
+            .optional()
+            .describe('Coverage 분야 ID. 예: housing, finance, job, startup, education, culture, welfare, health, career, family, married, senior, local, community, transport, activity')
         }),
         execute: withToolGuard('naver_web_search', async ({ query }) => {
           const clientId = process.env.NAVER_CLIENT_ID;
@@ -1136,9 +1150,9 @@ export async function POST(req: Request) {
 
           // 불필요한 뉴스 검색 등을 빼고, 단일 쿼리로 검색 품질과 속도를 높임
           const isAlreadyFiltered = /site:|go\.kr|or\.kr|\-/i.test(webQuery);
-          const finalNaverQuery = isAlreadyFiltered 
-            ? webQuery 
-            : `${webQuery} 지원금 OR 혜택`; // 너무 긴 조건문(정부 지자체 공고...) 삭제
+          const finalNaverQuery = isAlreadyFiltered
+            ? webQuery
+            : `${webQuery} 지자체 OR 청년센터 공고`; // ⬅️ 핵심 키워드 2개로 압축
 
           const headers = { 'X-Naver-Client-Id': clientId, 'X-Naver-Client-Secret': clientSecret };
 
@@ -1208,7 +1222,10 @@ export async function POST(req: Request) {
           query: z.string()
             .min(1, '검색어가 비어있습니다.')
             .max(150, '검색어가 너무 깁니다.')
-            .describe('한국어 자연어 검색어')
+            .describe('한국어 자연어 검색어'),
+          domainId: z.string()
+            .optional()
+            .describe('Coverage 분야 ID. 예: housing, finance, job, startup, education, culture, welfare, health, career, family, married, senior, local, community, transport, activity')
         }),
         execute: withToolGuard('global_web_search', async ({ query }) => {
           const tavilyKey = process.env.TAVILY_API_KEY;
@@ -1240,38 +1257,57 @@ export async function POST(req: Request) {
             return cached;
           }
 
+          const quota = await reserveTavilyUsage(1);
+          if (!quota.allowed) {
+            return `[Tavily 월간 사용량 제한] ${quota.reason}. 추가 Tavily 호출 없이 DB와 Naver 결과만으로 답변을 정리하세요.`;
+          }
+
           const tavilyMaxResults = mode === 'public' ? 8 : 5;
           tavilyCallCount++;
 
-          const res = (await withTimeout(
-            async (signal) => fetch('https://api.tavily.com/search', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                api_key: tavilyKey,
-                query: localizedQuery,
-                max_results: tavilyMaxResults,
-                search_depth: 'basic',
+          // 🌟 [신규] try-catch 블록을 추가하여 API 실패 시 환불 처리
+          try {
+            const res = (await withTimeout(
+              async (signal) => fetch('https://api.tavily.com/search', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  api_key: tavilyKey,
+                  query: localizedQuery,
+                  max_results: tavilyMaxResults,
+                  search_depth: 'basic',
+                }),
+                signal,
               }),
-              signal,
-            }),
-            TOOL_TIMEOUT_MS + 2000,
-            'tavily',
-            req.signal,
-          )) as Response;
+              TOOL_TIMEOUT_MS + 2000,
+              'tavily',
+              req.signal,
+            )) as Response;
 
-          if (!res.ok) throw new Error(`글로벌 검색 ${res.status}`);
+            if (!res.ok) throw new Error(`글로벌 검색 ${res.status}`);
 
-          const data = await res.json() as { results?: Array<{ title: string; content: string; url: string }> };
-          if (!data.results?.length) return '글로벌 검색 결과 없음. 키워드를 바꿔 재시도하세요.';
+            const data = await res.json() as { results?: Array<{ title: string; content: string; url: string }> };
+            if (!data.results?.length) return '글로벌 검색 결과 없음. 키워드를 바꿔 재시도하세요.';
 
-          const formatted = data.results
-            .map((r: any) => `- 제목: ${r.title}\n  내용: ${r.content}\n  링크: ${r.url}`)
-            .join('\n\n');
+            let formatted = data.results
+              .map((r: any) => `- 제목: ${r.title}\n  내용: ${r.content}\n  링크: ${r.url}`)
+              .join('\n\n');
 
-          void setCachedSearch('tavily', mode, tavilyQuery, formatted, 6);
+            if (quota.nearLimit) {
+              formatted += `\n\n[⚠️ Tavily 월간 사용량이 ${quota.used}/${quota.limit}회에 도달했습니다. 이후에는 Naver와 내부 DB 위주로 답변하세요.]`;
+            }
 
-          return formatted;
+            void setCachedSearch('tavily', mode, tavilyQuery, formatted, 6);
+
+            return formatted;
+
+          } catch (error: any) {
+            // 🌟 [신규] 통신 에러나 타임아웃 발생 시 깎았던 크레딧 환불!
+            import('@/lib/tavilyUsage').then(({ refundTavilyUsage }) => {
+              refundTavilyUsage(1);
+            });
+            throw error; // 에러를 다시 던져서 기존의 도구 실패 로직(withToolGuard)이 처리하게 함
+          }
         }),
       }),
     };
