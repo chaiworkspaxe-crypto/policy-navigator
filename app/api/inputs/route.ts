@@ -42,31 +42,40 @@ export async function GET(req: Request) {
   return NextResponse.json({ inputs: data });
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const USER_ID_RE = /^user_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function compactUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(obj).filter(([, value]) => value !== undefined),
+  ) as Partial<T>;
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
     const { thread_id, user_id, ...rawInputs } = body;
-    
-    // 1. 필수 기본 아이디 검증
-    if (!thread_id || !user_id || typeof thread_id !== 'string' || typeof user_id !== 'string') {
-      return NextResponse.json({ error: 'thread_id, user_id 필요' }, { status: 400 });
+
+    if (
+      typeof thread_id !== 'string' ||
+      typeof user_id !== 'string' ||
+      !UUID_RE.test(thread_id) ||
+      !USER_ID_RE.test(user_id)
+    ) {
+      return NextResponse.json({ error: 'invalid id format' }, { status: 400 });
     }
 
-    // 🌟 [개선] 2. Zod를 이용한 강력한 형식 검증 및 살균
     const parsed = InputsSchema.safeParse(rawInputs);
     if (!parsed.success) {
-      // 검증 실패 시 구체적인 에러 사유를 반환 (디버깅 용이)
-      return NextResponse.json({ 
-        error: 'invalid inputs', 
-        details: parsed.error.flatten() 
+      return NextResponse.json({
+        error: 'invalid inputs',
+        details: parsed.error.flatten(),
       }, { status: 400 });
     }
-    const safeInputs = parsed.data;
 
-    // 3. 소유권 사전 검증 (IDOR 방어)
     const { data: existingThread, error: ownErr } = await supabase
       .from('chat_threads')
-      .select('user_id')
+      .select('thread_id, user_id')
       .eq('thread_id', thread_id)
       .maybeSingle();
 
@@ -74,12 +83,17 @@ export async function POST(req: Request) {
       console.error('[POST /api/inputs] ownership check:', ownErr);
       return NextResponse.json({ error: ownErr.message }, { status: 500 });
     }
-    
-    if (existingThread && existingThread.user_id !== user_id) {
+
+    if (!existingThread) {
+      return NextResponse.json({ error: 'thread not found' }, { status: 404 });
+    }
+
+    if (existingThread.user_id !== user_id) {
       return NextResponse.json({ error: 'forbidden' }, { status: 403 });
     }
 
-    // 4. 안전한 데이터만 DB에 저장
+    const safeInputs = compactUndefined(parsed.data);
+
     const { error } = await supabase.from('chat_thread_inputs').upsert(
       {
         thread_id,
@@ -87,17 +101,16 @@ export async function POST(req: Request) {
         ...safeInputs,
         updated_at: new Date().toISOString(),
       },
-      { onConflict: 'thread_id' },
+      { onConflict: 'thread_id,user_id' },
     );
 
     if (error) {
       console.error('[POST /api/inputs]', error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
-    
+
     return NextResponse.json({ success: true });
-    
-  } catch (e: any) {
+  } catch (e) {
     console.error('[POST /api/inputs] Unexpected Error:', e);
     return NextResponse.json({ error: 'invalid body' }, { status: 400 });
   }
