@@ -101,7 +101,7 @@ export async function POST(req: Request) {
         ...safeInputs,
         updated_at: new Date().toISOString(),
       },
-      { onConflict: 'thread_id,user_id' },
+      { onConflict: 'thread_id' },
     );
 
     if (error) {
