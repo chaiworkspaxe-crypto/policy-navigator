@@ -958,19 +958,23 @@ export async function POST(req: Request) {
       return result + dupNote;
     };
 
-    function buildServerAugmentedQuery(rawQuery: string): string {
+    // 1. 내부 DB(pgvector)용: 의미 기반이므로 상세한 서술어 포함
+    function buildVectorQuery(rawQuery: string): string {
       const parts: string[] = [];
-
       if (userRegion) parts.push(userRegion);
       if (userBirthYear) parts.push(getAgeGroupHint(userBirthYear));
-
       parts.push(rawQuery);
+      return parts.join(' ').replace(/\s+/g, ' ').trim().slice(0, 220);
+    }
 
-      return parts
-        .join(' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 220);
+    // 2. 외부 웹 검색(Naver/Tavily)용: 키워드 매칭이므로 군더더기('25세 청년' 등) 제거
+    function buildLexicalQuery(rawQuery: string): string {
+      const parts: string[] = [];
+      // 동(Dong)은 검색어를 너무 좁히므로 시/구까지만 사용
+      const broadRegion = userRegion.split(' ').slice(0, 2).join(' ');
+      if (broadRegion) parts.push(broadRegion);
+      parts.push(rawQuery);
+      return parts.join(' ').replace(/\s+/g, ' ').trim().slice(0, 100);
     }
 
     const commonTools = {
@@ -985,7 +989,7 @@ export async function POST(req: Request) {
         execute: withToolGuard('search_internal_db', async ({ query }) => {
           // RpcRow 타입은 모듈 스코프로 이동(세션 정책 풀에서 공유)
           
-          const augmentedQuery = buildServerAugmentedQuery(query);
+          const augmentedQuery = buildVectorQuery(query);
 
           const embedding = await withTimeout(
             (signal) => getEmbedding(augmentedQuery, signal),
@@ -1122,7 +1126,7 @@ export async function POST(req: Request) {
           const clientSecret = process.env.NAVER_CLIENT_SECRET;
           if (!clientId || !clientSecret) return '네이버 API 키 미설정. global_web_search를 사용하세요.';
 
-          const webQuery = buildServerAugmentedQuery(query);
+          const webQuery = buildLexicalQuery(query);
 
           const cached = await getCachedSearch('naver', mode, webQuery);
           if (cached) {
@@ -1130,40 +1134,21 @@ export async function POST(req: Request) {
             return cached;
           }
 
+          // 불필요한 뉴스 검색 등을 빼고, 단일 쿼리로 검색 품질과 속도를 높임
           const isAlreadyFiltered = /site:|go\.kr|or\.kr|\-/i.test(webQuery);
-          const officialQuery = isAlreadyFiltered 
+          const finalNaverQuery = isAlreadyFiltered 
             ? webQuery 
-            : `${webQuery} 정부 지자체 공고 (지원 OR 혜택 OR 안내)`;
-
-          const generalQuery = isAlreadyFiltered 
-            ? webQuery 
-            : `${webQuery} 지원금 혜택`;
+            : `${webQuery} 지원금 OR 혜택`; // 너무 긴 조건문(정부 지자체 공고...) 삭제
 
           const headers = { 'X-Naver-Client-Id': clientId, 'X-Naver-Client-Secret': clientSecret };
 
-          const [officialSettled, generalSettled, newsSettled] = await Promise.allSettled([
-            withTimeout(
-              async (signal) => fetch(
-                `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(officialQuery)}&display=10&sort=sim`,
-                { headers, signal }
-              ),
-              TOOL_TIMEOUT_MS, 'naver-official', req.signal,
+          const response = await withTimeout(
+            async (signal) => fetch(
+              `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(finalNaverQuery)}&display=10&sort=sim`,
+              { headers, signal }
             ),
-            withTimeout(
-              async (signal) => fetch(
-                `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(generalQuery)}&display=5&sort=sim`,
-                { headers, signal }
-              ),
-              TOOL_TIMEOUT_MS, 'naver-general', req.signal,
-            ),
-            withTimeout(
-              async (signal) => fetch(
-                `https://openapi.naver.com/v1/search/news?query=${encodeURIComponent(query)}&display=3&sort=date`,
-                { headers, signal }
-              ),
-              TOOL_TIMEOUT_MS, 'naver-news', req.signal,
-            ),
-          ]);
+            TOOL_TIMEOUT_MS, 'naver-search', req.signal,
+          ).catch(() => null);
 
           const formatItem = (item: any, source: string) => {
             const t = decodeNaverEntities(item?.title ?? '');
@@ -1174,42 +1159,33 @@ export async function POST(req: Request) {
             return `- [${source}] ${tier} 제목: ${t}\n  내용: ${d}\n  링크: ${link}`;
           };
 
-          const out: string[] = [];
-          const seenLinks = new Set<string>();
-
           const DOMAIN_TIER = (link: string): number => {
             if (/\.(go|or|gov)\.kr(\/|$)/i.test(link)) return 100;
             if (/(yna\.co\.kr|kbs\.co\.kr|hani\.co\.kr|chosun\.com|donga\.com|mk\.co\.kr|mbn\.co\.kr|ytn\.co\.kr)/i.test(link)) return 50;
             return 10;
           };
 
-          const collect = async (settled: PromiseSettledResult<unknown>, sourceLabel: string) => {
-            if (settled.status !== 'fulfilled') return;
-            const response = settled.value as Response;
-            if (!response.ok) return;
+          const out: string[] = [];
+          const seenLinks = new Set<string>();
 
+          if (response && response.ok) {
             const data = await response.json().catch(() => ({}));
             const items = (data.items ?? []) as any[];
 
             for (const item of items) {
               const link = typeof item?.link === 'string' ? item.link : '';
               if (!link) continue;
-
               try {
                 const host = new URL(link).hostname;
                 const dedupKey = `${host}::${(item.title ?? '').slice(0, 30)}`;
                 if (seenLinks.has(dedupKey)) continue;
                 seenLinks.add(dedupKey);
               } catch { continue; }
-
-              out.push(formatItem(item, sourceLabel));
+              out.push(formatItem(item, '웹검색'));
             }
-          };
+          }
 
-          await collect(officialSettled, '공식');
-          await collect(generalSettled, '일반');
-          await collect(newsSettled, '뉴스');
-
+          // 우선순위 정렬 (기존 DOMAIN_TIER 로직 그대로 유지)
           out.sort((a, b) => {
             const linkA = a.match(/링크:\s*(\S+)/)?.[1] ?? '';
             const linkB = b.match(/링크:\s*(\S+)/)?.[1] ?? '';
@@ -1255,7 +1231,7 @@ export async function POST(req: Request) {
             year: 'numeric',
           }).format(new Date());
 
-          const tavilyQuery = buildServerAugmentedQuery(query);
+          const tavilyQuery = buildLexicalQuery(query);
           const localizedQuery = `${seoulYear}년 대한민국 정부 정책 지원금 ${tavilyQuery}`;
 
           const cached = await getCachedSearch('tavily', mode, tavilyQuery);
