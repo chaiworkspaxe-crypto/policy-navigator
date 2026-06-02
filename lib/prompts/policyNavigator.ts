@@ -1,6 +1,4 @@
-
-
-code = r'''// lib/prompts/policyNavigator.ts
+// lib/prompts/policyNavigator.ts
 
 // ⚠️ 시간 의존부를 시스템 프롬프트 본문에서 분리, 동적으로 주입한다.
 const POLICY_NAVIGATOR_BASE_PROMPT = `
