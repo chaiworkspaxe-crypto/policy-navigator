@@ -994,8 +994,7 @@ export async function POST(req: Request) {
             .max(150, '검색어가 너무 깁니다.')
             .describe('한국어 자연어 검색어'),
           domainId: z.string()
-            .optional()
-            .describe('Coverage 분야 ID. 예: housing, finance, job, startup, education, culture, welfare, health, career, family, married, senior, local, community, transport, activity')
+            .describe('Coverage 분야 ID. 예: housing, finance, job, startup, education, culture, welfare, health, career, family, married, senior, local, community, transport, activity (해당 없으면 빈 문자열 "" 전달)')
         }),
         execute: withToolGuard('search_internal_db', async ({ query }) => {
           // RpcRow 타입은 모듈 스코프로 이동(세션 정책 풀에서 공유)
@@ -1132,8 +1131,7 @@ export async function POST(req: Request) {
             .max(150, '검색어가 너무 깁니다.')
             .describe('한국어 자연어 검색어'),
           domainId: z.string()
-            .optional()
-            .describe('Coverage 분야 ID. 예: housing, finance, job, startup, education, culture, welfare, health, career, family, married, senior, local, community, transport, activity')
+            .describe('Coverage 분야 ID. 예: housing, finance, job, startup, education, culture, welfare, health, career, family, married, senior, local, community, transport, activity (해당 없으면 빈 문자열 "" 전달)')
         }),
         execute: withToolGuard('naver_web_search', async ({ query }) => {
           const clientId = process.env.NAVER_CLIENT_ID;
@@ -1224,8 +1222,7 @@ export async function POST(req: Request) {
             .max(150, '검색어가 너무 깁니다.')
             .describe('한국어 자연어 검색어'),
           domainId: z.string()
-            .optional()
-            .describe('Coverage 분야 ID. 예: housing, finance, job, startup, education, culture, welfare, health, career, family, married, senior, local, community, transport, activity')
+            .describe('Coverage 분야 ID. 예: housing, finance, job, startup, education, culture, welfare, health, career, family, married, senior, local, community, transport, activity (해당 없으면 빈 문자열 "" 전달)')
         }),
         execute: withToolGuard('global_web_search', async ({ query }) => {
           const tavilyKey = process.env.TAVILY_API_KEY;
