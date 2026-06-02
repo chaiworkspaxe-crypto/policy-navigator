@@ -129,6 +129,17 @@ export function useChatStream() {
         : [...opts.messages, { role: 'user' as const, content: opts.newUserContent }]; 
 
       let accumulated = ''; 
+      let doneFired = false;
+      let serverErrorSeen = false;
+
+      const finishOnce = (
+        full?: string,
+        meta?: { truncated?: boolean; finishReason?: string },
+      ) => {
+        if (doneFired) return;
+        doneFired = true;
+        handlers.onDone?.(full ?? accumulated, meta);
+      };
 
       try {
         const response = await fetch('/api/chat', {
@@ -224,24 +235,26 @@ export function useChatStream() {
                 firstDeltaFired = true;
                 handlers.onFirstDelta?.();
               }
+
               accumulated += data.delta;
               handlers.onDelta?.(data.delta, accumulated);
-              
-              safeSetAiStatus(''); 
-              resetContentWatchdog(); 
+
+              safeSetAiStatus('');
+              resetContentWatchdog();
             } else if (data.type === 'status') {
               safeSetAiStatus(data.message);
               handlers.onStatus?.(data.message);
-              
               extendContentWatchdog(NO_CONTENT_EXTENSION_PER_STATUS_MS);
-              
             } else if (data.type === 'error') {
+              serverErrorSeen = true;
               handlers.onError?.(data.message);
             } else if (data.type === 'done') {
-              handlers.onDone?.(data.full_content ?? accumulated, { 
-                truncated: data.truncated === true,
-                finishReason: data.finish_reason,
-              });
+              if (!serverErrorSeen) {
+                finishOnce(data.full_content ?? accumulated, {
+                  truncated: data.truncated === true,
+                  finishReason: data.finish_reason,
+                });
+              }
             }
           }
         }
@@ -258,10 +271,12 @@ export function useChatStream() {
               accumulated += data.delta;
               handlers.onDelta?.(data.delta, accumulated);
             } else if (data.type === 'done') {
-              handlers.onDone?.(data.full_content ?? accumulated, {
-                truncated: data.truncated === true,
-                finishReason: data.finish_reason,
-              });
+              if (!serverErrorSeen) {
+                finishOnce(data.full_content ?? accumulated, {
+                  truncated: data.truncated === true,
+                  finishReason: data.finish_reason,
+                });
+              }
             }
           } catch {/* 쓰레기 값이면 조용히 무시 */}
         }
@@ -271,18 +286,27 @@ export function useChatStream() {
         
         if (err.name === 'AbortError') {
           if (watchdogTimedOut) {
-            if (accumulated.length > 0) handlers.onDone?.(accumulated);
+            if (accumulated.length > 0) {
+              finishOnce(accumulated, { finishReason: 'client-watchdog-timeout' });
+            }
+
             handlers.onError?.(
               '응답이 오래 걸려 자동으로 끊었어요. 받은 내용까지는 살려뒀으니, 이어쓰기 버튼을 눌러 마저 받아보세요.',
             );
           } else {
             console.log('[useChatStream] 사용자에 의해 스트리밍이 중단되었습니다.');
-            if (accumulated.length > 0) handlers.onDone?.(accumulated);
+
+            if (accumulated.length > 0) {
+              finishOnce(accumulated, { finishReason: 'user-aborted' });
+            }
           }
         } else {
           console.error('[useChatStream]', err);
           handlers.onError?.('서버 상태가 불안정합니다. 잠시 후 다시 시도해주세요.');
-          if (accumulated.length > 0) handlers.onDone?.(accumulated); 
+
+          if (accumulated.length > 0) {
+            finishOnce(accumulated, { finishReason: 'client-error' });
+          }
         }
       } finally {
         if (watchdogId) clearTimeout(watchdogId); 
