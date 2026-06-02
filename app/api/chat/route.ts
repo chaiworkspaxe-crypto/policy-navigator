@@ -135,6 +135,321 @@ function normalizeToolQuery(q: string): string {
     .slice(0, 200);
 }
 
+// ────────────────────────────────────────────────────────────
+// 🧭 Coverage Planner — 전 분야 누락 방지용 서버 주도 탐색 계획
+// ────────────────────────────────────────────────────────────
+type CoverageMode = 'full' | 'focused';
+
+type CoverageDomain = {
+  id: string;
+  label: string;
+  emoji: string;
+  keywords: string;
+  triggers: RegExp[];
+  adjacent?: string[];
+};
+
+const COVERAGE_DOMAINS: CoverageDomain[] = [
+  {
+    id: 'housing',
+    label: '주거',
+    emoji: '🏠',
+    keywords: '월세 전세 임대주택 주거급여 이사비 보증금 주거 지원',
+    triggers: [/월세|전세|임대|주거|보증금|이사비|주택|집/i],
+    adjacent: ['finance', 'local'],
+  },
+  {
+    id: 'finance',
+    label: '금융',
+    emoji: '💰',
+    keywords: '적금 자산형성 대출이자 신용회복 금융교육 생활금융 지원',
+    triggers: [/금융|적금|자산|대출|이자|신용|통장/i],
+    adjacent: ['housing'],
+  },
+  {
+    id: 'job',
+    label: '일자리',
+    emoji: '💼',
+    keywords: '취업 일자리 인턴 채용연계 직업훈련 구직수당 지원',
+    triggers: [/취업|일자리|인턴|채용|구직|직업훈련|국비/i],
+    adjacent: ['career', 'education'],
+  },
+  {
+    id: 'startup',
+    label: '창업',
+    emoji: '🚀',
+    keywords: '창업 창업자금 사업화 공간지원 멘토링 소상공인 지원',
+    triggers: [/창업|사업화|소상공인|스타트업|창업자금/i],
+    adjacent: ['finance', 'community'],
+  },
+  {
+    id: 'education',
+    label: '교육',
+    emoji: '📚',
+    keywords: '장학금 학자금 국비교육 자격증 평생교육 교육비 지원',
+    triggers: [/교육|장학금|학자금|자격증|국비|수강료|평생교육/i],
+    adjacent: ['job', 'career'],
+  },
+  {
+    id: 'culture',
+    label: '문화·예술',
+    emoji: '🎨',
+    keywords: '문화누리 공연 전시 예술인 문화예술 활동비 지원',
+    triggers: [/문화|예술|공연|전시|문화누리|예술인/i],
+    adjacent: ['activity'],
+  },
+  {
+    id: 'welfare',
+    label: '복지·생활',
+    emoji: '❤️',
+    keywords: '생계비 긴급복지 생활안정 공과금 통신비 생활지원',
+    triggers: [/복지|생계|생활|공과금|통신비|긴급|생활안정/i],
+    adjacent: ['health', 'local'],
+  },
+  {
+    id: 'health',
+    label: '건강·의료',
+    emoji: '🏥',
+    keywords: '의료비 건강검진 정신건강 마음상담 심리상담 지원',
+    triggers: [/건강|의료|병원|검진|심리|마음|상담|정신건강/i],
+    adjacent: ['welfare'],
+  },
+  {
+    id: 'career',
+    label: '진로·상담',
+    emoji: '🧠',
+    keywords: '진로상담 멘토링 커리어 상담 취업상담 프로그램',
+    triggers: [/진로|멘토링|커리어|상담|취업상담/i],
+    adjacent: ['job', 'education'],
+  },
+  {
+    id: 'family',
+    label: '가족·육아',
+    emoji: '👶',
+    keywords: '출산 육아 보육료 아동수당 다자녀 가족 지원',
+    triggers: [/가족|육아|출산|보육|아동|다자녀|부모/i],
+    adjacent: ['married', 'welfare'],
+  },
+  {
+    id: 'married',
+    label: '신혼·부부',
+    emoji: '💍',
+    keywords: '신혼부부 전세자금 주택자금 출산 부부 가족 지원',
+    triggers: [/신혼|부부|혼인|배우자|결혼/i],
+    adjacent: ['housing', 'family'],
+  },
+  {
+    id: 'senior',
+    label: '중장년·노년',
+    emoji: '🧓',
+    keywords: '중장년 노년 재취업 돌봄 건강 연금 사회참여 지원',
+    triggers: [/중장년|노년|시니어|어르신|재취업|돌봄|연금/i],
+    adjacent: ['job', 'health'],
+  },
+  {
+    id: 'local',
+    label: '지자체 특화',
+    emoji: '🏛️',
+    keywords: '시 군 구 동 주민센터 청년센터 복지포털 자체 지원사업 공고',
+    triggers: [/지자체|구청|시청|군청|주민센터|동사무소|청년센터|복지포털|시군구|읍면동|공공기관|공공재단/i],
+    adjacent: ['housing', 'welfare'],
+  },
+  {
+    id: 'community',
+    label: '커뮤니티·사회참여',
+    emoji: '🧑‍🤝‍🧑',
+    keywords: '청년센터 공간 동아리 커뮤니티 참여수당 사회참여 지원',
+    triggers: [/커뮤니티|사회참여|동아리|청년센터|참여수당|공간/i],
+    adjacent: ['activity', 'local'],
+  },
+  {
+    id: 'transport',
+    label: '교통·이동',
+    emoji: '🌍',
+    keywords: '교통비 대중교통 이동비 청년패스 교통 지원',
+    triggers: [/교통|교통비|대중교통|이동비|패스/i],
+    adjacent: ['local'],
+  },
+  {
+    id: 'activity',
+    label: '대외활동·공모전',
+    emoji: '📢',
+    keywords: '서포터즈 공모전 봉사 대외활동 활동비 지원',
+    triggers: [/대외활동|공모전|서포터즈|봉사|활동비/i],
+    adjacent: ['culture', 'community'],
+  },
+];
+
+function getLastUserText(messages: unknown): string {
+  if (!Array.isArray(messages)) return '';
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i] as any;
+    if (m?.role === 'user' && typeof m.content === 'string') {
+      return m.content.trim();
+    }
+  }
+
+  return '';
+}
+
+function isExplicitFocusedQuestion(text: string): boolean {
+  return /(만\s*(찾|알려|검색|정리)|월세만|취업만|장학금만|주거만|일자리만|창업만|대출만|교통비만|문화만|복지만|건강만|육아만|신혼만)/i.test(text);
+}
+
+function detectMatchedDomains(text: string): CoverageDomain[] {
+  const matched = COVERAGE_DOMAINS.filter((d) =>
+    d.triggers.some((re) => re.test(text)),
+  );
+
+  if (matched.length === 0) return [];
+
+  const byId = new Map<string, CoverageDomain>();
+
+  for (const d of matched) {
+    byId.set(d.id, d);
+
+    for (const adjId of d.adjacent ?? []) {
+      const adj = COVERAGE_DOMAINS.find((x) => x.id === adjId);
+      if (adj) byId.set(adj.id, adj);
+    }
+  }
+
+  return Array.from(byId.values());
+}
+
+function buildCoveragePlan(lastUserText: string): {
+  mode: CoverageMode;
+  domains: CoverageDomain[];
+  reason: string;
+} {
+  const matched = detectMatchedDomains(lastUserText);
+
+  if (isExplicitFocusedQuestion(lastUserText) && matched.length > 0) {
+    return {
+      mode: 'focused',
+      domains: matched,
+      reason: '사용자가 특정 분야만 요청함',
+    };
+  }
+
+  return {
+    mode: 'full',
+    domains: COVERAGE_DOMAINS,
+    reason: '기본값: 전 분야 Coverage 탐색',
+  };
+}
+
+type CoverageToolName = 'search_internal_db' | 'naver_web_search' | 'global_web_search';
+
+type CoverageEntry = {
+  domain: CoverageDomain;
+  searched: boolean;
+  tools: Set<CoverageToolName>;
+  resultCount: number;
+  emptyCount: number;
+};
+
+function isCoverageToolName(toolName: string): toolName is CoverageToolName {
+  return toolName === 'search_internal_db'
+    || toolName === 'naver_web_search'
+    || toolName === 'global_web_search';
+}
+
+function countPolicyLikeItems(result: string): number {
+  const policyCount = (result.match(/정책명:/g) ?? []).length;
+  const titleCount = (result.match(/제목:/g) ?? []).length;
+  return Math.max(policyCount, titleCount);
+}
+
+function makeCoverageLedger(plan: ReturnType<typeof buildCoveragePlan>) {
+  const entries = new Map<string, CoverageEntry>();
+
+  for (const domain of plan.domains) {
+    entries.set(domain.id, {
+      domain,
+      searched: false,
+      tools: new Set(),
+      resultCount: 0,
+      emptyCount: 0,
+    });
+  }
+
+  const classifyDomains = (query: string): CoverageDomain[] => {
+    const matched = detectMatchedDomains(query);
+
+    if (matched.length > 0) {
+      return matched.filter((d) => entries.has(d.id));
+    }
+
+    if (/전체|모든|전\s*분야|받을 수 있는|신청할 수 있는|혜택|정책/i.test(query)) {
+      return plan.domains;
+    }
+
+    return [];
+  };
+
+  return {
+    record(toolName: CoverageToolName, query: string, result: string) {
+      const domains = classifyDomains(query);
+      const resultCount = countPolicyLikeItems(result);
+      const isEmpty = /결과 없음|데이터 없음|0건|새 정책 0건|매칭되는 데이터 없음|신청 가능한 공고가 없음/i.test(result);
+
+      for (const domain of domains) {
+        const entry = entries.get(domain.id);
+        if (!entry) continue;
+
+        entry.searched = true;
+        entry.tools.add(toolName);
+        entry.resultCount += resultCount;
+
+        if (isEmpty || resultCount === 0) {
+          entry.emptyCount += 1;
+        }
+      }
+    },
+
+    toSystemContext() {
+      const domainLines = plan.domains
+        .map((d) => `- ${d.emoji} ${d.label}: ${d.keywords}`)
+        .join('\n');
+
+      return `
+
+[서버 생성 Coverage Plan — 모델은 이 계획을 우선 따르세요]
+- 탐색 모드: ${plan.mode === 'full' ? '전 분야 Coverage 탐색' : '특정 분야 집중 탐색'}
+- 계획 사유: ${plan.reason}
+- 매우 중요: 내부 DB는 정부 정책 중심 1차 검색입니다. DB 결과가 있어도 시군구·읍면동·주민센터·청년센터·복지포털·공공기관·공공재단의 최신 공고는 naver_web_search로 보완해야 합니다.
+- Tavily(global_web_search)는 넓은 탐색용이 아니라 마감일·금액·공식 신청 링크 검증용입니다.
+- 탐색 대상 분야:
+${domainLines}
+[Coverage Plan 끝]
+`;
+    },
+
+    footer(toolName: CoverageToolName, query: string) {
+      const checked = Array.from(entries.values())
+        .filter((e) => e.searched)
+        .map((e) => e.domain.label);
+
+      const pending = Array.from(entries.values())
+        .filter((e) => !e.searched)
+        .map((e) => e.domain.label);
+
+      return `
+
+[Coverage 진행상황 — 내부 참고용]
+- 방금 사용한 도구: ${toolName}
+- 방금 검색어: ${query}
+- 현재까지 확인한 분야: ${checked.length > 0 ? checked.join(', ') : '아직 없음'}
+- 아직 추가 확인이 필요한 분야: ${pending.length > 0 ? pending.join(', ') : '없음'}
+- 주의: 위 진행상황은 사용자에게 그대로 노출하지 말고, 답변 마지막 Coverage Report에 자연스럽게 반영하세요.
+`;
+    },
+  };
+}
+
+
 // 🌟 세션 정책 풀 공유 타입/헬퍼 (RpcRow = search_internal_db 결과 한 행)
 type RpcRow = { title?: string; provider?: string; summary?: string; url?: string; deadline?: string | null; similarity?: number };
 function policyKey(p: RpcRow): string {
@@ -464,6 +779,9 @@ export async function POST(req: Request) {
       ? messages[messages.length - 1]
       : null;
 
+    const lastUserText = getLastUserText(messages);
+    const coveragePlan = buildCoveragePlan(lastUserText);
+
     let userInsertedAt: string | null = null;
 
     if (userId && threadId && lastMsg?.role === 'user') {
@@ -591,6 +909,9 @@ export async function POST(req: Request) {
     const policyPool = new Map<string, RpcRow>();
     
     const budget = makeToolBudgetTracker(); 
+    const coverageLedger = makeCoverageLedger(coveragePlan);
+    let tavilyCallCount = 0;
+    const MAX_TAVILY_CALLS = coveragePlan.mode === 'full' ? 2 : 1;
 
     const withToolGuard = <T extends { query: string }>(
       toolName: string,
@@ -613,6 +934,11 @@ export async function POST(req: Request) {
       } catch (e: any) {
         if (isUserCancellation(e, req.signal)) throw e;
         result = `[도구 예외] ${toolName} 실패(${e?.message ?? 'unknown'}). 다른 경로로 우회하세요.`;
+      }
+
+      if (isCoverageToolName(toolName)) {
+        coverageLedger.record(toolName, args.query, result);
+        result += coverageLedger.footer(toolName, args.query);
       }
 
       result = budget.spend(result, toolName);
@@ -739,7 +1065,10 @@ export async function POST(req: Request) {
             const sim = ((p.similarity ?? 0) * 100).toFixed(0);
             const dday = p.deadline 
               ? (() => {
-                  const days = Math.ceil((Date.parse(p.deadline) - now) / (24 * 3600_000));
+                  const deadlineMs = parseKstDeadlineEnd(p.deadline);
+                  if (deadlineMs === null) return ' [마감일 확인 필요]';
+
+                  const days = Math.ceil((deadlineMs - now) / (24 * 3600_000));
                   return days >= 0 ? ` [D-${days}]` : ' [만료됨 — 답변에서 제외]';
                 })()
               : ' [상시모집]';
@@ -781,7 +1110,7 @@ export async function POST(req: Request) {
       }),
 
       naver_web_search: tool({
-        description: '최신 공고를 찾을 때 사용하는 웹 검색 도구. 결과가 "..."으로 잘려 내용이 불확실하다면 절대 추측하지 마세요.',
+        description: 'DB에 없는 시군구·읍면동·주민센터·청년센터·복지포털·공공기관·공공재단의 최신 공고와 추가 혜택을 보완하는 웹 검색 도구입니다. 결과가 "..."으로 잘려 내용이 불확실하다면 절대 추측하지 마세요.',
         parameters: z.object({
           query: z.string()
             .min(1, '검색어가 비어있습니다.')
@@ -898,7 +1227,7 @@ export async function POST(req: Request) {
       }),
 
       global_web_search: tool({
-        description: '정밀 타격용 2순위 웹 검색 도구. 마감일/지원금액/공식링크 등 핵심 팩트가 누락되었을 때만 "최후의 수단"으로 무제한 사용하세요. 본문을 깊게 읽어옵니다.',
+        description: '정밀 타격용 최후 보강 웹 검색 도구. 마감일/지원금액/공식링크 등 핵심 팩트가 누락되었을 때만 제한적으로 사용하세요. 넓은 분야 탐색은 naver_web_search를 우선 사용해야 합니다.',
         parameters: z.object({
           query: z.string()
             .min(1, '검색어가 비어있습니다.')
@@ -909,20 +1238,34 @@ export async function POST(req: Request) {
           const tavilyKey = process.env.TAVILY_API_KEY;
           if (!tavilyKey) return '글로벌 검색 미설정. DB와 네이버 결과만으로 답변하세요.';
 
+          const broadTavilyQuery =
+            /전체|모든|전\s*분야|받을 수 있는|신청할 수 있는|혜택\s*전체|정책\s*전체/i.test(query) &&
+            !/마감|금액|지원액|신청\s*링크|공식|검증|확인|URL/i.test(query);
+
+          if (broadTavilyQuery) {
+            return '[Tavily 사용 제한] global_web_search는 넓은 탐색용이 아니라 마감일·지원금액·공식 신청 링크 검증용입니다. 먼저 search_internal_db와 naver_web_search로 분야별 탐색을 진행하세요.';
+          }
+
+          if (tavilyCallCount >= MAX_TAVILY_CALLS) {
+            return `[Tavily 사용 제한] 이번 답변에서 global_web_search는 이미 ${MAX_TAVILY_CALLS}회 사용했습니다. 추가 Tavily 호출 없이 DB와 Naver 결과만으로 답변을 정리하세요.`;
+          }
+
           const seoulYear = new Intl.DateTimeFormat('en-US', {
             timeZone: 'Asia/Seoul',
             year: 'numeric',
           }).format(new Date());
 
-          const localizedQuery = `${seoulYear}년 대한민국 정부 정책 지원금 ${query}`;
+          const tavilyQuery = buildServerAugmentedQuery(query);
+          const localizedQuery = `${seoulYear}년 대한민국 정부 정책 지원금 ${tavilyQuery}`;
 
-          const cached = await getCachedSearch('tavily', mode, query);
+          const cached = await getCachedSearch('tavily', mode, tavilyQuery);
           if (cached) {
-            console.log(`[💾 tavily cache HIT] mode=${mode} query="${query.slice(0, 30)}"`);
+            console.log(`[💾 tavily cache HIT] mode=${mode} query="${tavilyQuery.slice(0, 30)}"`);
             return cached;
           }
 
           const tavilyMaxResults = mode === 'public' ? 8 : 5;
+          tavilyCallCount++;
 
           const res = (await withTimeout(
             async (signal) => fetch('https://api.tavily.com/search', {
@@ -950,7 +1293,7 @@ export async function POST(req: Request) {
             .map((r: any) => `- 제목: ${r.title}\n  내용: ${r.content}\n  링크: ${r.url}`)
             .join('\n\n');
 
-          void setCachedSearch('tavily', mode, query, formatted, 6);
+          void setCachedSearch('tavily', mode, tavilyQuery, formatted, 6);
 
           return formatted;
         }),
@@ -979,8 +1322,9 @@ export async function POST(req: Request) {
         ]);
 
         const baseSystemPrompt = buildSystemPrompt();
+        const coverageContext = coverageLedger.toSystemContext();
 
-        const systemPromptWithTime = baseSystemPrompt + profileContext;
+        const systemPromptWithTime = baseSystemPrompt + profileContext + coverageContext;
 
         let persistInflight: Promise<void> | null = null;
         let assistantPersisted = false;
