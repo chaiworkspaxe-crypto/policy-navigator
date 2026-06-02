@@ -4,6 +4,7 @@
 // app/policy/[slug]/page.tsx 와 app/sitemap.ts 에서 사용
 // ────────────────────────────────────────────────────────────
 import { getSupabase } from '@/lib/supabase';
+import { parseKstDateEndOfDay, formatKstYmd } from '@/lib/date';
 
 const supabase = getSupabase();
 
@@ -219,8 +220,8 @@ export function getDeadlineStatus(deadline: string | null): {
     return { label: '상시모집', isExpired: false, dDay: null, urgency: 'ongoing' };
   }
 
-  const t = Date.parse(deadline);
-  if (Number.isNaN(t)) {
+  const t = parseKstDateEndOfDay(deadline);
+  if (t === null) {
     return { label: '공고 확인 필요', isExpired: false, dDay: null, urgency: 'normal' };
   }
 
@@ -228,15 +229,19 @@ export function getDeadlineStatus(deadline: string | null): {
   const days = Math.ceil((t - now) / (24 * 3600_000));
 
   if (days < 0) {
-    return { label: `마감됨`, isExpired: true, dDay: days, urgency: 'expired' };
+    return { label: '마감됨', isExpired: true, dDay: days, urgency: 'expired' };
   }
+
   if (days <= 7) {
     return { label: `D-${days} 🔥`, isExpired: false, dDay: days, urgency: 'urgent' };
   }
-  // 날짜를 한국어 형식으로
-  const d = new Date(t);
-  const formatted = `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
-  return { label: `~${formatted}`, isExpired: false, dDay: days, urgency: 'normal' };
+
+  return {
+    label: `~${formatKstYmd(t)}`,
+    isExpired: false,
+    dDay: days,
+    urgency: 'normal',
+  };
 }
 
 // ── 🌟 지역별 랜딩페이지용 ─────────────────────────────────
