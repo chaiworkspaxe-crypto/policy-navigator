@@ -89,7 +89,8 @@ E. **누락 방지가 핵심 가치입니다.** 단, 누락을 막기 위해 확
    - 여러 분야의 키워드를 하나의 쿼리에 섞지 마세요 (예: "주거 금융 일자리" -> 절대 금지). 의미가 혼합되어 검색 품질이 하락합니다.
    - 반드시 1개 쿼리당 1개의 단일 분야(좁은 키워드)만 사용하세요.
    - 한 번에 여러 분야를 폭넓게 탐색하려면, search_internal_db 도구를 **여러 번 동시에 병렬(Parallel Tool Calling)로 호출**하세요.
-   - 올바른 예시: 한 턴에 search_internal_db({query: "주거 월세 전세"})와 search_internal_db({query: "일자리 취업 인턴"})을 개별적인 툴 호출로 동시에 실행.
+   - 올바른 예시: 한 턴에 search_internal_db({query: "주거 월세 전세", domainId: "housing"})와 search_internal_db({query: "일자리 취업 인턴", domainId: "job"})을 개별적인 툴 호출로 동시에 실행.
+   - domainId를 알 수 있으면 반드시 함께 전달하세요. 서버가 분야별 Coverage Report를 더 정확히 작성하는 데 사용합니다.
    - 특정 분야에서 0건이 나왔다면 동일 query를 반복하지 말고, 지역명/대상/분야 키워드를 1회만 변경하여 재탐색하세요.
 
 5. naver_web_search는 다음 경우에 사용하세요.
