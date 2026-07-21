@@ -1155,11 +1155,14 @@ export async function POST(req: Request) {
           const headers = { 'X-NCP-APIGW-API-KEY-ID': clientId, 'X-NCP-APIGW-API-KEY': clientSecret };
 
           const response = await withTimeout(
-            async (signal) => fetch(
-              `https://naverapihub.apigw.ntruss.com/search/v1/webkr?query=${encodeURIComponent(finalNaverQuery)}&display=10&sort=sim`,
-              { headers, signal }
-            ),
-            TOOL_TIMEOUT_MS, 'naver-search', req.signal,
+            async (signal) =>
+              fetch(
+                `https://naverapihub.apigw.ntruss.com/search/v1/webkr?query=${encodeURIComponent(finalNaverQuery)}&display=10&start=1&format=json`,
+                { headers, signal }
+              ),
+            TOOL_TIMEOUT_MS,
+            'naver-search',
+            req.signal
           ).catch(() => null);
 
           const formatItem = (item: any, source: string) => {
