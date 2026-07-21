@@ -1134,8 +1134,8 @@ export async function POST(req: Request) {
             .describe('Coverage 분야 ID. 예: housing, finance, job, startup, education, culture, welfare, health, career, family, married, senior, local, community, transport, activity (해당 없으면 빈 문자열 "" 전달)')
         }),
         execute: withToolGuard('naver_web_search', async ({ query }) => {
-          const clientId = process.env.NAVER_CLIENT_ID;
-          const clientSecret = process.env.NAVER_CLIENT_SECRET;
+          const clientId = process.env.NAVER_API_HUB_CLIENT_ID;
+          const clientSecret = process.env.NAVER_API_HUB_CLIENT_SECRET;
           if (!clientId || !clientSecret) return '네이버 API 키 미설정. global_web_search를 사용하세요.';
 
           const webQuery = buildLexicalQuery(query);
@@ -1152,11 +1152,11 @@ export async function POST(req: Request) {
             ? webQuery
             : `${webQuery} 지자체 OR 청년센터 공고`; // ⬅️ 핵심 키워드 2개로 압축
 
-          const headers = { 'X-Naver-Client-Id': clientId, 'X-Naver-Client-Secret': clientSecret };
+          const headers = { 'X-NCP-APIGW-API-KEY-ID': clientId, 'X-NCP-APIGW-API-KEY': clientSecret };
 
           const response = await withTimeout(
             async (signal) => fetch(
-              `https://openapi.naver.com/v1/search/webkr?query=${encodeURIComponent(finalNaverQuery)}&display=10&sort=sim`,
+              `https://naverapihub.apigw.ntruss.com/search/v1/webkr?query=${encodeURIComponent(finalNaverQuery)}&display=10&sort=sim`,
               { headers, signal }
             ),
             TOOL_TIMEOUT_MS, 'naver-search', req.signal,
